@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# No job enables setup-go's module cache: neither the root module nor
+# tools/graphd has a dependency, so there is no go.sum for it to key on and the cache
+# step fails outright rather than degrading.
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # The root module is still empty, and `go vet ./...` exits 1 on "matched
+      # no packages". Same tolerance graphd's own TestArchitecture applies.
+      # Delete this step, and the `if` below, once the first package lands.
+      - name: Detect packages
+        id: pkgs
+        run: |
+          count=$(go list ./... 2>/dev/null | wc -l)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          [ "$count" -gt 0 ] || echo "root module has no packages yet; skipping build, vet and test"
+
+      - name: Build, vet and test
+        if: steps.pkgs.outputs.count != '0'
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  architecture:
+    name: Architecture
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/graphd
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/graphd/go.mod
+          cache: false
+
+      # -count=1 is redundant on a cold runner and kept anyway: 
+      # it stops a stale pass if the build cache is ever restored here.
+      - name: Check import edges against the dependency rules
+        run: go test -count=1 ./...
