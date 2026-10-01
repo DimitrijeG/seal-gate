@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -16,13 +17,36 @@ const (
 	CatSupport        = "support"
 )
 
-// domainPackages are the modules that must stay free of infrastructure.
+// domainPackages must stay free of infrastructure. Subpackages inherit.
 var domainPackages = map[string]bool{
 	"internal/system":        true,
 	"internal/identity":      true,
 	"internal/authorization": true,
 	"internal/secrets":       true,
 	"internal/lifecycle":     true,
+}
+
+// infrastructurePackages is explicit so a new top-level package fails a test
+// instead of silently defaulting to infrastructure.
+var infrastructurePackages = map[string]bool{
+	"internal/cryptography": true,
+	"internal/barrier":      true,
+	"internal/repository":   true,
+	"internal/storage":      true,
+	"internal/audit":        true,
+}
+
+// topLevel reduces internal/storage/bolt to internal/storage.
+func topLevel(rel string) string {
+	parts := strings.SplitN(rel, "/", 3)
+	if len(parts) < 2 {
+		return rel
+	}
+	return parts[0] + "/" + parts[1]
+}
+
+func isDomain(rel string) bool {
+	return domainPackages[topLevel(rel)]
 }
 
 func categorize(rel string) string {
@@ -33,17 +57,21 @@ func categorize(rel string) string {
 		return CatComposition
 	case rel == "internal/httpapi":
 		return CatInterface
-	case domainPackages[rel]:
+	case isDomain(rel):
 		return CatDomain
-	case rel == "internal/common" || rel == "internal/config":
+	case rel == "internal/config":
 		return CatSupport
 	default:
 		return CatInfrastructure
 	}
 }
 
-// isPersistence reports whether rel is a package a domain module or the HTTP
-// layer must not reach into directly.
+// classified reports whether rel's category was chosen rather than defaulted.
+func classified(rel string) bool {
+	return categorize(rel) != CatInfrastructure || infrastructurePackages[topLevel(rel)]
+}
+
+// isPersistence reports whether rel is off limits to domain modules and httpapi.
 func isPersistence(rel string) bool {
 	switch {
 	case rel == "internal/repository", rel == "internal/barrier":
@@ -57,10 +85,18 @@ func isPersistence(rel string) bool {
 	}
 }
 
-// isBackend reports whether rel is a concrete storage backend, as opposed to
-// the storage contract itself.
+// isBackend is true for concrete backends, not the storage contract itself.
 func isBackend(rel string) bool {
 	return strings.HasPrefix(rel, "internal/storage/")
+}
+
+func isLeaf(rel string) bool {
+	switch rel {
+	case "internal/config", "internal/cryptography", "internal/storage":
+		return true
+	default:
+		return false
+	}
 }
 
 // Violation is one broken architecture rule.
@@ -71,22 +107,19 @@ type Violation struct {
 	Why  string `json:"why"`
 }
 
-// Rule is a predicate over one import edge, stated in terms of paths relative
-// to the module root.
+// Rule is a predicate over one import edge, in module-relative paths.
 type Rule struct {
 	ID  string
 	Why string
 	Bad func(from, to string) bool
 }
 
-// Rules are the dependency constraints the module is built around. They are
-// the reason this tool is worth more than a picture: each one is also
-// assertable in CI (see rules_test.go).
+// Rules are checked in order; an edge reports only the first it breaks.
 var Rules = []Rule{
 	{
 		ID:  "domain-no-infrastructure",
 		Why: "a domain module must not reach past its own repository interface into persistence or crypto",
-		Bad: func(from, to string) bool { return domainPackages[from] && isPersistence(to) },
+		Bad: func(from, to string) bool { return isDomain(from) && isPersistence(to) },
 	},
 	{
 		ID:  "only-app-knows-backends",
@@ -99,14 +132,19 @@ var Rules = []Rule{
 		Bad: func(from, to string) bool { return from == "internal/httpapi" && isPersistence(to) },
 	},
 	{
-		ID:  "common-stays-small",
-		Why: "common must not accumulate dependencies on the rest of the module",
-		Bad: func(from, to string) bool { return from == "internal/common" && strings.HasPrefix(to, "internal/") },
-	},
-	{
 		ID:  "app-is-a-place-not-a-layer",
 		Why: "nothing imports the composition root except main",
 		Bad: func(from, to string) bool { return to == "internal/app" && !strings.HasPrefix(from, "cmd/") },
+	},
+	{
+		ID:  "leaves-stay-leaves",
+		Why: "config, cryptography and the storage contract are shared by many packages and must not depend on any of them",
+		Bad: func(from, to string) bool { return isLeaf(from) && strings.HasPrefix(to, "internal/") },
+	},
+	{
+		ID:  "backends-see-only-bytes",
+		Why: "a storage backend implements the key-value contract and must not know about anything above it",
+		Bad: func(from, to string) bool { return isBackend(from) && to != "internal/storage" },
 	},
 }
 
@@ -146,11 +184,8 @@ func Apply(g *Graph) {
 	})
 }
 
-// cycles reports import cycles.
-//
-// Go's compiler already rejects these, so a hit here means the graph was built
-// from a tree that does not compile. It is kept because the same check runs in
-// CI over a proposed refactor, where catching it early is cheaper.
+// cycles duplicates a compiler check so CI names the cycle in the same report
+// as every other rule, even over a tree that does not build.
 func cycles(g *Graph, rel map[string]string) []Violation {
 	adjacency := make(map[string][]string)
 	for _, edge := range g.Edges {
@@ -176,11 +211,13 @@ func cycles(g *Graph, rel map[string]string) []Violation {
 			case white:
 				visit(next, stack)
 			case grey:
+				// The stack runs from the DFS root; the cycle starts where next is.
+				loop := labels(stack[slices.Index(stack, next):], rel)
 				found = append(found, Violation{
 					Rule: "no-import-cycles",
 					From: rel[node],
 					To:   rel[next],
-					Why:  fmt.Sprintf("cycle: %s -> %s", strings.Join(labels(stack, rel), " -> "), rel[next]),
+					Why:  fmt.Sprintf("cycle: %s -> %s", strings.Join(loop, " -> "), rel[next]),
 				})
 			}
 		}

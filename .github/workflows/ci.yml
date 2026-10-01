@@ -33,22 +33,18 @@ jobs:
             exit 1
           fi
 
-      # The root module is still empty, and `go vet ./...` exits 1 on "matched
-      # no packages". Same tolerance graphd's own TestArchitecture applies.
-      # Delete this step, and the `if` below, once the first package lands.
-      - name: Detect packages
-        id: pkgs
-        run: |
-          count=$(go list ./... 2>/dev/null | wc -l)
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          [ "$count" -gt 0 ] || echo "root module has no packages yet; skipping build, vet and test"
-
       - name: Build, vet and test
-        if: steps.pkgs.outputs.count != '0'
         run: |
           go build ./...
           go vet ./...
-          go test ./...
+          go test -race ./...
+
+      # Pinned and run via `go run`, so neither tool enters go.mod.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   architecture:
     name: Architecture
@@ -64,7 +60,10 @@ jobs:
           go-version-file: tools/graphd/go.mod
           cache: false
 
-      # -count=1 is redundant on a cold runner and kept anyway: 
-      # it stops a stale pass if the build cache is ever restored here.
+      # -count=1 is redundant on a cold runner, but stops a stale pass if a
+      # build cache is ever restored here.
       - name: Check import edges against the dependency rules
         run: go test -count=1 ./...
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
