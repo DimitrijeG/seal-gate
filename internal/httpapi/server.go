@@ -1,3 +1,4 @@
+// Package httpapi translates HTTP to application calls and back; it holds no business logic.
 package httpapi
 
 import (

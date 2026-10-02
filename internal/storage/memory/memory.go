@@ -1,3 +1,4 @@
+// Package memory is an in-process storage backend for tests and development; nothing survives a restart.
 package memory
 
 type Backend struct{}

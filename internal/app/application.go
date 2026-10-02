@@ -1,3 +1,4 @@
+// Package app is the composition root: it builds every component from config and is the only package that names concrete implementations.
 package app
 
 import (

@@ -1,3 +1,4 @@
+// Package barrier encrypts every value before it reaches storage and decrypts it on the way back, so no backend ever sees plaintext.
 package barrier
 
 import (

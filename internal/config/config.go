@@ -1,3 +1,4 @@
+// Package config loads and validates typed configuration; it never holds keys, shares, secrets or tokens.
 package config
 
 import "time"
