@@ -1,3 +1,4 @@
+// Package system owns the seal lifecycle: initialization, unsealing, sealing, and the lifetime of the active key.
 package system
 
 import (
