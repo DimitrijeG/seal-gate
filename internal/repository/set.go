@@ -1,3 +1,4 @@
+// Package repository implements every domain repository once, over the barrier.
 package repository
 
 import "github.com/dimitrijegasic/seal-gate/internal/barrier"
