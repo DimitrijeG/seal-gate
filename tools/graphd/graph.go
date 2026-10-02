@@ -23,9 +23,7 @@ type Node struct {
 type Edge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
-	// Rule names the architecture rule this edge breaks, if any. Empty for a
-	// legal edge. This is the field that turns the picture into a lint.
-	Rule string `json:"rule,omitempty"`
+	Rule string `json:"rule,omitempty"` // the rule this edge breaks, if any
 }
 
 // Graph is the whole payload sent to the browser.
@@ -35,13 +33,11 @@ type Graph struct {
 	Edges      []Edge      `json:"edges"`
 	Violations []Violation `json:"violations"`
 	BuiltAt    time.Time   `json:"builtAt"`
-	// Warning carries a partial-failure message: go list wrote to stderr but
-	// still produced usable output, which is the normal state mid-edit.
+	// Warning is go list's stderr when it still produced a usable graph, as mid-edit.
 	Warning string `json:"warning,omitempty"`
 }
 
-// Load shells out to go list. No dependencies, no type checking, and fast
-// enough to run on every save — package granularity needs nothing more.
+// Load shells out to go list: no dependencies, and fast enough to run on every save.
 func Load(dir string) (*Graph, error) {
 	module, err := modulePath(dir)
 	if err != nil {
@@ -59,9 +55,7 @@ func Load(dir string) (*Graph, error) {
 
 	runErr := cmd.Run()
 
-	// An empty module is a legitimate state, not a failure: a fresh repository
-	// has no packages yet. go list reports it as a warning on stderr with no
-	// stdout, which is indistinguishable from a real failure unless checked.
+	// An empty module looks like a failure (no stdout) unless stderr is checked.
 	if stdout.Len() == 0 {
 		if strings.Contains(stderr.String(), "matched no packages") {
 			return &Graph{Module: module, BuiltAt: time.Now()}, nil
@@ -74,9 +68,7 @@ func Load(dir string) (*Graph, error) {
 		BuiltAt: time.Now(),
 	}
 	if stderr.Len() > 0 {
-		// -e keeps go list going through broken packages. Surface the problem
-		// without discarding the graph: a page that blanks every time you type
-		// an open brace is worse than a slightly stale one.
+		// Keep the graph: one that blanks on every half-typed brace goes unused.
 		graph.Warning = firstLine(stderr.String())
 	}
 
@@ -88,13 +80,9 @@ func Load(dir string) (*Graph, error) {
 	var rows []pending
 
 	for _, line := range strings.Split(stdout.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		fields := strings.Split(line, "\t")
-		if len(fields) < 3 {
+		// Not TrimSpace: a package with no imports ends in a tab that must survive.
+		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
+		if len(fields) != 3 {
 			continue
 		}
 
@@ -118,8 +106,7 @@ func Load(dir string) (*Graph, error) {
 		rows = append(rows, pending{from: importPath, imports: imports})
 	}
 
-	// Internal edges only. Stdlib and external imports are noise at this
-	// granularity, and every one of them is legal by definition.
+	// Internal edges only: external imports are noise and always legal.
 	for _, row := range rows {
 		for _, imp := range row.imports {
 			if !known[imp] {
@@ -161,15 +148,9 @@ func relPath(module, importPath string) string {
 	return importPath
 }
 
-// label shortens internal/storage/postgres to storage/postgres, and
-// internal/secrets to secrets — the internal/ prefix carries no information
-// when every node has it.
+// label drops internal/, which every non-cmd node shares.
 func label(rel string) string {
-	trimmed := strings.TrimPrefix(rel, "internal/")
-	if strings.HasPrefix(rel, "cmd/") {
-		return rel
-	}
-	return trimmed
+	return strings.TrimPrefix(rel, "internal/")
 }
 
 func firstLine(s string) string {

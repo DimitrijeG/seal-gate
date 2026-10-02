@@ -9,7 +9,6 @@ cmd/seal-gate/          the binary; main() stays small
 internal/
 ├── app/                composition root — builds the graph, holds no rules
 ├── config/             typed configuration, loaded but never applied here
-├── common/             Clock, and deliberately nothing else
 ├── system/             seal/unseal/init state machine, active-key lifetime
 ├── identity/           entities, groups, credentials, tokens — who is calling
 ├── authorization/      path-based ACL policies — what they may do
@@ -33,14 +32,40 @@ tools/graphd/           live package graph + import rule enforcement
 
 ## Checks
 
-```sh
-go build ./... && go vet ./... && gofmt -l .   # gofmt printing nothing is green
-go test ./...
+### On save — automatic
 
-cd tools/graphd && go test -count=1 ./...      # architecture rules
-cd tools/graphd && go run . -dir ../..         # live graph on :7717
+The VS Code Go extension formats the file (gofmt, imports) and underlines
+`go vet` and staticcheck findings. Fix what is underlined.
+
+### Before committing
+
+```sh
+gofmt -l .                                   # must print nothing
+go vet ./...
+go test ./...
+cd tools/graphd && go test -count=1 ./...    # import rules
 ```
 
-`-count=1` is not optional: graphd shells out to `go list` against another
-directory tree, which Go test caching cannot observe, so a cached pass can be
-stale.
+`-count=1` is not optional: graphd runs `go list` on another directory tree,
+which the test cache cannot see, so a cached pass can be stale.
+
+### Before opening a PR
+
+```sh
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+```
+
+Use the versions pinned in `.github/workflows/ci.yml`. CI also runs the tests
+with `-race`, which needs cgo and a C compiler locally.
+
+### On the PR — automatic
+
+CI repeats all of the above, then CodeQL and Copilot review run.
+Merging needs the `Test` and `Architecture` checks to pass.
+
+### Live package graph
+
+```sh
+cd tools/graphd && go run . -dir ../..       # http://127.0.0.1:7717
+```

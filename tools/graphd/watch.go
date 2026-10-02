@@ -8,12 +8,8 @@ import (
 	"time"
 )
 
-// fingerprint summarises the state of every .go file under dir.
-//
-// This polls rather than using fsnotify, which keeps the tool dependency-free.
-// Walking ~100 files every few hundred milliseconds costs nothing; if this ever
-// runs over a tree large enough for the walk to show up in a profile, swap in
-// fsnotify behind the same Watch signature.
+// fingerprint polls instead of using fsnotify, keeping the tool dependency-free.
+// Walking a tree this size every few hundred milliseconds costs nothing.
 func fingerprint(dir string) string {
 	var b strings.Builder
 
@@ -23,8 +19,10 @@ func fingerprint(dir string) string {
 		}
 
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "vendor", "node_modules":
+			// Skip what go list skips, so edits there don't trigger rebuilds.
+			name := d.Name()
+			if path != dir && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
+				name == "testdata" || name == "vendor" || name == "node_modules") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -52,11 +50,8 @@ func fingerprint(dir string) string {
 	return b.String()
 }
 
-// Watch calls onChange whenever the tree's fingerprint changes, and once at
-// startup. It blocks.
-//
-// Polling gives debouncing for free: an editor's several write events for one
-// save collapse into a single tick.
+// Watch calls onChange once at startup and on every change, and blocks.
+// Polling debounces for free: an editor's several writes per save share a tick.
 func Watch(dir string, interval time.Duration, onChange func()) {
 	previous := fingerprint(dir)
 	onChange()

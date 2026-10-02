@@ -2,11 +2,10 @@ package main
 
 import (
 	"os"
+	"slices"
 	"testing"
 )
 
-// defaultRepo is where the module under test lives. When this tool moves into
-// the repo as tools/graphd, change it to "../..".
 const defaultRepo = "../.."
 
 func repoDir(t *testing.T) string {
@@ -24,8 +23,7 @@ func repoDir(t *testing.T) string {
 	return dir
 }
 
-// TestArchitecture is the same check the server draws in red, run as a test.
-// The visualization is for noticing; this is for enforcing.
+// TestArchitecture enforces the rules the server only draws in red.
 func TestArchitecture(t *testing.T) {
 	graph, err := Load(repoDir(t))
 	if err != nil {
@@ -44,18 +42,59 @@ func TestArchitecture(t *testing.T) {
 		len(graph.Nodes), len(graph.Edges), len(graph.Violations))
 }
 
-// TestCategoriesCoverEveryPackage guards against a new top-level package
-// silently landing in "infrastructure" because nobody classified it.
-func TestCategoriesCoverEveryPackage(t *testing.T) {
+func TestEveryPackageIsClassified(t *testing.T) {
 	graph, err := Load(repoDir(t))
 	if err != nil {
 		t.Fatalf("load graph: %v", err)
 	}
 
 	for _, node := range graph.Nodes {
-		if node.Category == CatInfrastructure && domainPackages[node.Rel] {
-			t.Errorf("%s is categorized as infrastructure but listed as a domain package", node.Rel)
+		if !classified(node.Rel) {
+			t.Errorf("%s has no category; add it to domainPackages or infrastructurePackages", node.Rel)
 		}
+	}
+}
+
+// TestLoadCatchesKnownViolations proves the whole pipeline end to end, since a
+// clean repo passes TestArchitecture even when the loader is broken.
+func TestLoadCatchesKnownViolations(t *testing.T) {
+	graph, err := Load("testdata/violations")
+	if err != nil {
+		t.Fatalf("load fixture: %v", err)
+	}
+
+	// storage/memory and cryptography import nothing, which once hid them.
+	if len(graph.Nodes) != 4 {
+		t.Errorf("got %d packages, want 4", len(graph.Nodes))
+	}
+
+	type hit struct{ rule, from, to string }
+	var got []hit
+	for _, v := range graph.Violations {
+		got = append(got, hit{v.Rule, v.From, v.To})
+	}
+
+	want := []hit{
+		{"domain-no-infrastructure", "internal/system", "internal/cryptography"},
+		{"only-app-knows-backends", "internal/repository", "internal/storage/memory"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("violations:\n got  %v\n want %v", got, want)
+	}
+}
+
+func TestCyclePathStartsAtTheCycle(t *testing.T) {
+	g := &Graph{
+		Nodes: []Node{{ID: "a", Rel: "a"}, {ID: "b", Rel: "b"}, {ID: "c", Rel: "c"}},
+		Edges: []Edge{{From: "a", To: "b"}, {From: "b", To: "c"}, {From: "c", To: "b"}},
+	}
+	Apply(g)
+
+	if len(g.Violations) != 1 {
+		t.Fatalf("got %d violations, want 1: %v", len(g.Violations), g.Violations)
+	}
+	if want := "cycle: b -> c -> b"; g.Violations[0].Why != want {
+		t.Errorf("got %q, want %q", g.Violations[0].Why, want)
 	}
 }
 
@@ -65,15 +104,23 @@ func TestRulePredicates(t *testing.T) {
 	}{
 		{"domain reaching into storage", "internal/secrets", "internal/storage/postgres", "domain-no-infrastructure"},
 		{"domain reaching into the barrier", "internal/identity", "internal/barrier", "domain-no-infrastructure"},
+		{"domain subpackage reaching into crypto", "internal/secrets/kv", "internal/cryptography", "domain-no-infrastructure"},
 		{"http querying storage", "internal/httpapi", "internal/repository", "httpapi-translates-only"},
 		{"non-app naming a backend", "internal/repository", "internal/storage/consul", "only-app-knows-backends"},
-		{"common growing dependencies", "internal/common", "internal/secrets", "common-stays-small"},
 		{"something importing app", "internal/httpapi", "internal/app", "app-is-a-place-not-a-layer"},
+		{"crypto learning the domain", "internal/cryptography", "internal/system", "leaves-stay-leaves"},
+		{"config growing dependencies", "internal/config", "internal/secrets", "leaves-stay-leaves"},
+		{"backend reaching up", "internal/storage/bolt", "internal/cryptography", "backends-see-only-bytes"},
+		{"domain subpackage into repository subpackage", "internal/system/foo", "internal/repository/index", "domain-no-infrastructure"},
+		{"http into a barrier subpackage", "internal/httpapi", "internal/barrier/x", "httpapi-translates-only"},
+		{"crypto subpackage learning the domain", "internal/cryptography/codec", "internal/system", "leaves-stay-leaves"},
 
 		{"app naming a backend", "internal/app", "internal/storage/postgres", ""},
 		{"domain on domain", "internal/secrets", "internal/authorization", ""},
 		{"repository on domain", "internal/repository", "internal/secrets", ""},
 		{"barrier on the storage contract", "internal/barrier", "internal/storage", ""},
+		{"backend on the storage contract", "internal/storage/bolt", "internal/storage", ""},
+		{"crypto subpackage on its own root", "internal/cryptography/codec", "internal/cryptography", ""},
 		{"main on app", "cmd/seal-gate", "internal/app", ""},
 	}
 

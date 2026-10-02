@@ -1,0 +1,4 @@
+# Go tooling emits LF unconditionally, so a CRLF checkout leaves `gofmt -l`
+# reporting every file as unformatted. eol=lf overrides core.autocrlf and
+# keeps the working tree LF on Windows too, not just the object store.
+* text=auto eol=lf
