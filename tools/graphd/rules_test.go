@@ -111,12 +111,16 @@ func TestRulePredicates(t *testing.T) {
 		{"crypto learning the domain", "internal/cryptography", "internal/system", "leaves-stay-leaves"},
 		{"config growing dependencies", "internal/config", "internal/secrets", "leaves-stay-leaves"},
 		{"backend reaching up", "internal/storage/bolt", "internal/cryptography", "backends-see-only-bytes"},
+		{"domain subpackage into repository subpackage", "internal/system/foo", "internal/repository/index", "domain-no-infrastructure"},
+		{"http into a barrier subpackage", "internal/httpapi", "internal/barrier/x", "httpapi-translates-only"},
+		{"crypto subpackage learning the domain", "internal/cryptography/codec", "internal/system", "leaves-stay-leaves"},
 
 		{"app naming a backend", "internal/app", "internal/storage/postgres", ""},
 		{"domain on domain", "internal/secrets", "internal/authorization", ""},
 		{"repository on domain", "internal/repository", "internal/secrets", ""},
 		{"barrier on the storage contract", "internal/barrier", "internal/storage", ""},
 		{"backend on the storage contract", "internal/storage/bolt", "internal/storage", ""},
+		{"crypto subpackage on its own root", "internal/cryptography/codec", "internal/cryptography", ""},
 		{"main on app", "cmd/seal-gate", "internal/app", ""},
 	}
 

@@ -50,5 +50,11 @@ func (s *Server) Run(ctx context.Context) error {
 	s.logger.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.grace)
 	defer cancel()
-	return s.httpServer.Shutdown(shutdownCtx)
+
+	// Past the grace period, force connections closed so handlers see their
+	// request context cancelled before the caller tears down dependencies.
+	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
+		return errors.Join(err, s.httpServer.Close())
+	}
+	return nil
 }

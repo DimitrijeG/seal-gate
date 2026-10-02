@@ -73,12 +73,8 @@ func classified(rel string) bool {
 
 // isPersistence reports whether rel is off limits to domain modules and httpapi.
 func isPersistence(rel string) bool {
-	switch {
-	case rel == "internal/repository", rel == "internal/barrier":
-		return true
-	case strings.HasPrefix(rel, "internal/storage"):
-		return true
-	case rel == "internal/cryptography":
+	switch topLevel(rel) {
+	case "internal/repository", "internal/barrier", "internal/storage", "internal/cryptography":
 		return true
 	default:
 		return false
@@ -90,12 +86,14 @@ func isBackend(rel string) bool {
 	return strings.HasPrefix(rel, "internal/storage/")
 }
 
+// isLeaf covers subpackages of config and cryptography, but only the storage
+// contract itself: backends have their own rule.
 func isLeaf(rel string) bool {
-	switch rel {
-	case "internal/config", "internal/cryptography", "internal/storage":
+	switch topLevel(rel) {
+	case "internal/config", "internal/cryptography":
 		return true
 	default:
-		return false
+		return rel == "internal/storage"
 	}
 }
 
@@ -139,7 +137,9 @@ var Rules = []Rule{
 	{
 		ID:  "leaves-stay-leaves",
 		Why: "config, cryptography and the storage contract are shared by many packages and must not depend on any of them",
-		Bad: func(from, to string) bool { return isLeaf(from) && strings.HasPrefix(to, "internal/") },
+		Bad: func(from, to string) bool {
+			return isLeaf(from) && strings.HasPrefix(to, "internal/") && topLevel(to) != topLevel(from)
+		},
 	},
 	{
 		ID:  "backends-see-only-bytes",

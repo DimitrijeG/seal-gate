@@ -20,6 +20,7 @@ type errorBody struct {
 var errUnknownField = errors.New("unknown field in request body")
 var errUnsupportedMediaType = errors.New("expected Content-Type application/json")
 var errNotImplemented = errors.New("not implemented")
+var errTrailingData = errors.New("request body must contain a single JSON object")
 
 const maxBodyBytes = 16 << 10
 
@@ -64,7 +65,7 @@ func classify(err error) (int, string) {
 	case errors.Is(err, errNotImplemented):
 		return http.StatusNotImplemented, err.Error()
 
-	case errors.Is(err, errUnknownField):
+	case errors.Is(err, errUnknownField), errors.Is(err, errTrailingData):
 		return http.StatusBadRequest, err.Error()
 
 	case errors.Is(err, io.EOF):
@@ -128,13 +129,24 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, into any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	decoder.DisallowUnknownFields()
 
-	err = decoder.Decode(into)
-
 	// The decoder reports unknown fields only as message text.
 	const unknownFieldPrefix = "json: unknown field "
-	if err != nil && strings.HasPrefix(err.Error(), unknownFieldPrefix) {
-		return fmt.Errorf("%w: %s", errUnknownField, strings.TrimPrefix(err.Error(), unknownFieldPrefix))
+	if err := decoder.Decode(into); err != nil {
+		if field, ok := strings.CutPrefix(err.Error(), unknownFieldPrefix); ok {
+			return fmt.Errorf("%w: %s", errUnknownField, field)
+		}
+		return err
 	}
 
-	return err
+	// Decode stops after one value; reading on catches trailing data and
+	// padding past the size limit.
+	var sizeErr *http.MaxBytesError
+	switch err := decoder.Decode(&struct{}{}); {
+	case errors.Is(err, io.EOF):
+		return nil
+	case errors.As(err, &sizeErr):
+		return err
+	default:
+		return errTrailingData
+	}
 }
