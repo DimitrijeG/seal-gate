@@ -28,11 +28,8 @@ func NewServer(dir string) *Server {
 	return &Server{dir: dir, subs: make(map[chan []byte]struct{})}
 }
 
-// Rebuild reloads the graph and broadcasts it.
-//
-// A failed load never clears the current graph. The browser keeps showing the
-// last good state with a stale badge, because a graph that vanishes on every
-// half-typed identifier is one you stop opening.
+// Rebuild never clears the graph on failure; the browser shows the last good
+// one with a stale badge instead.
 func (s *Server) Rebuild() {
 	graph, err := Load(s.dir)
 
@@ -115,8 +112,7 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// handleEvents is the live channel. Server-sent events rather than a
-// WebSocket: the traffic is one-directional, and SSE reconnects on its own.
+// handleEvents uses SSE, not WebSocket: traffic is one-way and SSE reconnects itself.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {

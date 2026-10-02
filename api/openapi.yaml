@@ -1,0 +1,32 @@
+openapi: 3.1.0
+
+info:
+  title: seal-gate
+  version: 0.1.0
+  summary: Secrets-management service with Shamir-based unsealing.
+  description: >
+    Lists only operations that are implemented. Each one is added in the same
+    change as its handler.
+
+servers:
+  - url: /v1
+    description: Version prefix. It is part of every route, not a host.
+
+paths: {}
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      description: >
+        The body of every non-2xx response. Messages are safe to show an
+        operator: they never carry share material, key material, or an internal
+        error string.
+      required: [errors]
+      properties:
+        errors:
+          type: array
+          minItems: 1
+          items:
+            type: string
+      additionalProperties: false
