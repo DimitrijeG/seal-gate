@@ -7,6 +7,8 @@ import (
 	"fmt"
 )
 
+const keyLen = 32
+
 var (
 	errNotImplemented       = errors.New("cryptography: not implemented")
 	ErrUnsupportedAlgorithm = errors.New("cryptography: unsupported algorithm")
@@ -40,7 +42,7 @@ type aes256GCM struct{}
 var _ Cipher = (*aes256GCM)(nil)
 
 func newAEAD(key []byte) (cipher.AEAD, error) {
-	if len(key) != 32 {
+	if len(key) != keyLen {
 		return nil, ErrInvalidKeyLength
 	}
 

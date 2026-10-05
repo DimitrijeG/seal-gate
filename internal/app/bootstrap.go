@@ -57,7 +57,7 @@ func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
 		keys:    cryptography.NewKeyHolder(),
 		cipher:  cipher,
 		shamir:  shamir,
-		wrapper: cryptography.NewKeyWrapper(),
+		wrapper: cryptography.NewKeyWrapper(cipher),
 		random:  random,
 	}, nil
 }
