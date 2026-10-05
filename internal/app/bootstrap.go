@@ -48,14 +48,17 @@ func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
 		return nil, err
 	}
 
+	random := cryptography.CryptoRandom{}
+	shamir := cryptography.NewShamir(random)
+
 	return &infrastructure{
 		logger:  slog.New(handler),
 		clock:   systemClock{},
 		keys:    cryptography.NewKeyHolder(),
 		cipher:  cipher,
-		shamir:  cryptography.NewShamir(),
+		shamir:  shamir,
 		wrapper: cryptography.NewKeyWrapper(),
-		random:  cryptography.CryptoRandom{},
+		random:  random,
 	}, nil
 }
 
