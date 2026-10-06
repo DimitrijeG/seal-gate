@@ -10,7 +10,6 @@ import (
 const keyLen = 32
 
 var (
-	errNotImplemented       = errors.New("cryptography: not implemented")
 	ErrUnsupportedAlgorithm = errors.New("cryptography: unsupported algorithm")
 	ErrInvalidKeyLength     = errors.New("cryptography: invalid key length")
 )
