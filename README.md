@@ -30,6 +30,19 @@ api/openapi.yaml        the HTTP contract
 tools/graphd/           live package graph + import rule enforcement
 ```
 
+## What a change includes
+
+Code and its tests ship together, in the same pull request. An issue is never
+split into one that writes an implementation and a later one that tests it:
+merged behavior that nothing asserts is not finished work, and a test written
+a milestone afterwards gets written against the code instead of against the
+requirement it was supposed to pin down.
+
+The exception is a test that cannot run here, and it has to say so. `-race`
+needs a C compiler this project does not assume on a development machine, and
+fuzzing has no natural end, so both would run in CI on their own schedule rather than
+inside a red-green cycle.
+
 ## Checks
 
 ### On save — automatic
