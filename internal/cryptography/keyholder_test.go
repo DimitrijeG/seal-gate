@@ -82,13 +82,13 @@ func TestKeyHolder(t *testing.T) {
 	t.Run("zeroing the caller's slice after install does not affect the borrowed key", func(t *testing.T) {
 		kh := cryptography.NewKeyHolder()
 		key := installKey(t, kh)
-		cloned := bytes.Clone(key)
+		want := bytes.Clone(key)
 
 		clear(key)
 		called := false
 		err := kh.WithKey(func(lentKey []byte) error {
-			if !bytes.Equal(lentKey, cloned) {
-				t.Errorf("got lent key %x, want %x", lentKey, cloned)
+			if !bytes.Equal(lentKey, want) {
+				t.Errorf("got lent key %x, want %x", lentKey, want)
 			}
 			called = true
 			return nil
