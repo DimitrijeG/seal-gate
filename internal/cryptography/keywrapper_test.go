@@ -65,8 +65,8 @@ func TestKeyWrapper(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := kw.Unwrap(tt.wrappingKey, tt.wrappedKey, tt.ad)
-				if err == nil {
-					t.Errorf("Unwrap error = nil, want an error")
+				if !errors.Is(err, cryptography.ErrDecryptionFailed) {
+					t.Errorf("Unwrap error = %v, want %v", err, cryptography.ErrDecryptionFailed)
 				}
 			})
 		}
@@ -138,8 +138,8 @@ func TestKeyWrapper(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := kw.Unwrap(wrappingKey, tt.wrappedKey, ad)
-				if err == nil {
-					t.Errorf("Unwrap error = nil, want an error")
+				if !errors.Is(err, cryptography.ErrDecryptionFailed) {
+					t.Errorf("Unwrap error = %v, want %v", err, cryptography.ErrDecryptionFailed)
 				}
 			})
 		}

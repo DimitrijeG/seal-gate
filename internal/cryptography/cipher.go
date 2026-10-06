@@ -12,12 +12,16 @@ const keyLen = 32
 var (
 	ErrUnsupportedAlgorithm = errors.New("cryptography: unsupported algorithm")
 	ErrInvalidKeyLength     = errors.New("cryptography: invalid key length")
+	// ErrDecryptionFailed is returned for a wrong key or additional data and for a
+	// tampered or truncated ciphertext, without saying which.
+	ErrDecryptionFailed = errors.New("cryptography: decryption failed")
 )
 
 // Cipher is authenticated encryption whose output carries everything needed to
 // decrypt except the key and the additional data.
 type Cipher interface {
 	Encrypt(key, plaintext, additionalData []byte) ([]byte, error)
+	// Decrypt returns ErrDecryptionFailed when the key, additional data or ciphertext do not match.
 	Decrypt(key, ciphertext, additionalData []byte) ([]byte, error)
 }
 
@@ -75,7 +79,7 @@ func (c *aes256GCM) Decrypt(key, ciphertext, additionalData []byte) ([]byte, err
 
 	plaintext, err := gcm.Open(nil, nil, ciphertext, additionalData)
 	if err != nil {
-		return nil, fmt.Errorf("cryptography: %w", err)
+		return nil, ErrDecryptionFailed
 	}
 
 	return plaintext, nil

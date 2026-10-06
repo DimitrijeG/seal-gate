@@ -115,8 +115,8 @@ func TestAES256GCM(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				if _, err := c.Decrypt(tt.key, tt.ct, tt.ad); err == nil {
-					t.Errorf("Decrypt succeeded, want an error")
+				if _, err := c.Decrypt(tt.key, tt.ct, tt.ad); !errors.Is(err, cryptography.ErrDecryptionFailed) {
+					t.Errorf("Decrypt error = %v, want ErrDecryptionFailed", err)
 				}
 			})
 		}
@@ -138,8 +138,8 @@ func TestAES256GCM(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				if _, err := c.Decrypt(key, tt.ct, nil); err == nil {
-					t.Errorf("Decrypt succeeded, want an error")
+				if _, err := c.Decrypt(key, tt.ct, nil); !errors.Is(err, cryptography.ErrDecryptionFailed) {
+					t.Errorf("Decrypt error = %v, want ErrDecryptionFailed", err)
 				}
 			})
 		}
