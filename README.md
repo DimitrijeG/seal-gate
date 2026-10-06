@@ -38,10 +38,10 @@ merged behavior that nothing asserts is not finished work, and a test written
 a milestone afterwards gets written against the code instead of against the
 requirement it was supposed to pin down.
 
-The exception is a test that cannot run here, and it has to say so. `-race`
-needs a C compiler this project does not assume on a development machine, and
-fuzzing has no natural end, so both would run in CI on their own schedule rather than
-inside a red-green cycle.
+The exception is a test no red-green cycle can drive, and it gets a `test`
+issue of its own. `-race` needs a C compiler, which a development machine
+here is not assumed to have, so it runs only in CI, on every pull request.
+Fuzzing has no natural end, so it runs against a time budget instead.
 
 ## Checks
 
