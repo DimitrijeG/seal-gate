@@ -5,16 +5,10 @@ import (
 	"time"
 )
 
+// Repository persists the initialization state; Load returns ErrNotInitialized before the first Save.
 type Repository interface {
-	IsInitialized(ctx context.Context) (bool, error)
-	SaveInitialization(ctx context.Context, state InitializationState) error
-	LoadSealConfiguration(ctx context.Context) (SealConfiguration, error)
-	LoadEncryptedKey(ctx context.Context) (EncryptedKey, error)
-}
-
-type UnsealedResource interface {
-	Activate() error
-	Deactivate()
+	Save(ctx context.Context, state InitializationState) error
+	Load(ctx context.Context) (InitializationState, error)
 }
 
 type SecretSharing interface {
