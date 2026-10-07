@@ -157,18 +157,26 @@ func TestBarrier(t *testing.T) {
 		}
 	})
 
-	t.Run("a stored value with an unknown format version does not decrypt", func(t *testing.T) {
-		b, p, _ := newBarrier(t, nil)
+	t.Run("a stored value with an unsupported format version is rejected", func(t *testing.T) {
+		rootKey := newRootKey(t)
+		b, p, _ := newBarrier(t, rootKey)
 		key, value := "key", []byte("value")
+		cipher, err := cryptography.NewAEADCipher("aes-256-gcm")
+		if err != nil {
+			t.Fatalf("NewAEADCipher: %v", err)
+		}
 
-		mustPut(t, b, key, value)
-		raw := mustGetRaw(t, p, key)
-		raw[0] = 2
-		mustPutRaw(t, p, key, raw)
-		_, err := b.Get(t.Context(), key)
+		// A genuine version-2 value, authentic under its own additional data.
+		version := byte(2)
+		ciphertext, err := cipher.Encrypt(rootKey, value, append([]byte{version}, key...))
+		if err != nil {
+			t.Fatalf("Encrypt: %v", err)
+		}
+		mustPutRaw(t, p, key, append([]byte{version}, ciphertext...))
+		_, err = b.Get(t.Context(), key)
 
-		if !errors.Is(err, cryptography.ErrDecryptionFailed) {
-			t.Errorf("Get: got %v, want %v", err, cryptography.ErrDecryptionFailed)
+		if !errors.Is(err, barrier.ErrUnsupportedVersion) {
+			t.Errorf("Get: got %v, want %v", err, barrier.ErrUnsupportedVersion)
 		}
 	})
 

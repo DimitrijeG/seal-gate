@@ -10,10 +10,13 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 )
 
-var ErrSealed = errors.New("barrier: sealed")
+var (
+	ErrSealed             = errors.New("barrier: sealed")
+	ErrUnsupportedVersion = errors.New("barrier: unsupported format version")
+)
 
-// valueFormatVersion prefixes every stored value;
-// Get reads it from the value, not from this constant.
+// valueFormatVersion prefixes every stored value; Get rejects any other version
+// and binds the stored byte, not this constant, into the additional data.
 const valueFormatVersion = 1
 
 // AEADBarrier encrypts values with the barrier key before they reach the backend
@@ -55,6 +58,9 @@ func (b *AEADBarrier) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 		if len(raw) == 0 {
 			return nil, cryptography.ErrDecryptionFailed
+		}
+		if raw[0] != valueFormatVersion {
+			return nil, ErrUnsupportedVersion
 		}
 
 		ad := additionalData(raw[0], key)

@@ -9,8 +9,8 @@ import (
 // ErrNotFound is returned by Get when the key has no value.
 var ErrNotFound = errors.New("storage: not found")
 
-// Backend stores opaque values under string keys. It does not keep value after
-// Put returns, the slice Get returns belongs to the caller, and one Put is atomic.
+// Backend stores opaque values under string keys. Put does not retain the caller's
+// slice, the slice Get returns belongs to the caller, and one Put is atomic.
 type Backend interface {
 	Name() string
 	// Get returns ErrNotFound when key has no value.
