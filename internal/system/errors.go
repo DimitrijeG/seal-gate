@@ -2,8 +2,6 @@ package system
 
 import "errors"
 
-var errNotImplemented = errors.New("system: not implemented")
-
 var (
 	ErrAlreadyInitialized   = errors.New("system: already initialized")
 	ErrNotInitialized       = errors.New("system: not initialized")
