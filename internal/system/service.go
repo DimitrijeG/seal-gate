@@ -22,19 +22,6 @@ type InitResult struct {
 }
 
 func (s *Service) Init(ctx context.Context, cfg SealConfiguration) (InitResult, error) {
-	if cfg.Threshold < 2 || cfg.Threshold > cfg.Shares {
-		return InitResult{}, ErrInvalidSealConfig
-	}
-
-	// A second init would overwrite the wrapped key and orphan every share.
-	initialized, err := s.keyring.isInitialized(ctx)
-	if err != nil {
-		return InitResult{}, err
-	}
-	if initialized {
-		return InitResult{}, ErrAlreadyInitialized
-	}
-
-	shares, err := s.keyring.generate(ctx, cfg, s.clock.Now())
-	return InitResult{Shares: shares}, err
+	// TODO(#4): validate the seal configuration, refuse a second init, and return the shares.
+	return InitResult{}, errNotImplemented
 }

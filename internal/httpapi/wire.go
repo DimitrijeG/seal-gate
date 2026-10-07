@@ -120,6 +120,8 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 // decodeJSON rejects unknown fields: a misspelled threshold silently ignored
 // would only surface later, when the shares no longer unseal.
+//
+//lint:ignore U1000 called by handleInit once it is rebuilt (#4)
 func decodeJSON(w http.ResponseWriter, r *http.Request, into any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
