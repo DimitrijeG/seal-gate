@@ -4,10 +4,12 @@ package system
 import (
 	"context"
 	"errors"
+	"sync"
 )
 
 // Service runs the seal lifecycle: it decides when keys move, and Keyring moves them.
 type Service struct {
+	mu      sync.Mutex
 	keyring *Keyring
 	clock   Clock
 }
@@ -29,6 +31,7 @@ type Status struct {
 	Initialized bool
 	Sealed      bool
 	Config      SealConfiguration
+	Progress    int
 }
 
 // maxShares is Split's limit, checked here so a client gets ErrInvalidSealConfig, not a 500.
@@ -41,6 +44,7 @@ func (s *Service) Init(ctx context.Context, cfg SealConfiguration) (InitResult, 
 		return InitResult{}, ErrInvalidSealConfig
 	}
 
+	// TODO(#17): two concurrent inits can both pass this check and both save.
 	_, err := s.keyring.load(ctx)
 	if err == nil {
 		return InitResult{}, ErrAlreadyInitialized
@@ -57,9 +61,21 @@ func (s *Service) Init(ctx context.Context, cfg SealConfiguration) (InitResult, 
 	return InitResult{Shares: shares}, nil
 }
 
+func (s *Service) status(state InitializationState) Status {
+	return Status{
+		Initialized: true,
+		Sealed:      !s.keyring.unlocked(),
+		Config:      state.Config,
+		Progress:    s.keyring.progress(),
+	}
+}
+
 // Status reports an uninitialized instance as a status, not an error;
 // only a storage failure errors.
 func (s *Service) Status(ctx context.Context) (Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	state, err := s.keyring.load(ctx)
 	if errors.Is(err, ErrNotInitialized) {
 		return Status{Sealed: true}, nil
@@ -67,11 +83,41 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	return s.status(state), nil
+}
 
-	// TODO(#4): ask the key holder once unseal exists.
-	return Status{
-		Initialized: true,
-		Sealed:      true,
-		Config:      state.Config,
-	}, nil
+// Unseal buffers one share and unseals at the threshold; a failed attempt
+// discards the buffer and returns ErrInvalidShare.
+func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, err := s.keyring.load(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	if s.keyring.unlocked() {
+		return Status{}, ErrAlreadyUnsealed
+	}
+	if len(share) == 0 {
+		return Status{}, ErrInvalidShare
+	}
+
+	s.keyring.submit(share)
+
+	if s.keyring.progress() >= state.Config.Threshold {
+		if err := s.keyring.unlock(state); err != nil {
+			return Status{}, err
+		}
+	}
+	return s.status(state), nil
+}
+
+// Seal discards buffered shares and clears the key;
+// sealing a sealed instance changes nothing.
+func (s *Service) Seal(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.keyring.lock()
 }

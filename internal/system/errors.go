@@ -5,6 +5,7 @@ import "errors"
 var (
 	ErrAlreadyInitialized   = errors.New("system: already initialized")
 	ErrNotInitialized       = errors.New("system: not initialized")
+	ErrAlreadyUnsealed      = errors.New("system: already unsealed")
 	ErrSealed               = errors.New("system: sealed")
 	ErrInvalidShare         = errors.New("system: invalid unseal share")
 	ErrInvalidSealConfig    = errors.New("system: invalid seal configuration")
