@@ -1,30 +1,24 @@
 package system
 
 import (
-	"fmt"
 	"time"
 )
 
+// SealConfiguration is how many shares init makes and how many unseal needs.
 type SealConfiguration struct {
 	Shares    int
 	Threshold int
 }
 
-// wrapFormatVersion is stored with the wrapped key so a format change is
-// detected rather than fed to the wrong unwrap.
-const wrapFormatVersion = 1
-
-// wrapAdditionalData binds the ciphertext to its purpose and format version,
-// which are otherwise stored unauthenticated.
-func wrapAdditionalData(version int) []byte {
-	return fmt.Appendf(nil, "seal-gate/barrier-key/v%d", version)
-}
-
+// EncryptedKey is the barrier key wrapped under the root key;
+// Version names the wrap format.
 type EncryptedKey struct {
 	Ciphertext []byte
 	Version    int
 }
 
+// InitializationState is everything init persists,
+// saved as one record so a crash cannot leave it half-written.
 type InitializationState struct {
 	Config        SealConfiguration
 	EncryptedKey  EncryptedKey

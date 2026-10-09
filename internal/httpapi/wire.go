@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,16 +14,22 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
-type errorBody struct {
+type errorResponse struct {
 	Errors []string `json:"errors"`
 }
 
-var errUnknownField = errors.New("unknown field in request body")
-var errUnsupportedMediaType = errors.New("expected Content-Type application/json")
-var errNotImplemented = errors.New("not implemented")
-var errTrailingData = errors.New("request body must contain a single JSON object")
+// Their text is sent to clients as is, so it carries no package prefix.
+var (
+	errUnsupportedMediaType = errors.New("expected Content-Type application/json")
+	errUnknownField         = errors.New("unknown field in request body")
+	errTrailingData         = errors.New("request body must contain a single JSON object")
+	errSealed               = errors.New("the system is sealed")
+)
 
-const maxBodyBytes = 16 << 10
+const (
+	mediaTypeJSON = "application/json"
+	maxBodyBytes  = 16 << 10
+)
 
 // writeError keeps the status mapping here so domain modules never import net/http.
 // Unrecognised errors get a generic 500, since their text can carry storage detail.
@@ -33,7 +40,7 @@ func writeError(w http.ResponseWriter, logger *slog.Logger, err error) {
 		logger.Error("request failed", "error", err)
 	}
 
-	writeJSON(w, status, errorBody{Errors: []string{message}})
+	writeJSON(w, status, errorResponse{Errors: []string{message}})
 }
 
 func classify(err error) (int, string) {
@@ -41,88 +48,73 @@ func classify(err error) (int, string) {
 		syntaxErr *json.SyntaxError
 		typeErr   *json.UnmarshalTypeError
 		sizeErr   *http.MaxBytesError
+		base64Err base64.CorruptInputError
 	)
 
 	switch {
-	// Decode errors are the client's mistake: a specific 400 beats a 500 that
-	// sends the operator to our logs.
+	// Request decoding: the client's mistake, so a specific 400 beats a 500
+	// that sends the operator to our logs.
+	case errors.Is(err, errUnsupportedMediaType):
+		return http.StatusUnsupportedMediaType, err.Error()
+	case errors.Is(err, io.EOF):
+		return http.StatusBadRequest, "request body is empty"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return http.StatusBadRequest, "request body ended mid-value"
 	case errors.As(err, &syntaxErr):
 		return http.StatusBadRequest, fmt.Sprintf("malformed JSON at byte offset %d", syntaxErr.Offset)
-
 	case errors.As(err, &typeErr):
 		if typeErr.Field == "" {
 			// The top-level mismatch would name our Go type.
 			return http.StatusBadRequest, "request body must be a JSON object"
 		}
 		return http.StatusBadRequest, fmt.Sprintf("field %q must be of type %s", typeErr.Field, typeErr.Type)
-
+	case errors.Is(err, errUnknownField),
+		errors.Is(err, errTrailingData):
+		return http.StatusBadRequest, err.Error()
 	case errors.As(err, &sizeErr):
 		return http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", sizeErr.Limit)
-
-	case errors.Is(err, errUnsupportedMediaType):
-		return http.StatusUnsupportedMediaType, err.Error()
-
-	case errors.Is(err, errNotImplemented):
-		return http.StatusNotImplemented, err.Error()
-
-	case errors.Is(err, errUnknownField), errors.Is(err, errTrailingData):
-		return http.StatusBadRequest, err.Error()
-
-	case errors.Is(err, io.EOF):
-		return http.StatusBadRequest, "request body is empty"
-
-	case errors.Is(err, io.ErrUnexpectedEOF):
-		return http.StatusBadRequest, "request body ended mid-value"
-
-	// case errors.Is(err, authorization.ErrForbidden):
-	// 	return http.StatusForbidden, "permission denied"
-
-	// case errors.Is(err, identity.ErrInvalidCredentials),
-	// 	errors.Is(err, identity.ErrTokenExpired),
-	// 	errors.Is(err, identity.ErrTokenRevoked):
-	// 	// One message, so an attacker can't tell which part of a guess was right.
-	// 	return http.StatusUnauthorized, "invalid credentials"
-
-	// case errors.Is(err, secrets.ErrNotFound),
-	// 	errors.Is(err, identity.ErrNotFound),
-	// 	errors.Is(err, authorization.ErrPolicyNotFound):
-	// 	return http.StatusNotFound, "not found"
-
-	case errors.Is(err, system.ErrAlreadyInitialized):
-		return http.StatusConflict, err.Error()
-
-	// case errors.Is(err, secrets.ErrInvalidPath),
-	case errors.Is(err, system.ErrInvalidSealConfig),
-		errors.Is(err, system.ErrInvalidShare):
-		return http.StatusBadRequest, err.Error()
-
-	case errors.Is(err, system.ErrSealed), errors.Is(err, system.ErrNotInitialized):
-		// 503, not 403: sealed is temporary and the client should retry.
+	case errors.As(err, &base64Err):
+		return http.StatusBadRequest, "request body has a value that is not valid base64"
+	// Instance state: the request was valid, but there is no key to serve it with.
+	case errors.Is(err, errSealed):
 		return http.StatusServiceUnavailable, err.Error()
-
-	case errors.Is(err, system.ErrUnsupportedKeyFormat):
-		// Unfixable by the client, but named so the operator knows why.
-		return http.StatusInternalServerError, err.Error()
-
-	default:
-		return http.StatusInternalServerError, "internal error"
 	}
+
+	for _, d := range domainErrors {
+		if errors.Is(err, d.err) {
+			return d.status, d.message
+		}
+	}
+
+	// Infrastructure (storage, crypto, anything unmapped): its text can leak detail.
+	return http.StatusInternalServerError, "internal error"
+}
+
+// domainErrors gives each domain sentinel its client message, so its prefixed
+// text is never sent. Scanned in order: an error wrapping two takes the first.
+var domainErrors = []struct {
+	err     error
+	status  int
+	message string
+}{
+	{system.ErrInvalidSealConfig, http.StatusBadRequest, "invalid seal configuration"},
+	{system.ErrAlreadyInitialized, http.StatusConflict, "already initialized"},
+	{system.ErrNotInitialized, http.StatusConflict, "not initialized"},
+	{system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
+	{system.ErrInvalidShare, http.StatusBadRequest, "invalid unseal share"},
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", mediaTypeJSON)
 	w.WriteHeader(status)
-
-	if body != nil {
-		_ = json.NewEncoder(w).Encode(body)
-	}
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // decodeJSON rejects unknown fields: a misspelled threshold silently ignored
 // would only surface later, when the shares no longer unseal.
 func decodeJSON(w http.ResponseWriter, r *http.Request, into any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
+	if err != nil || mediaType != mediaTypeJSON {
 		return errUnsupportedMediaType
 	}
 
