@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Keyring owns key material, leaving Service with only the state machine.
-// Methods are unexported and unsynchronized: only Service calls them, under its lock.
+// Keyring owns key material for Service. Unsynchronized: Service locks every call
+// that touches the buffer or active key; Init's calls touch neither (#17).
 type Keyring struct {
 	repo    Repository
 	sharing SecretSharing
