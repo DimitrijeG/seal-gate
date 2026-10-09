@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -33,7 +34,7 @@ type services struct {
 func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(cfg.Logger.Level)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("app: logger level: %w", err)
 	}
 
 	options := &slog.HandlerOptions{Level: level}
@@ -44,7 +45,7 @@ func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
 
 	cipher, err := cryptography.NewAEADCipher(cfg.Crypto.AEADAlgorithm)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("app: cipher: %w", err)
 	}
 
 	random := cryptography.CryptoRandom{}

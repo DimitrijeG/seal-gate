@@ -4,6 +4,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -37,7 +38,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		s.logger.Info("listening", "address", s.httpServer.Addr)
 		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			errCh <- fmt.Errorf("httpapi: %w", err)
 		}
 		close(errCh)
 	}()
@@ -55,7 +56,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Past the grace period, force connections closed so handlers see their
 	// request context cancelled before the caller tears down dependencies.
 	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-		return errors.Join(err, s.httpServer.Close())
+		return fmt.Errorf("httpapi: %w", errors.Join(err, s.httpServer.Close()))
 	}
 	return nil
 }
