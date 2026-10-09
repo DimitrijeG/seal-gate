@@ -19,7 +19,7 @@ type systemRepository struct {
 }
 
 const (
-	recordVersion = 1
+	initializationRecordVersion = 1
 	// sys/ is reserved for records that bypass the barrier; nothing writes there through it.
 	initializationKey = "sys/initialization"
 )
@@ -36,7 +36,7 @@ type initializationRecord struct {
 
 func toRecord(state system.InitializationState) initializationRecord {
 	return initializationRecord{
-		Version:       recordVersion,
+		Version:       initializationRecordVersion,
 		Shares:        state.Config.Shares,
 		Threshold:     state.Config.Threshold,
 		KeyVersion:    state.EncryptedKey.Version,
