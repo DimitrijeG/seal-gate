@@ -42,11 +42,14 @@ func (b *AEADBarrier) Put(ctx context.Context, key string, value []byte) error {
 		ad := additionalData(valueFormatVersion, key)
 		ciphertext, err := b.cipher.Encrypt(barrierKey, value, ad)
 		if err != nil {
-			return err
+			return fmt.Errorf("barrier: %w", err)
 		}
 
 		stored := append([]byte{valueFormatVersion}, ciphertext...)
-		return b.physical.Put(ctx, key, stored)
+		if err := b.physical.Put(ctx, key, stored); err != nil {
+			return fmt.Errorf("barrier: %w", err)
+		}
+		return nil
 	})
 }
 
@@ -54,29 +57,40 @@ func (b *AEADBarrier) Get(ctx context.Context, key string) ([]byte, error) {
 	return withKeyValue(b, func(barrierKey []byte) ([]byte, error) {
 		raw, err := b.physical.Get(ctx, key)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("barrier: %w", err)
 		}
 		if len(raw) == 0 {
-			return nil, cryptography.ErrDecryptionFailed
+			return nil, fmt.Errorf("barrier: %w", cryptography.ErrDecryptionFailed)
 		}
 		if raw[0] != valueFormatVersion {
 			return nil, ErrUnsupportedVersion
 		}
 
 		ad := additionalData(raw[0], key)
-		return b.cipher.Decrypt(barrierKey, raw[1:], ad)
+		plaintext, err := b.cipher.Decrypt(barrierKey, raw[1:], ad)
+		if err != nil {
+			return nil, fmt.Errorf("barrier: %w", err)
+		}
+		return plaintext, nil
 	})
 }
 
 func (b *AEADBarrier) Delete(ctx context.Context, key string) error {
 	return b.withKey(func(_ []byte) error {
-		return b.physical.Delete(ctx, key)
+		if err := b.physical.Delete(ctx, key); err != nil {
+			return fmt.Errorf("barrier: %w", err)
+		}
+		return nil
 	})
 }
 
 func (b *AEADBarrier) List(ctx context.Context, prefix string) ([]string, error) {
 	return withKeyValue(b, func(_ []byte) ([]string, error) {
-		return b.physical.List(ctx, prefix)
+		keys, err := b.physical.List(ctx, prefix)
+		if err != nil {
+			return nil, fmt.Errorf("barrier: %w", err)
+		}
+		return keys, nil
 	})
 }
 
@@ -87,16 +101,13 @@ func additionalData(version byte, key string) []byte {
 }
 
 // withKey maps a missing key to ErrSealed and holds the key for the whole call,
-// so a seal waits for it.
+// so a seal waits for it; f wraps its own errors.
 func (b *AEADBarrier) withKey(f func(barrierKey []byte) error) error {
 	err := b.keys.WithKey(f)
-	switch {
-	case errors.Is(err, cryptography.ErrNoActiveKey):
+	if errors.Is(err, cryptography.ErrNoActiveKey) {
 		return ErrSealed
-	case err != nil:
-		return fmt.Errorf("barrier: %w", err)
 	}
-	return nil
+	return err
 }
 
 // withKeyValue is withKey for callbacks that produce a value; T must not alias the key.

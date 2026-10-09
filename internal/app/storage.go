@@ -20,9 +20,14 @@ var backendFactories = map[string]backendFactory{
 func buildStorage(ctx context.Context, cfg *config.Config) (storage.Backend, error) {
 	factory, ok := backendFactories[cfg.Storage.Type]
 	if !ok {
-		return nil, fmt.Errorf("app: unsupported storage backend %q", cfg.Storage.Type)
+		return nil, fmt.Errorf("app: storage: unsupported backend %q", cfg.Storage.Type)
 	}
-	return factory(ctx, cfg)
+
+	backend, err := factory(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("app: storage: %w", err)
+	}
+	return backend, nil
 }
 
 func openMemory(context.Context, *config.Config) (storage.Backend, error) {

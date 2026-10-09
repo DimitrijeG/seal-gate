@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/dimitrijegasic/seal-gate/internal/config"
@@ -50,6 +51,9 @@ func (a *Application) Run(ctx context.Context) error {
 	if errors.Is(err, context.Canceled) {
 		err = nil
 	}
+	if err != nil {
+		err = fmt.Errorf("app: serve: %w", err)
+	}
 	return errors.Join(err, a.close())
 }
 
@@ -57,7 +61,9 @@ func (a *Application) Run(ctx context.Context) error {
 func (a *Application) close() error {
 	var errs []error
 	for i := len(a.closers) - 1; i >= 0; i-- {
-		errs = append(errs, a.closers[i]())
+		if err := a.closers[i](); err != nil {
+			errs = append(errs, fmt.Errorf("app: close: %w", err))
+		}
 	}
 	a.closers = nil
 	return errors.Join(errs...)
