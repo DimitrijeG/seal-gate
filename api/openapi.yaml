@@ -91,6 +91,44 @@ paths:
         "204":
           description: Sealed.
 
+  /sys/status:
+    get:
+      operationId: status
+      summary: Report whether the instance is initialized and sealed.
+      description: >
+        Open by design: operators read it before they can hold a token, to
+        know whether to init or unseal.
+      security: []
+      responses:
+        "200":
+          description: The current state. Before init, `shares` and `threshold` are absent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sys/health:
+    get:
+      operationId: health
+      summary: Report whether the instance can serve requests.
+      description: >
+        Open by design, for load balancers and probes. Only says yes or no;
+        the detail is in `/sys/status`.
+      security: []
+      responses:
+        "204":
+          description: Unsealed.
+        "503":
+          description: Sealed or uninitialized; either way, there is no key to serve with.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   responses:
     BadRequest:
@@ -163,7 +201,7 @@ components:
 
     StatusResponse:
       type: object
-      required: [initialized, sealed, shares, threshold, progress]
+      required: [initialized, sealed, progress]
       properties:
         initialized:
           type: boolean
@@ -171,8 +209,10 @@ components:
           type: boolean
         shares:
           type: integer
+          description: Absent before init.
         threshold:
           type: integer
+          description: Absent before init.
         progress:
           type: integer
           minimum: 0

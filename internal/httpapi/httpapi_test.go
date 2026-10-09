@@ -40,6 +40,8 @@ type fakeSystem struct {
 	unsealResult system.Status
 	unsealErr    error
 	sealed       bool
+	statusResult system.Status
+	statusErr    error
 }
 
 func (f *fakeSystem) Init(ctx context.Context, cfg system.SealConfiguration) (system.InitResult, error) {
@@ -48,7 +50,7 @@ func (f *fakeSystem) Init(ctx context.Context, cfg system.SealConfiguration) (sy
 }
 
 func (f *fakeSystem) Status(ctx context.Context) (system.Status, error) {
-	return system.Status{}, nil
+	return f.statusResult, f.statusErr
 }
 
 func (f *fakeSystem) Unseal(ctx context.Context, share []byte) (system.Status, error) {

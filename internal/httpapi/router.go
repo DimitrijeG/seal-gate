@@ -13,6 +13,7 @@ type SystemService interface {
 	Init(ctx context.Context, cfg system.SealConfiguration) (system.InitResult, error)
 	Unseal(ctx context.Context, share []byte) (system.Status, error)
 	Seal(ctx context.Context)
+	Status(ctx context.Context) (system.Status, error)
 }
 
 // Handlers holds what the HTTP handlers call.

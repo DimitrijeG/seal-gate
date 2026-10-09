@@ -73,11 +73,15 @@ func TestWriteError(t *testing.T) {
 		}
 	})
 
-	t.Run("an unwritten handler is a 501", func(t *testing.T) {
-		status, _, _ := respond(t, errNotImplemented)
+	t.Run("a sealed instance is a 503", func(t *testing.T) {
+		status, _, message := respond(t, errSealed)
+		want := "the system is sealed"
 
-		if status != http.StatusNotImplemented {
-			t.Errorf("got %d, want %d", status, http.StatusNotImplemented)
+		if status != http.StatusServiceUnavailable {
+			t.Errorf("status: got %d, want %d", status, http.StatusServiceUnavailable)
+		}
+		if message != want {
+			t.Errorf("message: got %q, want %q", message, want)
 		}
 	})
 

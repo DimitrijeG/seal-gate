@@ -23,7 +23,7 @@ var (
 	errUnsupportedMediaType = errors.New("expected Content-Type application/json")
 	errUnknownField         = errors.New("unknown field in request body")
 	errTrailingData         = errors.New("request body must contain a single JSON object")
-	errNotImplemented       = errors.New("not implemented")
+	errSealed               = errors.New("the system is sealed")
 )
 
 const (
@@ -75,9 +75,9 @@ func classify(err error) (int, string) {
 		return http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", sizeErr.Limit)
 	case errors.As(err, &base64Err):
 		return http.StatusBadRequest, "request body has a value that is not valid base64"
-
-	case errors.Is(err, errNotImplemented):
-		return http.StatusNotImplemented, err.Error()
+	// Instance state: the request was valid, but there is no key to serve it with.
+	case errors.Is(err, errSealed):
+		return http.StatusServiceUnavailable, err.Error()
 	}
 
 	for _, d := range domainErrors {

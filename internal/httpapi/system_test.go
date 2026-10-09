@@ -215,3 +215,90 @@ func TestSeal(t *testing.T) {
 		}
 	})
 }
+
+func TestStatus(t *testing.T) {
+	t.Run("status reports the service's state", func(t *testing.T) {
+		status := system.Status{Initialized: true, Sealed: true, Config: system.SealConfiguration{Shares: 5, Threshold: 3}, Progress: 2}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
+		want := statusBody{Initialized: true, Sealed: true, Shares: 5, Threshold: 3, Progress: 2}
+
+		rec := do(t, router, http.MethodGet, "/v1/sys/status", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[statusBody](t, rec)
+
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("status before init omits shares and threshold", func(t *testing.T) {
+		status := system.Status{Sealed: true}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
+
+		rec := do(t, router, http.MethodGet, "/v1/sys/status", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		// A map, not statusBody: a struct cannot tell an absent key from a zero.
+		got := decode[map[string]any](t, rec)
+
+		for _, key := range []string{"shares", "threshold"} {
+			if v, ok := got[key]; ok {
+				t.Errorf("%s: got %v, want absent", key, v)
+			}
+		}
+	})
+
+	t.Run("status hides a service failure behind a generic 500", func(t *testing.T) {
+		fake := &fakeSystem{statusErr: errors.New("bolt: data.db: permission denied")}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+
+		rec := do(t, router, http.MethodGet, "/v1/sys/status", "")
+
+		assertError(t, rec, http.StatusInternalServerError, "internal error")
+	})
+}
+
+func TestHealth(t *testing.T) {
+	t.Run("health is 204 when unsealed", func(t *testing.T) {
+		status := system.Status{Sealed: false}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
+
+		rec := do(t, router, http.MethodGet, "/v1/sys/health", "")
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+	})
+
+	t.Run("health is 503 when not unsealed", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			status system.Status
+		}{
+			{"sealed", system.Status{Initialized: true, Sealed: true}},
+			{"uninitialized", system.Status{Sealed: true}},
+		}
+
+		want := "the system is sealed"
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: tt.status}})
+
+				rec := do(t, router, http.MethodGet, "/v1/sys/health", "")
+
+				assertError(t, rec, http.StatusServiceUnavailable, want)
+			})
+		}
+	})
+
+	t.Run("health hides a service failure behind a generic 500", func(t *testing.T) {
+		fake := &fakeSystem{statusErr: errors.New("bolt: data.db: permission denied")}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+
+		rec := do(t, router, http.MethodGet, "/v1/sys/health", "")
+
+		assertError(t, rec, http.StatusInternalServerError, "internal error")
+	})
+}

@@ -46,9 +46,19 @@ type unsealRequest struct {
 type statusResponse struct {
 	Initialized bool `json:"initialized"`
 	Sealed      bool `json:"sealed"`
-	Shares      int  `json:"shares"`
-	Threshold   int  `json:"threshold"`
+	Shares      int  `json:"shares,omitempty"`
+	Threshold   int  `json:"threshold,omitempty"`
 	Progress    int  `json:"progress"`
+}
+
+func newStatusResponse(s system.Status) statusResponse {
+	return statusResponse{
+		Initialized: s.Initialized,
+		Sealed:      s.Sealed,
+		Shares:      s.Config.Shares,
+		Threshold:   s.Config.Threshold,
+		Progress:    s.Progress,
+	}
 }
 
 func (h *Handlers) handleUnseal(w http.ResponseWriter, r *http.Request) {
@@ -66,25 +76,35 @@ func (h *Handlers) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, statusResponse{
-		Initialized: result.Initialized,
-		Sealed:      result.Sealed,
-		Shares:      result.Config.Shares,
-		Threshold:   result.Config.Threshold,
-		Progress:    result.Progress,
-	})
-}
-
-func (h *Handlers) handleStatus(w http.ResponseWriter, r *http.Request) {
-	writeError(w, h.Logger, errNotImplemented)
-}
-
-func (h *Handlers) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeError(w, h.Logger, errNotImplemented)
+	writeJSON(w, http.StatusOK, newStatusResponse(result))
 }
 
 func (h *Handlers) handleSeal(w http.ResponseWriter, r *http.Request) {
 	h.System.Seal(r.Context())
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) handleStatus(w http.ResponseWriter, r *http.Request) {
+	result, err := h.System.Status(r.Context())
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, newStatusResponse(result))
+}
+
+func (h *Handlers) handleHealth(w http.ResponseWriter, r *http.Request) {
+	result, err := h.System.Status(r.Context())
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+	if result.Sealed {
+		writeError(w, h.Logger, errSealed)
+		return
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

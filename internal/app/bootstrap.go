@@ -14,7 +14,7 @@ import (
 
 type infrastructure struct {
 	logger  *slog.Logger
-	clock   systemClock
+	clock   system.Clock
 	keys    *cryptography.KeyHolder
 	cipher  cryptography.Cipher
 	shamir  *cryptography.Shamir
