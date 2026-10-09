@@ -23,10 +23,11 @@ type storedFields struct {
 // The key is part of the stored format, so the test spells it out.
 const initializationKey = "sys/initialization"
 
+// No barrier: the system record never goes through it.
 func newSystemRepository(t *testing.T) (system.Repository, storage.Backend) {
 	t.Helper()
 	backend := memory.New()
-	return repository.NewSet(backend).System, backend
+	return repository.NewSet(backend, nil).System, backend
 }
 
 func mustSave(t *testing.T, repo system.Repository, state system.InitializationState) {
@@ -107,7 +108,7 @@ func TestSystemRepository(t *testing.T) {
 
 	t.Run("a record saved by one repository loads from another over the same backend", func(t *testing.T) {
 		writer, backend := newSystemRepository(t)
-		reader := repository.NewSet(backend).System
+		reader := repository.NewSet(backend, nil).System
 		want := newSystemState()
 
 		mustSave(t, writer, want)
@@ -227,7 +228,7 @@ func TestSystemRepository(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				backend := failingBackend{}
-				repo := repository.NewSet(backend).System
+				repo := repository.NewSet(backend, nil).System
 
 				err := tt.fn(t, repo)
 

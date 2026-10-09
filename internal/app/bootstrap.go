@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/dimitrijegasic/seal-gate/internal/barrier"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
@@ -63,8 +64,9 @@ func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
 }
 
 func buildRepositories(backend storage.Backend, infra *infrastructure) *repositories {
+	encrypted := barrier.NewAEADBarrier(backend, infra.keys, infra.cipher)
 	return &repositories{
-		set: repository.NewSet(backend),
+		set: repository.NewSet(backend, encrypted),
 	}
 }
 
