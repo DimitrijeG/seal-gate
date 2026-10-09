@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
-type errorBody struct {
+type errorResponse struct {
 	Errors []string `json:"errors"`
 }
 
@@ -39,7 +40,7 @@ func writeError(w http.ResponseWriter, logger *slog.Logger, err error) {
 		logger.Error("request failed", "error", err)
 	}
 
-	writeJSON(w, status, errorBody{Errors: []string{message}})
+	writeJSON(w, status, errorResponse{Errors: []string{message}})
 }
 
 func classify(err error) (int, string) {
@@ -47,6 +48,7 @@ func classify(err error) (int, string) {
 		syntaxErr *json.SyntaxError
 		typeErr   *json.UnmarshalTypeError
 		sizeErr   *http.MaxBytesError
+		base64Err base64.CorruptInputError
 	)
 
 	switch {
@@ -71,22 +73,35 @@ func classify(err error) (int, string) {
 		return http.StatusBadRequest, err.Error()
 	case errors.As(err, &sizeErr):
 		return http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", sizeErr.Limit)
+	case errors.As(err, &base64Err):
+		return http.StatusBadRequest, "request body has a value that is not valid base64"
 
 	case errors.Is(err, errNotImplemented):
 		return http.StatusNotImplemented, err.Error()
+	}
 
-	// Domain: sentinel texts are written for clients, so they pass through.
-	case errors.Is(err, system.ErrAlreadyInitialized),
-		errors.Is(err, system.ErrNotInitialized):
-		return http.StatusConflict, err.Error()
-	case errors.Is(err, system.ErrInvalidSealConfig),
-		errors.Is(err, system.ErrInvalidShare):
-		return http.StatusBadRequest, err.Error()
+	for _, d := range domainErrors {
+		if errors.Is(err, d.err) {
+			return d.status, d.message
+		}
+	}
 
 	// Infrastructure (storage, crypto, anything unmapped): its text can leak detail.
-	default:
-		return http.StatusInternalServerError, "internal error"
-	}
+	return http.StatusInternalServerError, "internal error"
+}
+
+// domainErrors gives each domain sentinel its client message, so its prefixed
+// text is never sent. Scanned in order: an error wrapping two takes the first.
+var domainErrors = []struct {
+	err     error
+	status  int
+	message string
+}{
+	{system.ErrInvalidSealConfig, http.StatusBadRequest, "invalid seal configuration"},
+	{system.ErrAlreadyInitialized, http.StatusConflict, "already initialized"},
+	{system.ErrNotInitialized, http.StatusConflict, "not initialized"},
+	{system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
+	{system.ErrInvalidShare, http.StatusBadRequest, "invalid unseal share"},
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

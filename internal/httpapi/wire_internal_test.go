@@ -22,7 +22,7 @@ func respond(t *testing.T, err error) (status int, contentType, message string) 
 	writeError(rec, nil, err)
 
 	contentType = rec.Header().Get("Content-Type")
-	var body errorBody
+	var body errorResponse
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -35,33 +35,39 @@ func respond(t *testing.T, err error) (status int, contentType, message string) 
 func TestWriteError(t *testing.T) {
 	t.Run("an error is written as a JSON body", func(t *testing.T) {
 		_, contentType, message := respond(t, system.ErrAlreadyInitialized)
+		want := "already initialized"
 
 		if contentType != contentTypeJSON {
 			t.Errorf("Content-Type: got %q, want %q", contentType, contentTypeJSON)
 		}
-		if message != system.ErrAlreadyInitialized.Error() {
-			t.Errorf("message: got %q, want %q", message, system.ErrAlreadyInitialized.Error())
+		if message != want {
+			t.Errorf("message: got %q, want %q", message, want)
 		}
 	})
 
-	t.Run("domain errors map to their status", func(t *testing.T) {
+	t.Run("domain errors map to their status and own message", func(t *testing.T) {
 		tests := []struct {
-			name   string
-			err    error
-			status int
+			name    string
+			err     error
+			status  int
+			message string
 		}{
-			{"invalid seal config", system.ErrInvalidSealConfig, http.StatusBadRequest},
-			{"invalid share", system.ErrInvalidShare, http.StatusBadRequest},
-			{"already initialized", system.ErrAlreadyInitialized, http.StatusConflict},
-			{"not initialized", system.ErrNotInitialized, http.StatusConflict},
+			{"invalid seal config", system.ErrInvalidSealConfig, http.StatusBadRequest, "invalid seal configuration"},
+			{"already initialized", system.ErrAlreadyInitialized, http.StatusConflict, "already initialized"},
+			{"not initialized", system.ErrNotInitialized, http.StatusConflict, "not initialized"},
+			{"already unsealed", system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
+			{"invalid share", system.ErrInvalidShare, http.StatusBadRequest, "invalid unseal share"},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				status, _, _ := respond(t, tt.err)
+				status, _, message := respond(t, tt.err)
 
 				if status != tt.status {
-					t.Errorf("got %d, want %d", status, tt.status)
+					t.Errorf("status: got %d, want %d", status, tt.status)
+				}
+				if message != tt.message {
+					t.Errorf("message: got %q, want %q", message, tt.message)
 				}
 			})
 		}
@@ -132,7 +138,7 @@ type decodeTarget struct {
 
 func request(t *testing.T, contentType, body string) *http.Request {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	if contentType != "" {
 		r.Header.Set("Content-Type", contentType)
 	}

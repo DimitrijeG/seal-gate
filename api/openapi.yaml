@@ -12,10 +12,173 @@ servers:
   - url: /v1
     description: Version prefix. It is part of every route, not a host.
 
-paths: {}
+paths:
+  /sys/init:
+    post:
+      operationId: init
+      summary: Initialize the instance and return its unseal shares.
+      description: >
+        Open by design: no token can exist before initialization. The shares
+        in the response are the only copy that will ever exist; the server
+        keeps none of them.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitRequest"
+      responses:
+        "200":
+          description: Initialized. The instance stays sealed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sys/unseal:
+    post:
+      operationId: unseal
+      summary: Submit one unseal share.
+      description: >
+        Open by design: a sealed instance cannot check a token. Shares are
+        buffered until the threshold is reached, then combined; a failed
+        combination discards the buffer.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnsealRequest"
+      responses:
+        "200":
+          description: Share accepted. The status shows the progress, or that the instance is unsealed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sys/seal:
+    post:
+      operationId: seal
+      summary: Seal the instance.
+      description: >
+        Open until tokens exist. Discards the key and any buffered shares.
+        Idempotent: sealing a sealed or uninitialized instance also succeeds.
+      security: []
+      responses:
+        "204":
+          description: Sealed.
 
 components:
+  responses:
+    BadRequest:
+      description: The request body or its values are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: The instance is in the wrong state for this operation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PayloadTooLarge:
+      description: The request body exceeds 16384 bytes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnsupportedMediaType:
+      description: The request body is not declared as application/json.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: An internal failure. Details are logged, never sent.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
   schemas:
+    InitRequest:
+      type: object
+      description: How many shares to make, and how many unseal needs.
+      required: [shares, threshold]
+      properties:
+        shares:
+          type: integer
+          minimum: 2
+          maximum: 255
+        threshold:
+          type: integer
+          minimum: 2
+          maximum: 255
+          description: At most `shares`.
+      additionalProperties: false
+
+    InitResponse:
+      type: object
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          items:
+            type: string
+            contentEncoding: base64
+      additionalProperties: false
+
+    UnsealRequest:
+      type: object
+      required: [share]
+      properties:
+        share:
+          type: string
+          contentEncoding: base64
+      additionalProperties: false
+
+    StatusResponse:
+      type: object
+      required: [initialized, sealed, shares, threshold, progress]
+      properties:
+        initialized:
+          type: boolean
+        sealed:
+          type: boolean
+        shares:
+          type: integer
+        threshold:
+          type: integer
+        progress:
+          type: integer
+          minimum: 0
+          description: Shares buffered toward the threshold.
+      additionalProperties: false
+
     ErrorResponse:
       type: object
       description: >
