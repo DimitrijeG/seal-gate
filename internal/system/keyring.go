@@ -2,19 +2,20 @@ package system
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 )
 
-const keyLen = 32
-
-// Keyring owns key material, leaving Service with only the state machine.
-// Methods are unexported so only the state machine decides when keys move.
+// Keyring owns key material for Service. Unsynchronized: Service locks every call
+// that touches the buffer or active key; Init's calls touch neither (#17).
 type Keyring struct {
-	repository Repository
-	sharing    SecretSharing
-	wrapper    KeyWrapper
-	random     RandomGenerator
-	active     ActiveKeyController
+	repo    Repository
+	sharing SecretSharing
+	wrapper KeyWrapper
+	random  RandomGenerator
+	active  ActiveKeyController
+	buffer  shareBuffer
 }
 
 func NewKeyring(
@@ -24,96 +25,108 @@ func NewKeyring(
 	random RandomGenerator,
 	active ActiveKeyController,
 ) *Keyring {
-	return &Keyring{repository: repo, sharing: sharing, wrapper: wrapper, random: random, active: active}
+	return &Keyring{
+		repo:    repo,
+		sharing: sharing,
+		wrapper: wrapper,
+		random:  random,
+		active:  active,
+	}
 }
 
-// generate does not install the barrier key: requiring an unseal right after
-// init proves the operator actually kept the shares.
-func (k *Keyring) generate(ctx context.Context, cfg SealConfiguration, now time.Time) ([][]byte, error) {
-	barrierKey, err := k.random.Bytes(keyLen)
-	if err != nil {
-		return nil, err
-	}
-	defer clear(barrierKey)
+const (
+	keyLen            = 32
+	wrapFormatVersion = 1
+)
 
+// wrapAdditionalData binds the wrapped key to its format version and seal configuration;
+// changing the layout needs a new version.
+func wrapAdditionalData(version int, cfg SealConfiguration) []byte {
+	return fmt.Appendf(nil, "seal-gate/barrier-key/v%d/%d-of-%d", version, cfg.Threshold, cfg.Shares)
+}
+
+func (k *Keyring) initialize(ctx context.Context, cfg SealConfiguration, now time.Time) ([][]byte, error) {
 	rootKey, err := k.random.Bytes(keyLen)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("system: %w", err)
 	}
 	defer clear(rootKey)
 
+	barrierKey, err := k.random.Bytes(keyLen)
+	if err != nil {
+		return nil, fmt.Errorf("system: %w", err)
+	}
+	defer clear(barrierKey)
+
+	ad := wrapAdditionalData(wrapFormatVersion, cfg)
+	wrapped, err := k.wrapper.Wrap(rootKey, barrierKey, ad)
+	if err != nil {
+		return nil, fmt.Errorf("system: %w", err)
+	}
+
 	shares, err := k.sharing.Split(rootKey, cfg.Shares, cfg.Threshold)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("system: %w", err)
 	}
 
-	wrapped, err := k.wrapper.Wrap(rootKey, barrierKey, wrapAdditionalData(wrapFormatVersion))
-	if err != nil {
-		zeroAll(shares)
-		return nil, err
-	}
-
-	if err := k.repository.SaveInitialization(ctx, InitializationState{
+	state := InitializationState{
 		Config:        cfg,
 		EncryptedKey:  EncryptedKey{Ciphertext: wrapped, Version: wrapFormatVersion},
 		InitializedAt: now,
-	}); err != nil {
-		zeroAll(shares)
-		return nil, err
+	}
+
+	if err := k.repo.Save(ctx, state); err != nil {
+		clearShares(shares)
+		return nil, fmt.Errorf("system: %w", err)
 	}
 
 	return shares, nil
 }
 
-// unlock relies on the unwrap to catch wrong shares: Combine always yields
-// some key, but the AEAD tag only verifies under the right one.
-//
-//lint:ignore U1000 called by Service once unseal lands (#4)
-func (k *Keyring) unlock(ctx context.Context, shares [][]byte) error {
-	rootKey, err := k.sharing.Combine(shares)
+// load returns ErrNotInitialized bare, since callers branch on it; other errors are wrapped.
+func (k *Keyring) load(ctx context.Context) (InitializationState, error) {
+	state, err := k.repo.Load(ctx)
+	if err != nil && !errors.Is(err, ErrNotInitialized) {
+		return InitializationState{}, fmt.Errorf("system: %w", err)
+	}
+	return state, err
+}
+
+func (k *Keyring) submit(share []byte) {
+	k.buffer.add(share)
+}
+
+func (k *Keyring) progress() int {
+	return k.buffer.len()
+}
+
+func (k *Keyring) unlocked() bool {
+	return k.active.IsInstalled()
+}
+
+func (k *Keyring) unlock(state InitializationState) error {
+	defer k.buffer.clear()
+
+	rootKey, err := k.sharing.Combine(k.buffer.all())
 	if err != nil {
-		return err
+		return ErrInvalidShare // generic on purpose: the cause stays hidden
 	}
 	defer clear(rootKey)
 
-	wrapped, err := k.repository.LoadEncryptedKey(ctx)
-	if err != nil {
-		return err
-	}
-	if wrapped.Version != wrapFormatVersion {
-		return ErrUnsupportedKeyFormat
-	}
-
-	barrierKey, err := k.wrapper.Unwrap(rootKey, wrapped.Ciphertext, wrapAdditionalData(wrapped.Version))
+	ad := wrapAdditionalData(state.EncryptedKey.Version, state.Config)
+	barrierKey, err := k.wrapper.Unwrap(rootKey, state.EncryptedKey.Ciphertext, ad)
 	if err != nil {
 		return ErrInvalidShare
 	}
 	defer clear(barrierKey)
 
-	return k.active.Install(barrierKey)
-}
-
-//lint:ignore U1000 called by Service once seal lands (#4)
-func (k *Keyring) lock() {
-	k.active.Clear()
-}
-
-//lint:ignore U1000 called by Service once status lands (#4)
-func (k *Keyring) isUnlocked() bool {
-	return k.active.IsInstalled()
-}
-
-func (k *Keyring) isInitialized(ctx context.Context) (bool, error) {
-	return k.repository.IsInitialized(ctx)
-}
-
-//lint:ignore U1000 called by Service once status lands (#4)
-func (k *Keyring) configuration(ctx context.Context) (SealConfiguration, error) {
-	return k.repository.LoadSealConfiguration(ctx)
-}
-
-func zeroAll(slices [][]byte) {
-	for _, b := range slices {
-		clear(b)
+	if err := k.active.Install(barrierKey); err != nil {
+		return fmt.Errorf("system: %w", err)
 	}
+	return nil
+}
+
+func (k *Keyring) lock() {
+	k.buffer.clear()
+	k.active.Clear()
 }
