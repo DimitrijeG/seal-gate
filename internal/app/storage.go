@@ -6,6 +6,7 @@ import (
 
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
+	"github.com/dimitrijegasic/seal-gate/internal/storage/bolt"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 )
 
@@ -15,6 +16,7 @@ type backendFactory func(ctx context.Context, cfg *config.Config) (storage.Backe
 // repeated wherever a backend is named.
 var backendFactories = map[string]backendFactory{
 	"memory": openMemory,
+	"bolt":   openBolt,
 }
 
 func buildStorage(ctx context.Context, cfg *config.Config) (storage.Backend, error) {
@@ -32,4 +34,12 @@ func buildStorage(ctx context.Context, cfg *config.Config) (storage.Backend, err
 
 func openMemory(context.Context, *config.Config) (storage.Backend, error) {
 	return memory.New(), nil
+}
+
+func openBolt(_ context.Context, cfg *config.Config) (storage.Backend, error) {
+	backend, err := bolt.Open(cfg.Storage.Path)
+	if err != nil {
+		return nil, err
+	}
+	return backend, nil
 }

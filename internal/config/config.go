@@ -17,6 +17,7 @@ type LoggerConfig struct {
 
 type StorageConfig struct {
 	Type string
+	Path string
 }
 
 type CryptoConfig struct {
