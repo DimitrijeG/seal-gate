@@ -13,9 +13,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# No job enables setup-go's module cache: neither the root module nor
-# tools/graphd has a dependency, so there is no go.sum for it to key on and the cache
-# step fails outright rather than degrading.
 jobs:
   test:
     name: Test
@@ -26,7 +23,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
       - name: gofmt
         run: |
@@ -62,6 +59,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: tools/graphd/go.mod
+          # graphd has no dependency, so no go.sum to key a cache on; the step would fail.
           cache: false
 
       # -count=1 is redundant on a cold runner, but stops a stale pass if a
