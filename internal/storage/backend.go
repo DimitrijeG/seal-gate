@@ -18,7 +18,7 @@ type Backend interface {
 	Put(ctx context.Context, key string, value []byte) error
 	// Delete of a missing key is not an error.
 	Delete(ctx context.Context, key string) error
-	// List returns the keys starting with prefix, sorted; an empty prefix matches every key.
+	// List returns the keys starting with prefix, in byte order; an empty prefix matches every key.
 	List(ctx context.Context, prefix string) ([]string, error)
 	Close() error
 }

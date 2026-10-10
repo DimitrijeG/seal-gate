@@ -10,8 +10,8 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 )
 
-// Run tests a backend against the storage contract;
-// open is called once per case and must return an empty backend.
+// Run checks a backend against the storage contract; a backend that passes it is supported.
+// open is called for every subtest, table rows included, and must return an empty backend.
 func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 	t.Run("getting a key that was never put returns ErrNotFound", func(t *testing.T) {
 		key := "non-existent"
@@ -24,6 +24,11 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 	})
 
 	t.Run("a value put under a key reads back", func(t *testing.T) {
+		everyByte := make([]byte, 256)
+		for i := range everyByte {
+			everyByte[i] = byte(i)
+		}
+
 		tests := []struct {
 			name  string
 			value []byte
@@ -31,6 +36,7 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 			{"nil value", nil},
 			{"empty value", []byte{}},
 			{"non-empty value", []byte("value")},
+			{"every byte value", everyByte},
 		}
 
 		key := "key"
@@ -158,7 +164,7 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 		}
 	})
 
-	t.Run("list returns the keys under a prefix, in order", func(t *testing.T) {
+	t.Run("list returns the keys under a prefix, in byte order", func(t *testing.T) {
 		tests := []struct {
 			name   string
 			prefix string
@@ -181,6 +187,26 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 				[]string{"a/1", "b/1", "c/1"},
 				[]string{"a/1", "b/1", "c/1"},
 			},
+			{"an empty backend lists no keys", "",
+				nil,
+				nil,
+			},
+			{"keys in byte order, not collation", "",
+				[]string{"ab", "a/b", "B", "a-b", "a"},
+				[]string{"B", "a", "a-b", "a/b", "ab"},
+			},
+			{"a key equal to the prefix is listed", "a",
+				[]string{"a", "ab", "b"},
+				[]string{"a", "ab"},
+			},
+			{"a prefix ending in 0xff", "a\xff",
+				[]string{"a\xfe", "a\xff", "a\xff\x00", "b"},
+				[]string{"a\xff", "a\xff\x00"},
+			},
+			{"a prefix of only 0xff bytes", "\xff",
+				[]string{"\xfe", "\xff", "\xff\x01"},
+				[]string{"\xff", "\xff\x01"},
+			},
 		}
 
 		for _, tt := range tests {
@@ -198,7 +224,7 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 				}
 
 				if !slices.Equal(keys, tt.want) {
-					t.Errorf("got %v, want %v", keys, tt.want)
+					t.Errorf("got %q, want %q", keys, tt.want)
 				}
 			})
 		}
@@ -227,7 +253,7 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 		}
 
 		if !slices.Equal(got, want) {
-			t.Errorf("got %v, want %v", got, want)
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 
