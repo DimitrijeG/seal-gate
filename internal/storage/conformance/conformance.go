@@ -11,7 +11,7 @@ import (
 )
 
 // Run checks a backend against the storage contract; a backend that passes it is supported.
-// open is called for every subtest, table rows included, and must return an empty backend.
+// open is called for every subtest, table rows included; it returns an empty backend and owns its cleanup, through t.Cleanup.
 func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 	t.Run("getting a key that was never put returns ErrNotFound", func(t *testing.T) {
 		key := "non-existent"
