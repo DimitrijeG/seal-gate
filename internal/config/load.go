@@ -10,7 +10,8 @@ func Load() (*Config, error) {
 			Format: "json",
 		},
 		Storage: StorageConfig{
-			Type: "memory",
+			Type: "bolt",
+			Path: "seal-gate.db",
 		},
 		Crypto: CryptoConfig{
 			AEADAlgorithm: "aes-256-gcm",

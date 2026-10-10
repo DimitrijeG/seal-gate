@@ -34,3 +34,6 @@ go.work.sum
 .reference/
 CLAUDE.md
 .claude/
+
+# Database files
+*.db
