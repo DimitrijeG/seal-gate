@@ -43,6 +43,17 @@ func TestSecret(t *testing.T) {
 		}
 	})
 
+	t.Run("a read forbids caching", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Secret: &fakeSecret{getValue: []byte{1, 2}}})
+		want := "no-store"
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+
+		if got := rec.Header().Get("Cache-Control"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
 	t.Run("a delete returns no content", func(t *testing.T) {
 		router := httpapi.NewRouter(&httpapi.Handlers{Secret: &fakeSecret{}})
 

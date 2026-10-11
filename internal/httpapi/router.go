@@ -4,7 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"path"
+	"strings"
 
+	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
@@ -45,5 +48,17 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.HandleFunc("GET /v1/secrets/{path...}", h.handleGetSecret)
 	mux.HandleFunc("DELETE /v1/secrets/{path...}", h.handleDeleteSecret)
 
-	return mux
+	return h.refuseUncleanSecretPaths(mux)
+}
+
+// refuseUncleanSecretPaths runs before the mux, which would otherwise redirect an
+// unclean path and let a write land on a path the client never named.
+func (h *Handlers) refuseUncleanSecretPaths(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/secrets/") && path.Clean(r.URL.Path) != r.URL.Path {
+			writeError(w, h.Logger, secret.ErrInvalidPath)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

@@ -107,8 +107,10 @@ var domainErrors = []struct {
 	{secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 }
 
+// writeJSON forbids caching on every body, since a body may carry a secret or a share.
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", mediaTypeJSON)
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }

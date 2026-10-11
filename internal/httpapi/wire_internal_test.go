@@ -141,6 +141,19 @@ func TestWriteError(t *testing.T) {
 	})
 }
 
+func TestWriteJSON(t *testing.T) {
+	t.Run("a response forbids caching", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		want := "no-store"
+
+		writeJSON(rec, http.StatusOK, struct{}{})
+
+		if got := rec.Header().Get("Cache-Control"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
 // decodeTarget stands in for a handler's request type.
 type decodeTarget struct {
 	Shares int `json:"shares"`
