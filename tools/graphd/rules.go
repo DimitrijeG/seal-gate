@@ -22,7 +22,7 @@ var domainPackages = map[string]bool{
 	"internal/system":        true,
 	"internal/identity":      true,
 	"internal/authorization": true,
-	"internal/secrets":       true,
+	"internal/secret":        true,
 	"internal/lifecycle":     true,
 }
 

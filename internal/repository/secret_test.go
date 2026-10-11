@@ -10,6 +10,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/barrier"
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 	"github.com/dimitrijegasic/seal-gate/internal/repository"
+	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 )
@@ -59,12 +60,13 @@ func TestSecretRepository(t *testing.T) {
 	t.Run("a stored secret reads back", func(t *testing.T) {
 		f := newSecrets(t)
 		repo := f.set.Secret
+		path := "db/password"
 		want := []byte("secret")
 
-		if err := repo.Put(t.Context(), "db/password", want); err != nil {
+		if err := repo.Put(t.Context(), path, want); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		got, err := repo.Get(t.Context(), "db/password")
+		got, err := repo.Get(t.Context(), path)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -181,15 +183,16 @@ func TestSecretRepository(t *testing.T) {
 			{"empty value", []byte{}},
 		}
 
+		path := "db/password"
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newSecrets(t)
 				repo := f.set.Secret
 
-				if err := repo.Put(t.Context(), "db/password", tt.value); err != nil {
+				if err := repo.Put(t.Context(), path, tt.value); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
-				got, err := repo.Get(t.Context(), "db/password")
+				got, err := repo.Get(t.Context(), path)
 				if err != nil {
 					t.Fatalf("Get: %v", err)
 				}
@@ -207,26 +210,53 @@ func TestSecretRepository(t *testing.T) {
 
 		_, err := repo.Get(t.Context(), "missing")
 
-		if !errors.Is(err, storage.ErrNotFound) {
-			t.Errorf("got %v, want %v", err, storage.ErrNotFound)
+		if !errors.Is(err, secret.ErrNotFound) {
+			t.Errorf("got %v, want %v", err, secret.ErrNotFound)
 		}
 	})
 
 	t.Run("a deleted secret is not found", func(t *testing.T) {
 		f := newSecrets(t)
 		repo := f.set.Secret
+		path := "db/password"
 		value := []byte("secret")
 
-		if err := repo.Put(t.Context(), "db/password", value); err != nil {
+		if err := repo.Put(t.Context(), path, value); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		if err := repo.Delete(t.Context(), "db/password"); err != nil {
+		if err := repo.Delete(t.Context(), path); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
-		_, err := repo.Get(t.Context(), "db/password")
+		_, err := repo.Get(t.Context(), path)
 
-		if !errors.Is(err, storage.ErrNotFound) {
-			t.Errorf("got %v, want %v", err, storage.ErrNotFound)
+		if !errors.Is(err, secret.ErrNotFound) {
+			t.Errorf("got %v, want %v", err, secret.ErrNotFound)
+		}
+	})
+
+	t.Run("a tampered secret is not reported as missing", func(t *testing.T) {
+		f := newSecrets(t)
+		repo := f.set.Secret
+		path := "db/password"
+		key := "secrets/db/password"
+		value := []byte("secret")
+
+		if err := repo.Put(t.Context(), path, value); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		raw, err := f.backend.Get(t.Context(), key)
+		if err != nil {
+			t.Fatalf("backend Get: %v", err)
+		}
+		tampered := bytes.Clone(raw)
+		tampered[len(tampered)-1] ^= 1
+		if err := f.backend.Put(t.Context(), key, tampered); err != nil {
+			t.Fatalf("backend Put: %v", err)
+		}
+		_, err = repo.Get(t.Context(), path)
+
+		if !errors.Is(err, cryptography.ErrDecryptionFailed) {
+			t.Errorf("got %v, want %v", err, cryptography.ErrDecryptionFailed)
 		}
 	})
 
@@ -265,20 +295,21 @@ func TestSecretRepository(t *testing.T) {
 	})
 
 	t.Run("every operation is refused while sealed", func(t *testing.T) {
+		path := "db/password"
 		value := []byte("secret")
 		tests := []struct {
 			name string
 			fn   func(*testing.T, *repository.Set) error
 		}{
 			{"put", func(t *testing.T, set *repository.Set) error {
-				return set.Secret.Put(t.Context(), "db/password", value)
+				return set.Secret.Put(t.Context(), path, value)
 			}},
 			{"get", func(t *testing.T, set *repository.Set) error {
-				_, err := set.Secret.Get(t.Context(), "db/password")
+				_, err := set.Secret.Get(t.Context(), path)
 				return err
 			}},
 			{"delete", func(t *testing.T, set *repository.Set) error {
-				return set.Secret.Delete(t.Context(), "db/password")
+				return set.Secret.Delete(t.Context(), path)
 			}},
 			{"list", func(t *testing.T, set *repository.Set) error {
 				_, err := set.Secret.List(t.Context(), "")
@@ -289,15 +320,15 @@ func TestSecretRepository(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newSecrets(t)
-				if err := f.set.Secret.Put(t.Context(), "db/password", value); err != nil {
+				if err := f.set.Secret.Put(t.Context(), path, value); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
 				f.keys.Clear()
 
 				err := tt.fn(t, f.set)
 
-				if !errors.Is(err, barrier.ErrSealed) {
-					t.Errorf("got %v, want %v", err, barrier.ErrSealed)
+				if !errors.Is(err, secret.ErrSealed) {
+					t.Errorf("got %v, want %v", err, secret.ErrSealed)
 				}
 			})
 		}

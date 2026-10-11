@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/dimitrijegasic/seal-gate/internal/barrier"
@@ -10,6 +11,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/repository"
+	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -30,6 +32,7 @@ type repositories struct {
 
 type services struct {
 	system *system.Service
+	secret *secret.Service
 }
 
 func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
@@ -81,13 +84,18 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 
 	return &services{
 		system: system.NewService(keyring, infra.clock),
+		secret: secret.New(repositories.set.Secret),
 	}
 }
 
-func buildHTTP(cfg *config.Config, services *services, logger *slog.Logger) *httpapi.Server {
-	handlers := &httpapi.Handlers{
+func buildRouter(services *services, logger *slog.Logger) http.Handler {
+	return httpapi.NewRouter(&httpapi.Handlers{
 		System: services.system,
+		Secret: services.secret,
 		Logger: logger,
-	}
-	return httpapi.NewServer(cfg, httpapi.NewRouter(handlers), logger)
+	})
+}
+
+func buildHTTP(cfg *config.Config, services *services, logger *slog.Logger) *httpapi.Server {
+	return httpapi.NewServer(cfg, buildRouter(services, logger), logger)
 }

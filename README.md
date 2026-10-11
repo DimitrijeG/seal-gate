@@ -12,7 +12,7 @@ internal/
 ├── system/             seal/unseal/init state machine, active-key lifetime
 ├── identity/           entities, groups, credentials, tokens — who is calling
 ├── authorization/      path-based ACL policies — what they may do
-├── secrets/            secret CRUD; notably takes no cipher
+├── secret/             secret CRUD; notably takes no cipher
 ├── lifecycle/          TTL, rotation, revocation, and the worker
 ├── cryptography/       primitives: AEAD, Shamir, key wrapping, hashing
 ├── barrier/            the encryption boundary; everything below is ciphertext
