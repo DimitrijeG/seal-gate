@@ -83,13 +83,18 @@ func (k *Keyring) initialize(ctx context.Context, cfg SealConfiguration, now tim
 	return shares, nil
 }
 
-// load returns ErrNotInitialized bare, since callers branch on it; other errors are wrapped.
+// load returns this package's own sentinels bare: a prefix here would double,
+// and Init branches on ErrNotInitialized.
 func (k *Keyring) load(ctx context.Context) (InitializationState, error) {
 	state, err := k.repo.Load(ctx)
-	if err != nil && !errors.Is(err, ErrNotInitialized) {
+	switch {
+	case err == nil:
+		return state, nil
+	case errors.Is(err, ErrNotInitialized), errors.Is(err, ErrUnreadableRecord):
+		return InitializationState{}, err
+	default:
 		return InitializationState{}, fmt.Errorf("system: %w", err)
 	}
-	return state, err
 }
 
 func (k *Keyring) submit(share []byte) {

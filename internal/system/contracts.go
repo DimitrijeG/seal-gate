@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-// Repository persists the initialization state; Load returns ErrNotInitialized before the first Save.
+// Repository persists the initialization state; Load returns ErrNotInitialized
+// before the first Save, and ErrUnreadableRecord for a stored record it cannot read.
 type Repository interface {
 	Save(ctx context.Context, state InitializationState) error
 	Load(ctx context.Context) (InitializationState, error)
