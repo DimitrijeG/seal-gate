@@ -8,4 +8,7 @@ var (
 	ErrAlreadyUnsealed    = errors.New("system: already unsealed")
 	ErrInvalidShare       = errors.New("system: invalid unseal share")
 	ErrInvalidSealConfig  = errors.New("system: invalid seal configuration")
+	// ErrUnreadableRecord covers a record that will not decode and one carrying
+	// a version this build has no layout for.
+	ErrUnreadableRecord = errors.New("system: unreadable initialization record")
 )
