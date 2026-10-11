@@ -16,9 +16,17 @@ type SystemService interface {
 	Status(ctx context.Context) (system.Status, error)
 }
 
+// SecretService is secret storage as the handlers use it.
+type SecretService interface {
+	Put(ctx context.Context, path string, value []byte) error
+	Get(ctx context.Context, path string) ([]byte, error)
+	Delete(ctx context.Context, path string) error
+}
+
 // Handlers holds what the HTTP handlers call.
 type Handlers struct {
 	System SystemService
+	Secret SecretService
 	Logger *slog.Logger
 }
 
@@ -30,6 +38,10 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.HandleFunc("POST /v1/sys/seal", h.handleSeal)
 	mux.HandleFunc("GET /v1/sys/status", h.handleStatus)
 	mux.HandleFunc("GET /v1/sys/health", h.handleHealth)
+
+	mux.HandleFunc("PUT /v1/secrets/{path...}", h.handlePutSecret)
+	mux.HandleFunc("GET /v1/secrets/{path...}", h.handleGetSecret)
+	mux.HandleFunc("DELETE /v1/secrets/{path...}", h.handleDeleteSecret)
 
 	return mux
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
@@ -26,10 +27,7 @@ var (
 	errSealed               = errors.New("the system is sealed")
 )
 
-const (
-	mediaTypeJSON = "application/json"
-	maxBodyBytes  = 16 << 10
-)
+const mediaTypeJSON = "application/json"
 
 // writeError keeps the status mapping here so domain modules never import net/http.
 // Unrecognised errors get a generic 500, since their text can carry storage detail.
@@ -102,6 +100,11 @@ var domainErrors = []struct {
 	{system.ErrNotInitialized, http.StatusConflict, "not initialized"},
 	{system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
 	{system.ErrInvalidShare, http.StatusBadRequest, "invalid unseal share"},
+
+	{secret.ErrInvalidPath, http.StatusBadRequest, "invalid secret path"},
+	{secret.ErrValueTooLarge, http.StatusRequestEntityTooLarge, "secret value is too large"},
+	{secret.ErrNotFound, http.StatusNotFound, "secret not found"},
+	{secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -112,13 +115,13 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 // decodeJSON rejects unknown fields: a misspelled threshold silently ignored
 // would only surface later, when the shares no longer unseal.
-func decodeJSON(w http.ResponseWriter, r *http.Request, into any) error {
+func decodeJSON(w http.ResponseWriter, r *http.Request, into any, limit int64) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != mediaTypeJSON {
 		return errUnsupportedMediaType
 	}
 
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 
 	// The decoder reports unknown fields only as message text.

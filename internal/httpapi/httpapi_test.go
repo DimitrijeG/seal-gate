@@ -63,6 +63,33 @@ func (f *fakeSystem) Seal(ctx context.Context) {
 	f.sealed = true
 }
 
+type secretBody struct {
+	Value string `json:"value"`
+}
+
+type fakeSecret struct {
+	path     string // the last path any method got
+	putValue []byte
+	getValue []byte
+	err      error
+}
+
+func (f *fakeSecret) Put(ctx context.Context, path string, value []byte) error {
+	f.path = path
+	f.putValue = bytes.Clone(value)
+	return f.err
+}
+
+func (f *fakeSecret) Get(ctx context.Context, path string) ([]byte, error) {
+	f.path = path
+	return f.getValue, f.err
+}
+
+func (f *fakeSecret) Delete(ctx context.Context, path string) error {
+	f.path = path
+	return f.err
+}
+
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))

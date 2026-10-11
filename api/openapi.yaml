@@ -12,10 +12,17 @@ servers:
   - url: /v1
     description: Version prefix. It is part of every route, not a host.
 
+tags:
+  - name: system
+    description: Initialization, sealing and health. Reachable while sealed.
+  - name: secrets
+    description: Secret values by path. Every operation needs the instance unsealed.
+
 paths:
   /sys/init:
     post:
       operationId: init
+      tags: [system]
       summary: Initialize the instance and return its unseal shares.
       description: >
         Open by design: no token can exist before initialization. The shares
@@ -41,6 +48,7 @@ paths:
           $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 16384 bytes.
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "500":
@@ -49,6 +57,7 @@ paths:
   /sys/unseal:
     post:
       operationId: unseal
+      tags: [system]
       summary: Submit one unseal share.
       description: >
         Open by design: a sealed instance cannot check a token. Shares are
@@ -74,6 +83,7 @@ paths:
           $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 16384 bytes.
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "500":
@@ -82,6 +92,7 @@ paths:
   /sys/seal:
     post:
       operationId: seal
+      tags: [system]
       summary: Seal the instance.
       description: >
         Open until tokens exist. Discards the key and any buffered shares.
@@ -94,6 +105,7 @@ paths:
   /sys/status:
     get:
       operationId: status
+      tags: [system]
       summary: Report whether the instance is initialized and sealed.
       description: >
         Open by design: operators read it before they can hold a token, to
@@ -112,6 +124,7 @@ paths:
   /sys/health:
     get:
       operationId: health
+      tags: [system]
       summary: Report whether the instance can serve requests.
       description: >
         Open by design, for load balancers and probes. Only says yes or no;
@@ -121,18 +134,111 @@ paths:
         "204":
           description: Unsealed.
         "503":
-          description: Sealed or uninitialized; either way, there is no key to serve with.
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /secrets/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: >
+          The secret's path, which may contain `/` (OpenAPI cannot express a
+          multi-segment parameter). Segments of `[A-Za-z0-9._-]`, none empty,
+          `.` or `..`; no leading or trailing `/`; at most 256 bytes.
+        schema:
+          type: string
+          maxLength: 256
+        example: db/password
+
+    put:
+      operationId: putSecret
+      tags: [secrets]
+      summary: Store a secret, replacing any value already at the path.
+      description: >
+        Open until authentication exists. Creates or replaces; the response is
+        the same either way.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecretRequest"
+      responses:
+        "204":
+          description: Stored.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: >
+            The request body exceeds 88408 bytes, or the decoded value exceeds
+            65536 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      operationId: getSecret
+      tags: [secrets]
+      summary: Read a secret.
+      description: Open until authentication exists.
+      security: []
+      responses:
+        "200":
+          description: The secret's value.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: deleteSecret
+      tags: [secrets]
+      summary: Delete a secret.
+      description: >
+        Open until authentication exists. Idempotent: deleting a missing secret
+        also succeeds.
+      security: []
+      responses:
+        "204":
+          description: Deleted, or there was nothing to delete.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Sealed"
         "500":
           $ref: "#/components/responses/InternalError"
 
 components:
   responses:
     BadRequest:
-      description: The request body or its values are invalid.
+      description: The request path, body, or its values are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Nothing exists at the path.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Sealed:
+      description: Sealed or uninitialized; either way, there is no key to serve with.
       content:
         application/json:
           schema:
@@ -144,7 +250,7 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     PayloadTooLarge:
-      description: The request body exceeds 16384 bytes.
+      description: The request body exceeds this operation's limit.
       content:
         application/json:
           schema:
@@ -219,12 +325,31 @@ components:
           description: Shares buffered toward the threshold.
       additionalProperties: false
 
+    SecretRequest:
+      type: object
+      properties:
+        value:
+          type: string
+          contentEncoding: base64
+          description: At most 65536 bytes once decoded. Absent stores an empty secret.
+      additionalProperties: false
+
+    SecretResponse:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+          contentEncoding: base64
+          description: Empty for an empty secret, never null.
+      additionalProperties: false
+
     ErrorResponse:
       type: object
       description: >
         The body of every non-2xx response. Messages are safe to show an
-        operator: they never carry share material, key material, or an internal
-        error string.
+        operator: they never carry a secret value, share material, key material,
+        or an internal error string.
       required: [errors]
       properties:
         errors:

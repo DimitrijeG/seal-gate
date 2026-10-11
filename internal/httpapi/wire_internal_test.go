@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
@@ -57,6 +58,11 @@ func TestWriteError(t *testing.T) {
 			{"not initialized", system.ErrNotInitialized, http.StatusConflict, "not initialized"},
 			{"already unsealed", system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
 			{"invalid share", system.ErrInvalidShare, http.StatusBadRequest, "invalid unseal share"},
+
+			{"invalid secret path", secret.ErrInvalidPath, http.StatusBadRequest, "invalid secret path"},
+			{"secret too large", secret.ErrValueTooLarge, http.StatusRequestEntityTooLarge, "secret value is too large"},
+			{"secret not found", secret.ErrNotFound, http.StatusNotFound, "secret not found"},
+			{"secret sealed", secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 		}
 
 		for _, tt := range tests {
@@ -149,10 +155,13 @@ func request(t *testing.T, contentType, body string) *http.Request {
 	return r
 }
 
+// testBodyLimit is any limit; each route chooses its own.
+const testBodyLimit = 1 << 10
+
 // refuse decodes body and returns what the client would see for the error.
 func refuse(t *testing.T, contentType, body string) (status int, message string) {
 	t.Helper()
-	err := decodeJSON(httptest.NewRecorder(), request(t, contentType, body), &decodeTarget{})
+	err := decodeJSON(httptest.NewRecorder(), request(t, contentType, body), &decodeTarget{}, testBodyLimit)
 	status, _, message = respond(t, err)
 	return status, message
 }
@@ -169,7 +178,7 @@ func TestDecodeJSON(t *testing.T) {
 		var got decodeTarget
 		r := request(t, contentTypeJSON, `{"shares": 5}`)
 
-		err := decodeJSON(httptest.NewRecorder(), r, &got)
+		err := decodeJSON(httptest.NewRecorder(), r, &got, testBodyLimit)
 		if err != nil {
 			t.Fatalf("decodeJSON: %v", err)
 		}
@@ -193,7 +202,7 @@ func TestDecodeJSON(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				r := request(t, tt.contentType, `{}`)
 
-				err := decodeJSON(httptest.NewRecorder(), r, &decodeTarget{})
+				err := decodeJSON(httptest.NewRecorder(), r, &decodeTarget{}, testBodyLimit)
 				if err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
@@ -257,9 +266,9 @@ func TestDecodeJSON(t *testing.T) {
 	})
 
 	t.Run("a body at the size limit is accepted", func(t *testing.T) {
-		r := request(t, contentTypeJSON, padded(maxBodyBytes))
+		r := request(t, contentTypeJSON, padded(testBodyLimit))
 
-		if err := decodeJSON(httptest.NewRecorder(), r, &decodeTarget{}); err != nil {
+		if err := decodeJSON(httptest.NewRecorder(), r, &decodeTarget{}, testBodyLimit); err != nil {
 			t.Errorf("got %v, want nil", err)
 		}
 	})
@@ -269,12 +278,12 @@ func TestDecodeJSON(t *testing.T) {
 			name string
 			body string
 		}{
-			{"one byte over", padded(maxBodyBytes + 1)},
+			{"one byte over", padded(testBodyLimit + 1)},
 			// The object fits; only the read for trailing data crosses the limit.
-			{"whitespace after the object", `{}` + strings.Repeat(" ", maxBodyBytes)},
+			{"whitespace after the object", `{}` + strings.Repeat(" ", testBodyLimit)},
 		}
 
-		want := fmt.Sprintf("request body exceeds %d bytes", maxBodyBytes)
+		want := fmt.Sprintf("request body exceeds %d bytes", testBodyLimit)
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				status, message := refuse(t, contentTypeJSON, tt.body)

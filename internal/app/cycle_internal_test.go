@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/config"
-	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 )
 
@@ -38,7 +37,7 @@ func newRouter(t *testing.T) http.Handler {
 	}
 	infra.clock = fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
 	services := buildServices(infra, buildRepositories(memory.New(), infra))
-	return httpapi.NewRouter(&httpapi.Handlers{System: services.system, Logger: infra.logger})
+	return buildRouter(services, infra.logger)
 }
 
 func send(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -79,6 +78,17 @@ func unseal(t *testing.T, h http.Handler, share string) statusBody {
 		t.Fatalf("unseal: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
 	}
 	return decode[statusBody](t, rec)
+}
+
+// unsealed returns a router over an initialized, unsealed instance.
+func unsealed(t *testing.T) http.Handler {
+	t.Helper()
+	router := newRouter(t)
+	shares := initialize(t, router)
+	for _, share := range shares[:3] {
+		unseal(t, router, share)
+	}
+	return router
 }
 
 func TestSealLifecycle(t *testing.T) {
@@ -125,11 +135,7 @@ func TestSealLifecycle(t *testing.T) {
 	})
 
 	t.Run("seal closes an unsealed instance", func(t *testing.T) {
-		router := newRouter(t)
-		shares := initialize(t, router)
-		for _, share := range shares[:3] {
-			unseal(t, router, share)
-		}
+		router := unsealed(t)
 
 		rec := send(t, router, http.MethodPost, "/v1/sys/seal", "")
 		if rec.Code != http.StatusNoContent {
@@ -160,6 +166,39 @@ func TestSealLifecycle(t *testing.T) {
 		}
 		if got := unseal(t, router, shares[4]); got.Sealed {
 			t.Errorf("share 5: got %+v, want unsealed", got)
+		}
+	})
+
+	t.Run("a secret written after unseal reads back", func(t *testing.T) {
+		router := unsealed(t)
+		want := "c2VjcmV0" // "secret"
+
+		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"`+want+`"}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		rec = send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[struct {
+			Value string `json:"value"`
+		}](t, rec).Value
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("writing a secret while sealed is service unavailable", func(t *testing.T) {
+		router := newRouter(t)
+		initialize(t, router)
+
+		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0"}`)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body)
 		}
 	})
 }
