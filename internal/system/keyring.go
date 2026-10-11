@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Keyring owns key material for Service. Unsynchronized: Service locks every call
-// that touches the buffer or active key; Init's calls touch neither (#17).
+// Keyring owns key material for Service. Unsynchronized: Service holds its lock
+// across every call into it.
 type Keyring struct {
 	repo    Repository
 	sharing SecretSharing

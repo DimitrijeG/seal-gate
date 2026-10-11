@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +39,31 @@ func (r *fakeRepository) Load(_ context.Context) (system.InitializationState, er
 	return r.state, nil
 }
 
+// racingRepository makes the first Load wait for a second, so an unguarded Init
+// really interleaves.
+type racingRepository struct {
+	fakeRepository
+	loads   atomic.Int32
+	arrived chan struct{}
+}
+
+func newRacingRepository() *racingRepository {
+	return &racingRepository{arrived: make(chan struct{})}
+}
+
+func (r *racingRepository) Load(ctx context.Context) (system.InitializationState, error) {
+	switch r.loads.Add(1) {
+	case 1:
+		select {
+		case <-r.arrived:
+		case <-time.After(100 * time.Millisecond):
+		}
+	case 2:
+		close(r.arrived)
+	}
+	return r.fakeRepository.Load(ctx)
+}
+
 type fakeClock struct{ now time.Time }
 
 func (c fakeClock) Now() time.Time { return c.now }
@@ -49,6 +76,12 @@ var (
 func newService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.KeyHolder) {
 	t.Helper()
 	repo := &fakeRepository{}
+	s, keys := newServiceWith(t, repo)
+	return s, repo, keys
+}
+
+func newServiceWith(t *testing.T, repo system.Repository) (*system.Service, *cryptography.KeyHolder) {
+	t.Helper()
 	keys := cryptography.NewKeyHolder()
 	random := cryptography.CryptoRandom{}
 	sharing := cryptography.NewShamir(random)
@@ -60,7 +93,7 @@ func newService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.K
 
 	keyring := system.NewKeyring(repo, sharing, wrapper, random, keys)
 	clock := fakeClock{now: initTime}
-	return system.NewService(keyring, clock), repo, keys
+	return system.NewService(keyring, clock), keys
 }
 
 func newInitializedService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.KeyHolder, [][]byte) {
@@ -152,6 +185,56 @@ func TestService(t *testing.T) {
 
 		if !errors.Is(err, system.ErrAlreadyInitialized) {
 			t.Errorf("got %v, want %v", err, system.ErrAlreadyInitialized)
+		}
+	})
+
+	t.Run("two concurrent inits: one succeeds, the other is refused", func(t *testing.T) {
+		repo := newRacingRepository()
+		s, _ := newServiceWith(t, repo)
+
+		var errs [2]error
+		var wg sync.WaitGroup
+		for i := range errs {
+			wg.Go(func() { _, errs[i] = s.Init(t.Context(), sealConfig) })
+		}
+		wg.Wait()
+
+		var succeeded, refused int
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				succeeded++
+			case errors.Is(err, system.ErrAlreadyInitialized):
+				refused++
+			default:
+				t.Errorf("Init: got %v, want nil or %v", err, system.ErrAlreadyInitialized)
+			}
+		}
+
+		if succeeded != 1 {
+			t.Errorf("got %d successes, want 1", succeeded)
+		}
+		if refused != 1 {
+			t.Errorf("got %d refused, want 1", refused)
+		}
+	})
+
+	t.Run("concurrent init, unseal, seal and status do not race", func(t *testing.T) {
+		s, _, _ := newService(t)
+		ctx, junk := t.Context(), []byte{1, 2, 3}
+
+		// Errors depend on ordering, so they are ignored; -race is what judges this.
+		var wg sync.WaitGroup
+		for range 5 {
+			wg.Go(func() { _, _ = s.Init(ctx, sealConfig) })
+			wg.Go(func() { _, _ = s.Unseal(ctx, junk) })
+			wg.Go(func() { s.Seal(ctx) })
+			wg.Go(func() { _, _ = s.Status(ctx) })
+		}
+		wg.Wait()
+
+		if _, err := s.Status(ctx); err != nil {
+			t.Fatalf("Status: %v", err)
 		}
 	})
 
