@@ -60,6 +60,20 @@ func routerOver(t *testing.T, backend storage.Backend) http.Handler {
 	return buildRouter(services, infra.logger)
 }
 
+// The key is part of the stored format, so the test spells it out.
+const initializationKey = "sys/initialization"
+
+// unreadableRecord wires a router over a backend holding value at the
+// initialization key, bytes no instance would have written.
+func unreadableRecord(t *testing.T, value string) (http.Handler, storage.Backend) {
+	t.Helper()
+	backend := memory.New()
+	if err := backend.Put(t.Context(), initializationKey, []byte(value)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	return routerOver(t, backend), backend
+}
+
 func send(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -190,6 +204,34 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got != want {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("status over an unreadable record is a server error", func(t *testing.T) {
+		router, _ := unreadableRecord(t, `not json`)
+
+		rec := send(t, router, http.MethodGet, "/v1/sys/status", "")
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusInternalServerError, rec.Body)
+		}
+	})
+
+	t.Run("init over an unreadable record leaves it in place", func(t *testing.T) {
+		stored := `not json`
+		router, backend := unreadableRecord(t, stored)
+
+		rec := send(t, router, http.MethodPost, "/v1/sys/init", `{"shares":5,"threshold":3}`)
+		if rec.Code == http.StatusOK {
+			t.Fatalf("init: got %d, want a refusal", rec.Code)
+		}
+		got, err := backend.Get(t.Context(), initializationKey)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !bytes.Equal(got, []byte(stored)) {
+			t.Errorf("got %q, want %q", got, stored)
 		}
 	})
 

@@ -81,8 +81,13 @@ func (r *systemRepository) Load(ctx context.Context) (system.InitializationState
 	}
 
 	var record initializationRecord
+	// The decode error is replaced, not wrapped: as a *json.SyntaxError it would
+	// reach the client as a 400 about its own request body.
 	if err := json.Unmarshal(encoded, &record); err != nil {
-		return system.InitializationState{}, fmt.Errorf("repository: %w", err)
+		return system.InitializationState{}, system.ErrUnreadableRecord
+	}
+	if record.Version != initializationRecordVersion {
+		return system.InitializationState{}, system.ErrUnreadableRecord
 	}
 	return record.state(), nil
 }

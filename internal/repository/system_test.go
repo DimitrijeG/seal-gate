@@ -38,6 +38,14 @@ func mustSave(t *testing.T, repo system.Repository, state system.InitializationS
 	}
 }
 
+// seedRecord writes value at the record's key, so a test controls the stored bytes rather than Save.
+func seedRecord(t *testing.T, backend storage.Backend, value string) {
+	t.Helper()
+	if err := backend.Put(t.Context(), initializationKey, []byte(value)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+}
+
 func mustLoad(t *testing.T, repo system.Repository) system.InitializationState {
 	t.Helper()
 	state, err := repo.Load(t.Context())
@@ -201,13 +209,70 @@ func TestSystemRepository(t *testing.T) {
 			InitializedAt: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC),
 		}
 
-		err := backend.Put(t.Context(), initializationKey, []byte(stored))
-		if err != nil {
-			t.Fatalf("Put: %v", err)
-		}
+		seedRecord(t, backend, stored)
 		got := mustLoad(t, repo)
 
 		assertStateEqual(t, got, want)
+	})
+
+	t.Run("a stored record that cannot be decoded is rejected", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			stored string
+		}{
+			{"not JSON", `not json`},
+			{"empty value", ``},
+			{"a field of the wrong type", `{"version":"one"}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				repo, backend := newSystemRepository(t)
+				seedRecord(t, backend, tt.stored)
+
+				_, err := repo.Load(t.Context())
+
+				if !errors.Is(err, system.ErrUnreadableRecord) {
+					t.Errorf("got %v, want %v", err, system.ErrUnreadableRecord)
+				}
+			})
+		}
+	})
+
+	t.Run("a stored record with an unknown version is rejected", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			stored string
+		}{
+			{"version 2", `{
+				"version": 2,
+				"shares": 5,
+				"threshold": 3,
+				"key_version": 1,
+				"wrapped_key": "d3JhcHBlZA==",
+				"initialized_at": "2026-10-07T12:00:00Z"
+			}`},
+			{"no version field", `{
+				"shares": 5,
+				"threshold": 3,
+				"key_version": 1,
+				"wrapped_key": "d3JhcHBlZA==",
+				"initialized_at": "2026-10-07T12:00:00Z"
+			}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				repo, backend := newSystemRepository(t)
+				seedRecord(t, backend, tt.stored)
+
+				_, err := repo.Load(t.Context())
+
+				if !errors.Is(err, system.ErrUnreadableRecord) {
+					t.Errorf("got %v, want %v", err, system.ErrUnreadableRecord)
+				}
+			})
+		}
 	})
 
 	t.Run("a backend failure reaches the caller", func(t *testing.T) {

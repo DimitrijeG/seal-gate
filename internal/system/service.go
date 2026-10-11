@@ -44,7 +44,11 @@ func (s *Service) Init(ctx context.Context, cfg SealConfiguration) (InitResult, 
 		return InitResult{}, ErrInvalidSealConfig
 	}
 
-	// TODO(#17): two concurrent inits can both pass this check and both save.
+	// Held across check and save so two inits cannot both pass the check.
+	// Process-local: it assumes one instance per backend.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	_, err := s.keyring.load(ctx)
 	if err == nil {
 		return InitResult{}, ErrAlreadyInitialized
