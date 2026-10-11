@@ -64,3 +64,26 @@ func (h *Handlers) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+type listResponse struct {
+	Paths []string `json:"paths"`
+}
+
+func (h *Handlers) handleListSecrets(w http.ResponseWriter, r *http.Request) {
+	prefix := r.URL.Query().Get("prefix")
+
+	paths, err := h.Secret.List(r.Context(), prefix)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	// A nil slice encodes as null; the spec's paths is an array.
+	if paths == nil {
+		paths = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, listResponse{
+		Paths: paths,
+	})
+}

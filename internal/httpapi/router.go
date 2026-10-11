@@ -21,6 +21,7 @@ type SecretService interface {
 	Put(ctx context.Context, path string, value []byte) error
 	Get(ctx context.Context, path string) ([]byte, error)
 	Delete(ctx context.Context, path string) error
+	List(ctx context.Context, prefix string) ([]string, error)
 }
 
 // Handlers holds what the HTTP handlers call.
@@ -39,6 +40,7 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.HandleFunc("GET /v1/sys/status", h.handleStatus)
 	mux.HandleFunc("GET /v1/sys/health", h.handleHealth)
 
+	mux.HandleFunc("GET /v1/secrets", h.handleListSecrets)
 	mux.HandleFunc("PUT /v1/secrets/{path...}", h.handlePutSecret)
 	mux.HandleFunc("GET /v1/secrets/{path...}", h.handleGetSecret)
 	mux.HandleFunc("DELETE /v1/secrets/{path...}", h.handleDeleteSecret)

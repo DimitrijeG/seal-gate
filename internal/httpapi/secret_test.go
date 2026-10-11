@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -85,18 +86,20 @@ func TestSecret(t *testing.T) {
 		tests := []struct {
 			name   string
 			method string
+			target string
 			body   string
 		}{
-			{"put", http.MethodPut, `{"value":"AQI="}`},
-			{"get", http.MethodGet, ""},
-			{"delete", http.MethodDelete, ""},
+			{"put", http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI="}`},
+			{"get", http.MethodGet, "/v1/secrets/db/password", ""},
+			{"delete", http.MethodDelete, "/v1/secrets/db/password", ""},
+			{"list", http.MethodGet, "/v1/secrets", ""},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				router := httpapi.NewRouter(&httpapi.Handlers{Secret: &fakeSecret{err: secret.ErrSealed}})
 
-				rec := do(t, router, tt.method, "/v1/secrets/db/password", tt.body)
+				rec := do(t, router, tt.method, tt.target, tt.body)
 
 				assertError(t, rec, http.StatusServiceUnavailable, "the system is sealed")
 			})
@@ -138,6 +141,64 @@ func TestSecret(t *testing.T) {
 		want := `{"value":""}`
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a listing returns the service's paths", func(t *testing.T) {
+		want := []string{"db/a", "db/b"}
+		fake := &fakeSecret{listPaths: want}
+		router := httpapi.NewRouter(&httpapi.Handlers{Secret: fake})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets?prefix=db/", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[listBody](t, rec)
+
+		if !slices.Equal(got.Paths, want) {
+			t.Errorf("got %v, want %v", got.Paths, want)
+		}
+	})
+
+	t.Run("a listing passes the prefix to the service", func(t *testing.T) {
+		fake := &fakeSecret{}
+		router := httpapi.NewRouter(&httpapi.Handlers{Secret: fake})
+		want := "db/prod/"
+
+		do(t, router, http.MethodGet, "/v1/secrets?prefix="+want, "")
+
+		if fake.listPrefix != want {
+			t.Errorf("got %q, want %q", fake.listPrefix, want)
+		}
+	})
+
+	t.Run("a listing without a prefix lists everything", func(t *testing.T) {
+		fake := &fakeSecret{}
+		router := httpapi.NewRouter(&httpapi.Handlers{Secret: fake})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if fake.listPrefix != "" {
+			t.Errorf("got %q, want %q", fake.listPrefix, "")
+		}
+	})
+
+	t.Run("an empty list is an empty array", func(t *testing.T) {
+		fake := &fakeSecret{listPaths: nil}
+		router := httpapi.NewRouter(&httpapi.Handlers{Secret: fake})
+		want := `{"paths":[]}`
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets", "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
 		}

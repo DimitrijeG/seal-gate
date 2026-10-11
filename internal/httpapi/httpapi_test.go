@@ -67,11 +67,17 @@ type secretBody struct {
 	Value string `json:"value"`
 }
 
+type listBody struct {
+	Paths []string `json:"paths"`
+}
+
 type fakeSecret struct {
-	path     string // the last path any method got
-	putValue []byte
-	getValue []byte
-	err      error
+	path       string // the last path Put, Get or Delete got
+	putValue   []byte
+	getValue   []byte
+	listPrefix string
+	listPaths  []string
+	err        error
 }
 
 func (f *fakeSecret) Put(ctx context.Context, path string, value []byte) error {
@@ -88,6 +94,11 @@ func (f *fakeSecret) Get(ctx context.Context, path string) ([]byte, error) {
 func (f *fakeSecret) Delete(ctx context.Context, path string) error {
 	f.path = path
 	return f.err
+}
+
+func (f *fakeSecret) List(ctx context.Context, prefix string) ([]string, error) {
+	f.listPrefix = prefix
+	return f.listPaths, f.err
 }
 
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {

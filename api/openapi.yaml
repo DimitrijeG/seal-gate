@@ -138,6 +138,41 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /secrets:
+    get:
+      operationId: listSecrets
+      tags: [secrets]
+      summary: List the paths of stored secrets, optionally under a prefix.
+      description: >
+        Open until authentication exists. Returns every path under the prefix,
+        at any depth, never the values.
+      security: []
+      parameters:
+        - name: prefix
+          in: query
+          required: false
+          description: >
+            Absent or empty lists every secret. Otherwise a valid secret path
+            followed by `/`, so `db/` matches `db/password` but not `db` or
+            `dbx/key`.
+          schema:
+            type: string
+            maxLength: 257
+          example: db/
+      responses:
+        "200":
+          description: The matching paths.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /secrets/{path}:
     parameters:
       - name: path
@@ -342,6 +377,17 @@ components:
           type: string
           contentEncoding: base64
           description: Empty for an empty secret, never null.
+      additionalProperties: false
+
+    ListResponse:
+      type: object
+      required: [paths]
+      properties:
+        paths:
+          type: array
+          description: Full paths, sorted by byte order. Empty when nothing matches, never null.
+          items:
+            type: string
       additionalProperties: false
 
     ErrorResponse:
