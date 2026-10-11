@@ -20,6 +20,17 @@ func (f fixedRandom) Bytes(n int) ([]byte, error) {
 	return bytes.Clone(f[:n]), nil
 }
 
+// retainingRandom keeps the slice it returned, so a test can see Split clear it;
+// fixedRandom hands back a copy and never could.
+type retainingRandom struct{ returned []byte }
+
+// Bytes fills with a non-zero pattern: zeroes would pass the assertion even if
+// Split cleared nothing.
+func (r *retainingRandom) Bytes(n int) ([]byte, error) {
+	r.returned = bytes.Repeat([]byte{0xff}, n)
+	return r.returned, nil
+}
+
 // pick returns the shares at the given indexes, in that order.
 func pick(shares [][]byte, idx ...int) [][]byte {
 	picked := make([][]byte, len(idx))
@@ -107,6 +118,23 @@ func TestShamir(t *testing.T) {
 		_, err := s.Split([]byte("top secret"), 5, 3)
 		if !errors.Is(err, errShortRead) {
 			t.Errorf("got error %v, want %v", err, errShortRead)
+		}
+	})
+
+	t.Run("split clears the coefficients it drew", func(t *testing.T) {
+		random := &retainingRandom{}
+		s := cryptography.NewShamir(random)
+		secret, k := []byte("top secret"), 3
+		// One coefficient per power above the constant, for every secret byte.
+		want := make([]byte, (k-1)*len(secret))
+
+		_, err := s.Split(secret, 5, k)
+		if err != nil {
+			t.Fatalf("Split: %v", err)
+		}
+
+		if !bytes.Equal(random.returned, want) {
+			t.Errorf("got %x, want %x", random.returned, want)
 		}
 	})
 
