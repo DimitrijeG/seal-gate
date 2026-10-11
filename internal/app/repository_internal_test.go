@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dimitrijegasic/seal-gate/internal/barrier"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
+	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 )
 
@@ -22,8 +22,8 @@ func TestRepositories(t *testing.T) {
 		repo := buildRepositories(memory.New(), infra).set.Secret
 		value := []byte("secret")
 
-		if err := repo.Put(t.Context(), "db/password", value); !errors.Is(err, barrier.ErrSealed) {
-			t.Fatalf("Put before Install: got %v, want %v", err, barrier.ErrSealed)
+		if err := repo.Put(t.Context(), "db/password", value); !errors.Is(err, secret.ErrSealed) {
+			t.Fatalf("Put before Install: got %v, want %v", err, secret.ErrSealed)
 		}
 		key, err := cryptography.CryptoRandom{}.Bytes(32)
 		if err != nil {
