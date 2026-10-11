@@ -11,12 +11,12 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
-var _ system.Repository = (*systemRepository)(nil)
-
 // systemRepository works on the backend directly: the wrapped key must load while sealed.
 type systemRepository struct {
 	backend storage.Backend
 }
+
+var _ system.Repository = (*systemRepository)(nil)
 
 const (
 	initializationRecordVersion = 1

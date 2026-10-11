@@ -6,6 +6,8 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
+const systemBodyLimit = 16 << 10
+
 type initRequest struct {
 	Shares    int `json:"shares"`
 	Threshold int `json:"threshold"`
@@ -18,7 +20,7 @@ type initResponse struct {
 
 func (h *Handlers) handleInit(w http.ResponseWriter, r *http.Request) {
 	var req initRequest
-	if err := decodeJSON(w, r, &req); err != nil {
+	if err := decodeJSON(w, r, &req, systemBodyLimit); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -63,7 +65,7 @@ func newStatusResponse(s system.Status) statusResponse {
 
 func (h *Handlers) handleUnseal(w http.ResponseWriter, r *http.Request) {
 	var req unsealRequest
-	if err := decodeJSON(w, r, &req); err != nil {
+	if err := decodeJSON(w, r, &req, systemBodyLimit); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}

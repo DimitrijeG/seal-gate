@@ -102,22 +102,22 @@ func TestRulePredicates(t *testing.T) {
 	cases := []struct {
 		name, from, to, want string
 	}{
-		{"domain reaching into storage", "internal/secrets", "internal/storage/postgres", "domain-no-infrastructure"},
+		{"domain reaching into storage", "internal/secret", "internal/storage/postgres", "domain-no-infrastructure"},
 		{"domain reaching into the barrier", "internal/identity", "internal/barrier", "domain-no-infrastructure"},
-		{"domain subpackage reaching into crypto", "internal/secrets/kv", "internal/cryptography", "domain-no-infrastructure"},
+		{"domain subpackage reaching into crypto", "internal/secret/kv", "internal/cryptography", "domain-no-infrastructure"},
 		{"http querying storage", "internal/httpapi", "internal/repository", "httpapi-translates-only"},
 		{"non-app naming a backend", "internal/repository", "internal/storage/consul", "only-app-knows-backends"},
 		{"something importing app", "internal/httpapi", "internal/app", "app-is-a-place-not-a-layer"},
 		{"crypto learning the domain", "internal/cryptography", "internal/system", "leaves-stay-leaves"},
-		{"config growing dependencies", "internal/config", "internal/secrets", "leaves-stay-leaves"},
+		{"config growing dependencies", "internal/config", "internal/secret", "leaves-stay-leaves"},
 		{"backend reaching up", "internal/storage/bolt", "internal/cryptography", "backends-see-only-bytes"},
 		{"domain subpackage into repository subpackage", "internal/system/foo", "internal/repository/index", "domain-no-infrastructure"},
 		{"http into a barrier subpackage", "internal/httpapi", "internal/barrier/x", "httpapi-translates-only"},
 		{"crypto subpackage learning the domain", "internal/cryptography/codec", "internal/system", "leaves-stay-leaves"},
 
 		{"app naming a backend", "internal/app", "internal/storage/postgres", ""},
-		{"domain on domain", "internal/secrets", "internal/authorization", ""},
-		{"repository on domain", "internal/repository", "internal/secrets", ""},
+		{"domain on domain", "internal/secret", "internal/authorization", ""},
+		{"repository on domain", "internal/repository", "internal/secret", ""},
 		{"barrier on the storage contract", "internal/barrier", "internal/storage", ""},
 		{"backend on the storage contract", "internal/storage/bolt", "internal/storage", ""},
 		{"crypto subpackage on its own root", "internal/cryptography/codec", "internal/cryptography", ""},

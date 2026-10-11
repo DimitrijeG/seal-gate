@@ -1,16 +1,21 @@
 package app
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/config"
-	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
+	"github.com/dimitrijegasic/seal-gate/internal/storage"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 )
 
@@ -22,12 +27,26 @@ type statusBody struct {
 	Progress    int  `json:"progress"`
 }
 
+type secretBody struct {
+	Value string `json:"value"`
+}
+
+type listBody struct {
+	Paths []string `json:"paths"`
+}
+
 type fakeClock struct{ now time.Time }
 
 func (c fakeClock) Now() time.Time { return c.now }
 
 // newRouter wires the real components over a fresh memory backend.
 func newRouter(t *testing.T) http.Handler {
+	t.Helper()
+	return routerOver(t, memory.New())
+}
+
+// routerOver wires the real components over backend, with a fresh key holder, so sealed.
+func routerOver(t *testing.T, backend storage.Backend) http.Handler {
 	t.Helper()
 	infra, err := buildInfrastructure(&config.Config{
 		Logger: config.LoggerConfig{Level: "error", Format: "text"},
@@ -37,8 +56,8 @@ func newRouter(t *testing.T) http.Handler {
 		t.Fatalf("buildInfrastructure: %v", err)
 	}
 	infra.clock = fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
-	services := buildServices(infra, buildRepositories(memory.New(), infra))
-	return httpapi.NewRouter(&httpapi.Handlers{System: services.system, Logger: infra.logger})
+	services := buildServices(infra, buildRepositories(backend, infra))
+	return buildRouter(services, infra.logger)
 }
 
 func send(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -79,6 +98,82 @@ func unseal(t *testing.T, h http.Handler, share string) statusBody {
 		t.Fatalf("unseal: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
 	}
 	return decode[statusBody](t, rec)
+}
+
+// unsealAll submits the threshold's worth of shares from initialize.
+func unsealAll(t *testing.T, h http.Handler, shares []string) {
+	t.Helper()
+	for _, share := range shares[:3] {
+		unseal(t, h, share)
+	}
+}
+
+// unsealed returns a router over an initialized, unsealed instance.
+func unsealed(t *testing.T) http.Handler {
+	t.Helper()
+	router := newRouter(t)
+	unsealAll(t, router, initialize(t, router))
+	return router
+}
+
+func putSecret(t *testing.T, h http.Handler, path, value string) {
+	t.Helper()
+	rec := send(t, h, http.MethodPut, "/v1/secrets/"+path, `{"value":"`+value+`"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("put %s: got %d, want %d: %s", path, rec.Code, http.StatusNoContent, rec.Body)
+	}
+}
+
+func getSecret(t *testing.T, h http.Handler, path string) string {
+	t.Helper()
+	rec := send(t, h, http.MethodGet, "/v1/secrets/"+path, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get %s: got %d, want %d: %s", path, rec.Code, http.StatusOK, rec.Body)
+	}
+	return decode[secretBody](t, rec).Value
+}
+
+func boltConfig(t *testing.T) *config.Config {
+	t.Helper()
+	return &config.Config{Storage: config.StorageConfig{
+		Type: "bolt",
+		Path: filepath.Join(t.TempDir(), "seal-gate.db"),
+	}}
+}
+
+// reopenBolt opens cfg's bolt file and closes it when the test ends.
+func reopenBolt(t *testing.T, cfg *config.Config) storage.Backend {
+	t.Helper()
+	backend, err := buildStorage(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("buildStorage: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := backend.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	return backend
+}
+
+// writeOnBolt stores value at db/password on a new instance over cfg's file,
+// closes the file, and returns the instance's shares.
+func writeOnBolt(t *testing.T, cfg *config.Config, value string) []string {
+	t.Helper()
+	backend, err := buildStorage(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("buildStorage: %v", err)
+	}
+	router := routerOver(t, backend)
+	shares := initialize(t, router)
+	unsealAll(t, router, shares)
+	putSecret(t, router, "db/password", value)
+
+	// Close releases the file lock; reopening before it would return ErrLocked.
+	if err := backend.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	return shares
 }
 
 func TestSealLifecycle(t *testing.T) {
@@ -125,11 +220,7 @@ func TestSealLifecycle(t *testing.T) {
 	})
 
 	t.Run("seal closes an unsealed instance", func(t *testing.T) {
-		router := newRouter(t)
-		shares := initialize(t, router)
-		for _, share := range shares[:3] {
-			unseal(t, router, share)
-		}
+		router := unsealed(t)
 
 		rec := send(t, router, http.MethodPost, "/v1/sys/seal", "")
 		if rec.Code != http.StatusNoContent {
@@ -160,6 +251,88 @@ func TestSealLifecycle(t *testing.T) {
 		}
 		if got := unseal(t, router, shares[4]); got.Sealed {
 			t.Errorf("share 5: got %+v, want unsealed", got)
+		}
+	})
+
+	t.Run("a secret written after unseal reads back", func(t *testing.T) {
+		router := unsealed(t)
+		want := "c2VjcmV0" // "secret"
+		putSecret(t, router, "db/password", want)
+
+		if got := getSecret(t, router, "db/password"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a secret written before a restart reads back after unsealing", func(t *testing.T) {
+		cfg := boltConfig(t)
+		want := "c2VjcmV0" // "secret"
+		shares := writeOnBolt(t, cfg, want)
+
+		router := routerOver(t, reopenBolt(t, cfg))
+		unsealAll(t, router, shares)
+
+		if got := getSecret(t, router, "db/password"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the bolt file holds no form of a stored secret", func(t *testing.T) {
+		cfg := boltConfig(t)
+		plaintext := "plaintext-canary-4b1d"
+		encoded := base64.StdEncoding.EncodeToString([]byte(plaintext))
+		writeOnBolt(t, cfg, encoded)
+
+		file, err := os.ReadFile(cfg.Storage.Path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+
+		// The record is JSON, so an unencrypted value would be stored as base64.
+		tests := []struct {
+			name string
+			form string
+		}{
+			{"raw", plaintext},
+			{"base64", encoded},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if bytes.Contains(file, []byte(tt.form)) {
+					t.Errorf("file contains the secret")
+				}
+			})
+		}
+	})
+
+	t.Run("writing a secret while sealed is service unavailable", func(t *testing.T) {
+		router := newRouter(t)
+		initialize(t, router)
+
+		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0"}`)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body)
+		}
+	})
+
+	t.Run("secrets list under their prefix", func(t *testing.T) {
+		router := unsealed(t)
+		want := []string{"db/a", "db/b"}
+
+		for _, path := range []string{"db/a", "db/b", "other"} {
+			putSecret(t, router, path, "c2VjcmV0")
+		}
+
+		rec := send(t, router, http.MethodGet, "/v1/secrets?prefix=db/", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[listBody](t, rec).Paths
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 }
