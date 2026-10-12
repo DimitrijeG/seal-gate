@@ -20,7 +20,8 @@ type errorBody struct {
 }
 
 type initBody struct {
-	Shares []string `json:"shares"`
+	Shares    []string `json:"shares"`
+	RootToken string   `json:"root_token"`
 }
 
 type statusBody struct {

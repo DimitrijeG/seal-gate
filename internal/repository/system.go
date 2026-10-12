@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +20,7 @@ type systemRepository struct {
 var _ system.Repository = (*systemRepository)(nil)
 
 const (
-	initializationRecordVersion = 1
+	initializationRecordVersion = 2
 	// sys/ is reserved for records that bypass the barrier; nothing writes there through it.
 	initializationKey = "sys/initialization"
 )
@@ -31,6 +32,7 @@ type initializationRecord struct {
 	Threshold     int       `json:"threshold"`
 	KeyVersion    int       `json:"key_version"`
 	WrappedKey    []byte    `json:"wrapped_key"`
+	RootTokenHash []byte    `json:"root_token_hash"`
 	InitializedAt time.Time `json:"initialized_at"`
 }
 
@@ -41,12 +43,13 @@ func toRecord(state system.InitializationState) initializationRecord {
 		Threshold:     state.Config.Threshold,
 		KeyVersion:    state.EncryptedKey.Version,
 		WrappedKey:    state.EncryptedKey.Ciphertext,
+		RootTokenHash: state.RootTokenHash[:],
 		InitializedAt: state.InitializedAt.UTC(),
 	}
 }
 
 func (r initializationRecord) state() system.InitializationState {
-	return system.InitializationState{
+	state := system.InitializationState{
 		Config: system.SealConfiguration{
 			Shares:    r.Shares,
 			Threshold: r.Threshold,
@@ -57,6 +60,8 @@ func (r initializationRecord) state() system.InitializationState {
 		},
 		InitializedAt: r.InitializedAt,
 	}
+	copy(state.RootTokenHash[:], r.RootTokenHash)
+	return state
 }
 
 func (r *systemRepository) Save(ctx context.Context, state system.InitializationState) error {
@@ -87,6 +92,9 @@ func (r *systemRepository) Load(ctx context.Context) (system.InitializationState
 		return system.InitializationState{}, system.ErrUnreadableRecord
 	}
 	if record.Version != initializationRecordVersion {
+		return system.InitializationState{}, system.ErrUnreadableRecord
+	}
+	if len(record.RootTokenHash) != sha256.Size {
 		return system.InitializationState{}, system.ErrUnreadableRecord
 	}
 	return record.state(), nil

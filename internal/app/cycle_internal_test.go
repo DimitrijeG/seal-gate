@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,6 +26,11 @@ type statusBody struct {
 	Shares      int  `json:"shares"`
 	Threshold   int  `json:"threshold"`
 	Progress    int  `json:"progress"`
+}
+
+type initBody struct {
+	Shares    []string `json:"shares"`
+	RootToken string   `json:"root_token"`
 }
 
 type secretBody struct {
@@ -93,16 +99,14 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 	return v
 }
 
-// initialize makes a 3-of-5 instance and returns its shares.
-func initialize(t *testing.T, h http.Handler) []string {
+// initialize makes a 3-of-5 instance and returns its shares and root token.
+func initialize(t *testing.T, h http.Handler) initBody {
 	t.Helper()
 	rec := send(t, h, http.MethodPost, "/v1/sys/init", `{"shares":5,"threshold":3}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("init: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
 	}
-	return decode[struct {
-		Shares []string `json:"shares"`
-	}](t, rec).Shares
+	return decode[initBody](t, rec)
 }
 
 func unseal(t *testing.T, h http.Handler, share string) statusBody {
@@ -126,7 +130,7 @@ func unsealAll(t *testing.T, h http.Handler, shares []string) {
 func unsealed(t *testing.T) http.Handler {
 	t.Helper()
 	router := newRouter(t)
-	unsealAll(t, router, initialize(t, router))
+	unsealAll(t, router, initialize(t, router).Shares)
 	return router
 }
 
@@ -171,23 +175,23 @@ func reopenBolt(t *testing.T, cfg *config.Config) storage.Backend {
 }
 
 // writeOnBolt stores value at db/password on a new instance over cfg's file,
-// closes the file, and returns the instance's shares.
-func writeOnBolt(t *testing.T, cfg *config.Config, value string) []string {
+// closes the file, and returns what init returned.
+func writeOnBolt(t *testing.T, cfg *config.Config, value string) initBody {
 	t.Helper()
 	backend, err := buildStorage(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("buildStorage: %v", err)
 	}
 	router := routerOver(t, backend)
-	shares := initialize(t, router)
-	unsealAll(t, router, shares)
+	body := initialize(t, router)
+	unsealAll(t, router, body.Shares)
 	putSecret(t, router, "db/password", value)
 
 	// Close releases the file lock; reopening before it would return ErrLocked.
 	if err := backend.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	return shares
+	return body
 }
 
 func TestSealLifecycle(t *testing.T) {
@@ -204,6 +208,19 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got != want {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("init returns a root token", func(t *testing.T) {
+		router := newRouter(t)
+
+		token, err := base64.StdEncoding.DecodeString(initialize(t, router).RootToken)
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+
+		if len(token) != 32 {
+			t.Errorf("got %d bytes, want 32", len(token))
 		}
 	})
 
@@ -237,7 +254,7 @@ func TestSealLifecycle(t *testing.T) {
 
 	t.Run("unseal counts shares and opens at the threshold", func(t *testing.T) {
 		router := newRouter(t)
-		shares := initialize(t, router)
+		shares := initialize(t, router).Shares
 		steps := []struct {
 			progress int
 			sealed   bool
@@ -276,7 +293,7 @@ func TestSealLifecycle(t *testing.T) {
 
 	t.Run("seal discards a partial unseal", func(t *testing.T) {
 		router := newRouter(t)
-		shares := initialize(t, router)
+		shares := initialize(t, router).Shares
 		unseal(t, router, shares[0])
 
 		rec := send(t, router, http.MethodPost, "/v1/sys/seal", "")
@@ -309,7 +326,7 @@ func TestSealLifecycle(t *testing.T) {
 	t.Run("a secret written before a restart reads back after unsealing", func(t *testing.T) {
 		cfg := boltConfig(t)
 		want := "c2VjcmV0" // "secret"
-		shares := writeOnBolt(t, cfg, want)
+		shares := writeOnBolt(t, cfg, want).Shares
 
 		router := routerOver(t, reopenBolt(t, cfg))
 		unsealAll(t, router, shares)
@@ -343,6 +360,37 @@ func TestSealLifecycle(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				if bytes.Contains(file, []byte(tt.form)) {
 					t.Errorf("file contains the secret")
+				}
+			})
+		}
+	})
+
+	t.Run("the bolt file holds no form of the root token", func(t *testing.T) {
+		cfg := boltConfig(t)
+		encoded := writeOnBolt(t, cfg, "c2VjcmV0").RootToken
+		token, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+
+		file, err := os.ReadFile(cfg.Storage.Path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+
+		tests := []struct {
+			name string
+			form []byte
+		}{
+			{"raw", token},
+			{"base64", []byte(encoded)},
+			{"hex", []byte(hex.EncodeToString(token))},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if bytes.Contains(file, tt.form) {
+					t.Errorf("file contains the root token")
 				}
 			})
 		}
