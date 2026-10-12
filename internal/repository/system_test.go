@@ -3,6 +3,7 @@ package repository_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -66,6 +67,9 @@ func assertStateEqual(t *testing.T, got, want system.InitializationState) {
 	if got.EncryptedKey.Version != want.EncryptedKey.Version {
 		t.Errorf("EncryptedKey.Version: got %d, want %d", got.EncryptedKey.Version, want.EncryptedKey.Version)
 	}
+	if got.RootTokenHash != want.RootTokenHash {
+		t.Errorf("RootTokenHash: got %x, want %x", got.RootTokenHash, want.RootTokenHash)
+	}
 	if !got.InitializedAt.Equal(want.InitializedAt) {
 		t.Errorf("InitializedAt: got %v, want %v", got.InitializedAt, want.InitializedAt)
 	}
@@ -75,6 +79,7 @@ func newSystemState() system.InitializationState {
 	return system.InitializationState{
 		Config:        system.SealConfiguration{Shares: 5, Threshold: 3},
 		EncryptedKey:  system.EncryptedKey{Ciphertext: []byte("wrapped"), Version: 1},
+		RootTokenHash: sha256.Sum256([]byte("root-token")),
 		InitializedAt: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC),
 	}
 }
@@ -166,10 +171,10 @@ func TestSystemRepository(t *testing.T) {
 		}
 	})
 
-	t.Run("the stored record carries format version 1", func(t *testing.T) {
+	t.Run("the stored record carries format version 2", func(t *testing.T) {
 		repo, backend := newSystemRepository(t)
 		state := newSystemState()
-		want := 1
+		want := 2
 
 		mustSave(t, repo, state)
 		record := storedRecord(t, backend)
@@ -193,19 +198,21 @@ func TestSystemRepository(t *testing.T) {
 		}
 	})
 
-	t.Run("a record in the version 1 layout loads", func(t *testing.T) {
+	t.Run("a record in the version 2 layout loads", func(t *testing.T) {
 		repo, backend := newSystemRepository(t)
 		stored := `{
-			"version": 1,
+			"version": 2,
 			"shares": 5,
 			"threshold": 3,
 			"key_version": 1,
 			"wrapped_key": "d3JhcHBlZA==",
+			"root_token_hash": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 			"initialized_at": "2026-10-07T12:00:00Z"
 		}`
 		want := system.InitializationState{
 			Config:        system.SealConfiguration{Shares: 5, Threshold: 3},
 			EncryptedKey:  system.EncryptedKey{Ciphertext: []byte("wrapped"), Version: 1},
+			RootTokenHash: [sha256.Size]byte([]byte("0123456789abcdef0123456789abcdef")),
 			InitializedAt: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC),
 		}
 
@@ -244,15 +251,80 @@ func TestSystemRepository(t *testing.T) {
 			name   string
 			stored string
 		}{
-			{"version 2", `{
-				"version": 2,
+			{"version 1", `{
+				"version": 1,
 				"shares": 5,
 				"threshold": 3,
 				"key_version": 1,
 				"wrapped_key": "d3JhcHBlZA==",
 				"initialized_at": "2026-10-07T12:00:00Z"
 			}`},
+			{"version 3", `{
+				"version": 3,
+				"shares": 5,
+				"threshold": 3,
+				"key_version": 1,
+				"wrapped_key": "d3JhcHBlZA==",
+				"root_token_hash": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+				"initialized_at": "2026-10-07T12:00:00Z"
+			}`},
 			{"no version field", `{
+				"shares": 5,
+				"threshold": 3,
+				"key_version": 1,
+				"wrapped_key": "d3JhcHBlZA==",
+				"initialized_at": "2026-10-07T12:00:00Z"
+			}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				repo, backend := newSystemRepository(t)
+				seedRecord(t, backend, tt.stored)
+
+				_, err := repo.Load(t.Context())
+
+				if !errors.Is(err, system.ErrUnreadableRecord) {
+					t.Errorf("got %v, want %v", err, system.ErrUnreadableRecord)
+				}
+			})
+		}
+	})
+
+	t.Run("a stored root token hash of the wrong length is rejected", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			stored string
+		}{
+			{"too short", `{
+				"version": 2,
+				"shares": 5,
+				"threshold": 3,
+				"key_version": 1,
+				"wrapped_key": "d3JhcHBlZA==",
+				"root_token_hash": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZQ==",
+				"initialized_at": "2026-10-07T12:00:00Z"
+			}`},
+			{"too long", `{
+				"version": 2,
+				"shares": 5,
+				"threshold": 3,
+				"key_version": 1,
+				"wrapped_key": "d3JhcHBlZA==",
+				"root_token_hash": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYw",
+				"initialized_at": "2026-10-07T12:00:00Z"
+			}`},
+			{"empty", `{
+				"version": 2,
+				"shares": 5,
+				"threshold": 3,
+				"key_version": 1,
+				"wrapped_key": "d3JhcHBlZA==",
+				"root_token_hash": "",
+				"initialized_at": "2026-10-07T12:00:00Z"
+			}`},
+			{"missing", `{
+				"version": 2,
 				"shares": 5,
 				"threshold": 3,
 				"key_version": 1,

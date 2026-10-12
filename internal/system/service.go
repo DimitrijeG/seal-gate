@@ -21,9 +21,10 @@ func NewService(keyring *Keyring, clock Clock) *Service {
 	}
 }
 
-// InitResult carries the unseal shares, the only copy that will ever exist.
+// InitResult carries the unseal shares and the root token, the only copies that will ever exist.
 type InitResult struct {
-	Shares [][]byte
+	Shares    [][]byte
+	RootToken []byte
 }
 
 // Status reports where the instance is in the seal lifecycle; Config is zero before init.
@@ -37,7 +38,7 @@ type Status struct {
 // maxShares is Split's limit, checked here so a client gets ErrInvalidSealConfig, not a 500.
 const maxShares = 255
 
-// Init validates cfg, records the initialization and returns the shares;
+// Init validates cfg, records the initialization and returns the shares and root token;
 // a second call fails with ErrAlreadyInitialized.
 func (s *Service) Init(ctx context.Context, cfg SealConfiguration) (InitResult, error) {
 	if cfg.Threshold <= 1 || cfg.Threshold > cfg.Shares || cfg.Shares > maxShares {
@@ -57,12 +58,7 @@ func (s *Service) Init(ctx context.Context, cfg SealConfiguration) (InitResult, 
 		return InitResult{}, err
 	}
 
-	shares, err := s.keyring.initialize(ctx, cfg, s.clock.Now())
-	if err != nil {
-		return InitResult{}, err
-	}
-
-	return InitResult{Shares: shares}, nil
+	return s.keyring.initialize(ctx, cfg, s.clock.Now())
 }
 
 func (s *Service) status(state InitializationState) Status {

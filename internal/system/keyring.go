@@ -2,6 +2,7 @@ package system
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -36,51 +37,69 @@ func NewKeyring(
 
 const (
 	keyLen            = 32
-	wrapFormatVersion = 1
+	rootTokenLen      = 32
+	wrapFormatVersion = 2
 )
 
-// wrapAdditionalData binds the wrapped key to its format version and seal configuration;
-// changing the layout needs a new version.
-func wrapAdditionalData(version int, cfg SealConfiguration) []byte {
-	return fmt.Appendf(nil, "seal-gate/barrier-key/v%d/%d-of-%d", version, cfg.Threshold, cfg.Shares)
+// wrapAdditionalData binds the wrapped key to its format version, seal configuration
+// and root token hash; changing the layout needs a new version.
+func wrapAdditionalData(version int, cfg SealConfiguration, rootTokenHash [sha256.Size]byte) []byte {
+	return fmt.Appendf(nil, "seal-gate/barrier-key/v%d/%d-of-%d/%x", version, cfg.Threshold, cfg.Shares, rootTokenHash)
 }
 
-func (k *Keyring) initialize(ctx context.Context, cfg SealConfiguration, now time.Time) ([][]byte, error) {
+func (k *Keyring) initialize(ctx context.Context, cfg SealConfiguration, now time.Time) (_ InitResult, err error) {
 	rootKey, err := k.random.Bytes(keyLen)
 	if err != nil {
-		return nil, fmt.Errorf("system: %w", err)
+		return InitResult{}, fmt.Errorf("system: %w", err)
 	}
 	defer clear(rootKey)
 
 	barrierKey, err := k.random.Bytes(keyLen)
 	if err != nil {
-		return nil, fmt.Errorf("system: %w", err)
+		return InitResult{}, fmt.Errorf("system: %w", err)
 	}
 	defer clear(barrierKey)
 
-	ad := wrapAdditionalData(wrapFormatVersion, cfg)
+	rootToken, err := k.random.Bytes(rootTokenLen)
+	if err != nil {
+		return InitResult{}, fmt.Errorf("system: %w", err)
+	}
+	// Handed out on success, so cleared only on failure; reads the named err.
+	defer func() {
+		if err != nil {
+			clear(rootToken)
+		}
+	}()
+	rootTokenHash := sha256.Sum256(rootToken)
+
+	ad := wrapAdditionalData(wrapFormatVersion, cfg, rootTokenHash)
 	wrapped, err := k.wrapper.Wrap(rootKey, barrierKey, ad)
 	if err != nil {
-		return nil, fmt.Errorf("system: %w", err)
+		return InitResult{}, fmt.Errorf("system: %w", err)
 	}
 
 	shares, err := k.sharing.Split(rootKey, cfg.Shares, cfg.Threshold)
 	if err != nil {
-		return nil, fmt.Errorf("system: %w", err)
+		return InitResult{}, fmt.Errorf("system: %w", err)
 	}
+	defer func() {
+		if err != nil {
+			clearShares(shares)
+		}
+	}()
 
 	state := InitializationState{
 		Config:        cfg,
 		EncryptedKey:  EncryptedKey{Ciphertext: wrapped, Version: wrapFormatVersion},
+		RootTokenHash: rootTokenHash,
 		InitializedAt: now,
 	}
 
 	if err := k.repo.Save(ctx, state); err != nil {
-		clearShares(shares)
-		return nil, fmt.Errorf("system: %w", err)
+		return InitResult{}, fmt.Errorf("system: %w", err)
 	}
 
-	return shares, nil
+	return InitResult{Shares: shares, RootToken: rootToken}, nil
 }
 
 // load returns this package's own sentinels bare: a prefix here would double,
@@ -118,7 +137,7 @@ func (k *Keyring) unlock(state InitializationState) error {
 	}
 	defer clear(rootKey)
 
-	ad := wrapAdditionalData(state.EncryptedKey.Version, state.Config)
+	ad := wrapAdditionalData(state.EncryptedKey.Version, state.Config, state.RootTokenHash)
 	barrierKey, err := k.wrapper.Unwrap(rootKey, state.EncryptedKey.Ciphertext, ad)
 	if err != nil {
 		return ErrInvalidShare

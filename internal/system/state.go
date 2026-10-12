@@ -1,6 +1,7 @@
 package system
 
 import (
+	"crypto/sha256"
 	"time"
 )
 
@@ -22,5 +23,6 @@ type EncryptedKey struct {
 type InitializationState struct {
 	Config        SealConfiguration
 	EncryptedKey  EncryptedKey
+	RootTokenHash [sha256.Size]byte
 	InitializedAt time.Time
 }
