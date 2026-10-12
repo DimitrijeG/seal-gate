@@ -28,6 +28,22 @@ func TestInit(t *testing.T) {
 		}
 	})
 
+	t.Run("init returns the root token as base64", func(t *testing.T) {
+		fake := &fakeSystem{initResult: system.InitResult{RootToken: []byte{5, 6}}}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		want := "BQY="
+
+		rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":2,"threshold":2}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[initBody](t, rec)
+
+		if got.RootToken != want {
+			t.Errorf("got %q, want %q", got.RootToken, want)
+		}
+	})
+
 	t.Run("init passes the requested configuration to the service", func(t *testing.T) {
 		fake := &fakeSystem{}
 		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
@@ -80,6 +96,21 @@ func TestInit(t *testing.T) {
 			if !bytes.Equal(s, make([]byte, len(s))) {
 				t.Errorf("shares[%d] = %x, want zeros", i, s)
 			}
+		}
+	})
+
+	t.Run("init clears the root token once it is written", func(t *testing.T) {
+		token := []byte{5, 6}
+		fake := &fakeSystem{initResult: system.InitResult{RootToken: token}}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+
+		rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":2,"threshold":2}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if !bytes.Equal(token, make([]byte, len(token))) {
+			t.Errorf("got %x, want zeros", token)
 		}
 	})
 }

@@ -13,9 +13,10 @@ type initRequest struct {
 	Threshold int `json:"threshold"`
 }
 
-// initResponse carries the shares; []byte fields encode as base64.
+// initResponse carries the shares and the root token; []byte fields encode as base64.
 type initResponse struct {
-	Shares [][]byte `json:"shares"`
+	Shares    [][]byte `json:"shares"`
+	RootToken []byte   `json:"root_token"`
 }
 
 func (h *Handlers) handleInit(w http.ResponseWriter, r *http.Request) {
@@ -31,13 +32,15 @@ func (h *Handlers) handleInit(w http.ResponseWriter, r *http.Request) {
 	})
 	// Deferred before the error check: cleared after the response is written, whatever Init returned.
 	defer zeroShares(result.Shares)
+	defer clear(result.RootToken)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, initResponse{
-		Shares: result.Shares,
+		Shares:    result.Shares,
+		RootToken: result.RootToken,
 	})
 }
 

@@ -23,11 +23,12 @@ paths:
     post:
       operationId: init
       tags: [system]
-      summary: Initialize the instance and return its unseal shares.
+      summary: Initialize the instance and return its unseal shares and root token.
       description: >
         Open by design: no token can exist before initialization. The shares
-        in the response are the only copy that will ever exist; the server
-        keeps none of them.
+        and the root token in the response are the only copy that will ever
+        exist; the server keeps only a hash of the token, and none of the
+        shares.
       security: []
       requestBody:
         required: true
@@ -95,7 +96,7 @@ paths:
       tags: [system]
       summary: Seal the instance.
       description: >
-        Open until tokens exist. Discards the key and any buffered shares.
+        Open until authentication exists. Discards the key and any buffered shares.
         Idempotent: sealing a sealed or uninitialized instance also succeeds.
       security: []
       responses:
@@ -322,13 +323,17 @@ components:
 
     InitResponse:
       type: object
-      required: [shares]
+      required: [shares, root_token]
       properties:
         shares:
           type: array
           items:
             type: string
             contentEncoding: base64
+        root_token:
+          type: string
+          contentEncoding: base64
+          description: 32 bytes. Returned only here; it cannot be recovered later.
       additionalProperties: false
 
     UnsealRequest:
@@ -393,7 +398,7 @@ components:
     ErrorResponse:
       type: object
       description: >
-        The body of every non-2xx response. Messages are safe to show an
+        The body of every error response listed here. Messages are safe to show an
         operator: they never carry a secret value, share material, key material,
         or an internal error string.
       required: [errors]
