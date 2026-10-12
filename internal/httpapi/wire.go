@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -65,7 +66,8 @@ func classify(err error) (int, string) {
 			// The top-level mismatch would name our Go type.
 			return http.StatusBadRequest, "request body must be a JSON object"
 		}
-		return http.StatusBadRequest, fmt.Sprintf("field %q must be of type %s", typeErr.Field, typeErr.Type)
+		// The expected type is a Go type, and naming it would expose ours.
+		return http.StatusBadRequest, fmt.Sprintf("field %q has the wrong type", typeErr.Field)
 	case errors.Is(err, errUnknownField),
 		errors.Is(err, errTrailingData):
 		return http.StatusBadRequest, err.Error()
@@ -105,6 +107,11 @@ var domainErrors = []struct {
 	{secret.ErrValueTooLarge, http.StatusRequestEntityTooLarge, "secret value is too large"},
 	{secret.ErrNotFound, http.StatusNotFound, "secret not found"},
 	{secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
+
+	{authorization.ErrInvalidName, http.StatusBadRequest, "invalid policy name"},
+	{authorization.ErrInvalidRule, http.StatusBadRequest, "invalid policy rule"},
+	{authorization.ErrNotFound, http.StatusNotFound, "policy not found"},
+	{authorization.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 }
 
 // writeJSON forbids caching on every body, since a body may carry a secret or a share.

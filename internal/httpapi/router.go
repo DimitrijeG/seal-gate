@@ -7,6 +7,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -27,10 +28,18 @@ type SecretService interface {
 	List(ctx context.Context, prefix string) ([]string, error)
 }
 
+// PolicyService is policy storage as the handlers use it.
+type PolicyService interface {
+	Put(ctx context.Context, policy authorization.Policy) error
+	Get(ctx context.Context, name string) (authorization.Policy, error)
+	Delete(ctx context.Context, name string) error
+}
+
 // Handlers holds what the HTTP handlers call.
 type Handlers struct {
 	System SystemService
 	Secret SecretService
+	Policy PolicyService
 	Logger *slog.Logger
 }
 
@@ -48,17 +57,37 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.HandleFunc("GET /v1/secrets/{path...}", h.handleGetSecret)
 	mux.HandleFunc("DELETE /v1/secrets/{path...}", h.handleDeleteSecret)
 
-	return h.refuseUncleanSecretPaths(mux)
+	mux.HandleFunc("PUT /v1/policies/{name}", h.handlePutPolicy)
+	mux.HandleFunc("GET /v1/policies/{name}", h.handleGetPolicy)
+	mux.HandleFunc("DELETE /v1/policies/{name}", h.handleDeletePolicy)
+
+	return h.refuseUncleanPaths(mux)
 }
 
-// refuseUncleanSecretPaths runs before the mux, which would otherwise redirect an
+// refuseUncleanPaths runs before the mux, which would otherwise redirect an
 // unclean path and let a write land on a path the client never named.
-func (h *Handlers) refuseUncleanSecretPaths(next http.Handler) http.Handler {
+func (h *Handlers) refuseUncleanPaths(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/secrets/") && path.Clean(r.URL.Path) != r.URL.Path {
-			writeError(w, h.Logger, secret.ErrInvalidPath)
-			return
+		// Matched on the cleaned path, where the redirect would land: an empty
+		// segment before the route (/v1//policies/dev) hides it from the raw one.
+		cleaned := path.Clean(r.URL.Path)
+		if cleaned != r.URL.Path {
+			for _, guarded := range uncleanPathErrors {
+				if strings.HasPrefix(cleaned, guarded.prefix) {
+					writeError(w, h.Logger, guarded.err)
+					return
+				}
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// uncleanPathErrors names, per route, the error an unclean path landing under it is refused with.
+var uncleanPathErrors = []struct {
+	prefix string
+	err    error
+}{
+	{"/v1/secrets/", secret.ErrInvalidPath},
+	{"/v1/policies/", authorization.ErrInvalidName},
 }

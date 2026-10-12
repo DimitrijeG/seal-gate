@@ -257,7 +257,7 @@ func TestDecodeJSON(t *testing.T) {
 			{"empty body", ``, "request body is empty"},
 			{"cut off", `{"shares":`, "request body ended mid-value"},
 			{"malformed", `{"shares" 5}`, "malformed JSON at byte offset 11"},
-			{"field of the wrong type", `{"shares": "five"}`, `field "shares" must be of type int`},
+			{"field of the wrong type", `{"shares": "five"}`, `field "shares" has the wrong type`},
 			// The decoder's own message would name our Go type.
 			{"not an object", `["shares"]`, "request body must be a JSON object"},
 			{"unknown field", `{"treshold": 3}`, `unknown field in request body: "treshold"`},

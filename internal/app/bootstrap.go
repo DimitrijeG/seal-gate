@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/barrier"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
@@ -33,6 +34,7 @@ type repositories struct {
 type services struct {
 	system *system.Service
 	secret *secret.Service
+	policy *authorization.Service
 }
 
 func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
@@ -85,6 +87,7 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 	return &services{
 		system: system.NewService(keyring, infra.clock),
 		secret: secret.New(repositories.set.Secret),
+		policy: authorization.New(repositories.set.Policy),
 	}
 }
 
@@ -92,6 +95,7 @@ func buildRouter(services *services, logger *slog.Logger) http.Handler {
 	return httpapi.NewRouter(&httpapi.Handlers{
 		System: services.system,
 		Secret: services.secret,
+		Policy: services.policy,
 		Logger: logger,
 	})
 }
