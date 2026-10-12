@@ -1,10 +1,12 @@
-// Package authorization owns ACL policies: their vocabulary, what makes one valid, and storing them.
+// Package authorization owns ACL policies: their vocabulary, what makes one valid, and the access decisions made from them.
 package authorization
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 )
 
 // Repository stores policies by name. Get returns ErrNotFound for a missing name and
@@ -15,7 +17,7 @@ type Repository interface {
 	Delete(ctx context.Context, name string) error
 }
 
-// Service validates policies and names before they reach the repository.
+// Service manages policies, validating them before they reach the repository, and decides access from them.
 type Service struct {
 	repo Repository
 }
@@ -67,4 +69,46 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 		return fmt.Errorf("authorization: %w", err)
 	}
 	return err
+}
+
+// Authorize returns nil if the named policies grant capability on resource and none denies it, else ErrDenied.
+// A missing policy grants nothing; any other read failure is returned as is.
+func (s *Service) Authorize(ctx context.Context, policies []string, resource string, capability Capability) error {
+	var granted, denied bool
+
+	// Deny wins over any grant, so every matching rule is seen before deciding.
+	for _, name := range policies {
+		policy, err := s.Get(ctx, name)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		for _, rule := range policy.Rules {
+			if !matches(rule.Path, resource) {
+				continue
+			}
+
+			if slices.Contains(rule.Capabilities, CapabilityDeny) {
+				denied = true
+			}
+			if slices.Contains(rule.Capabilities, capability) {
+				granted = true
+			}
+		}
+	}
+
+	if granted && !denied {
+		return nil
+	}
+	return ErrDenied
+}
+
+func matches(pattern, resource string) bool {
+	if prefix, starred := strings.CutSuffix(pattern, "*"); starred {
+		return strings.HasPrefix(resource, prefix)
+	}
+	return pattern == resource
 }

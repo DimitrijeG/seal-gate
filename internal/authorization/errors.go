@@ -9,4 +9,5 @@ var (
 	// ErrInvalidRule reports a rule with a bad path pattern, or no or an unknown capability.
 	ErrInvalidRule = errors.New("authorization: invalid rule")
 	ErrSealed      = errors.New("authorization: sealed")
+	ErrDenied      = errors.New("authorization: denied")
 )
