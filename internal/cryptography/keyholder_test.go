@@ -29,7 +29,7 @@ func TestKeyHolder(t *testing.T) {
 		err := kh.WithKey(noopBorrow)
 
 		if !errors.Is(err, cryptography.ErrNoActiveKey) {
-			t.Errorf("got error %v, want %v", err, cryptography.ErrNoActiveKey)
+			t.Errorf("got %v, want %v", err, cryptography.ErrNoActiveKey)
 		}
 	})
 
@@ -41,13 +41,13 @@ func TestKeyHolder(t *testing.T) {
 		err := kh.WithKey(func(lentKey []byte) error {
 			called = true
 			if !bytes.Equal(lentKey, key) {
-				t.Errorf("got lent key %x, want %x", lentKey, key)
+				t.Errorf("lent key: got %x, want %x", lentKey, key)
 			}
 			return nil
 		})
 
 		if err != nil {
-			t.Errorf("got error %v, want nil", err)
+			t.Fatalf("WithKey: %v", err)
 		}
 		if !called {
 			t.Errorf("callback was never called")
@@ -73,7 +73,7 @@ func TestKeyHolder(t *testing.T) {
 				err := kh.Install(tt.key)
 
 				if !errors.Is(err, cryptography.ErrInvalidKeyLength) {
-					t.Errorf("got error %v, want %v", err, cryptography.ErrInvalidKeyLength)
+					t.Errorf("got %v, want %v", err, cryptography.ErrInvalidKeyLength)
 				}
 			})
 		}
@@ -88,7 +88,7 @@ func TestKeyHolder(t *testing.T) {
 		called := false
 		err := kh.WithKey(func(lentKey []byte) error {
 			if !bytes.Equal(lentKey, want) {
-				t.Errorf("got lent key %x, want %x", lentKey, want)
+				t.Errorf("lent key: got %x, want %x", lentKey, want)
 			}
 			called = true
 			return nil
@@ -110,7 +110,7 @@ func TestKeyHolder(t *testing.T) {
 		err := kh.WithKey(noopBorrow)
 
 		if !errors.Is(err, cryptography.ErrNoActiveKey) {
-			t.Errorf("got error %v, want %v", err, cryptography.ErrNoActiveKey)
+			t.Errorf("got %v, want %v", err, cryptography.ErrNoActiveKey)
 		}
 	})
 
@@ -122,7 +122,7 @@ func TestKeyHolder(t *testing.T) {
 		called := false
 		err := kh.WithKey(func(lentKey []byte) error {
 			if !bytes.Equal(lentKey, key2) {
-				t.Errorf("got lent key %x, want %x", lentKey, key2)
+				t.Errorf("lent key: got %x, want %x", lentKey, key2)
 			}
 			called = true
 			return nil
@@ -177,7 +177,7 @@ func TestKeyHolder(t *testing.T) {
 
 		// == rather than not errors.Is: a wrapped error must fail.
 		if err != callbackErr {
-			t.Errorf("got error %v, want %v", err, callbackErr)
+			t.Errorf("got %v, want %v", err, callbackErr)
 		}
 	})
 
