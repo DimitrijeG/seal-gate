@@ -14,7 +14,7 @@ func wrapNewKey(t *testing.T, kw *cryptography.KeyWrapper, wrappingKey, ad []byt
 	key = newKey(t)
 	wrappedKey, err := kw.Wrap(wrappingKey, key, ad)
 	if err != nil {
-		t.Fatalf("Wrap failed: %v", err)
+		t.Fatalf("Wrap: %v", err)
 	}
 	return key, wrappedKey
 }
@@ -28,11 +28,11 @@ func TestKeyWrapper(t *testing.T) {
 
 		got, err := kw.Unwrap(wrappingKey, wrappedKey, ad)
 		if err != nil {
-			t.Fatalf("Unwrap failed: %v", err)
+			t.Fatalf("Unwrap: %v", err)
 		}
 
 		if !bytes.Equal(got, key) {
-			t.Errorf("Unwrap = %x, want %x", got, key)
+			t.Errorf("got %x, want %x", got, key)
 		}
 	})
 
@@ -66,7 +66,7 @@ func TestKeyWrapper(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := kw.Unwrap(tt.wrappingKey, tt.wrappedKey, tt.ad)
 				if !errors.Is(err, cryptography.ErrDecryptionFailed) {
-					t.Errorf("Unwrap error = %v, want %v", err, cryptography.ErrDecryptionFailed)
+					t.Errorf("got %v, want %v", err, cryptography.ErrDecryptionFailed)
 				}
 			})
 		}
@@ -91,7 +91,7 @@ func TestKeyWrapper(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := kw.Wrap(wrappingKey, tt.key, ad)
 				if !errors.Is(err, cryptography.ErrInvalidKeyLength) {
-					t.Errorf("Wrap error = %v, want %v", err, cryptography.ErrInvalidKeyLength)
+					t.Errorf("got %v, want %v", err, cryptography.ErrInvalidKeyLength)
 				}
 			})
 		}
@@ -115,7 +115,7 @@ func TestKeyWrapper(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := kw.Wrap(tt.wrappingKey, newKey(t), ad)
 				if !errors.Is(err, cryptography.ErrInvalidKeyLength) {
-					t.Errorf("Wrap error = %v, want %v", err, cryptography.ErrInvalidKeyLength)
+					t.Errorf("got %v, want %v", err, cryptography.ErrInvalidKeyLength)
 				}
 			})
 		}
@@ -139,7 +139,7 @@ func TestKeyWrapper(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := kw.Unwrap(wrappingKey, tt.wrappedKey, ad)
 				if !errors.Is(err, cryptography.ErrDecryptionFailed) {
-					t.Errorf("Unwrap error = %v, want %v", err, cryptography.ErrDecryptionFailed)
+					t.Errorf("got %v, want %v", err, cryptography.ErrDecryptionFailed)
 				}
 			})
 		}
@@ -154,12 +154,12 @@ func TestKeyWrapper(t *testing.T) {
 		payload := make([]byte, 31)
 		ciphertext, err := cipher.Encrypt(wrappingKey, payload, ad)
 		if err != nil {
-			t.Fatalf("Encrypt failed: %v", err)
+			t.Fatalf("Encrypt: %v", err)
 		}
 
 		_, err = kw.Unwrap(wrappingKey, ciphertext, ad)
 		if !errors.Is(err, cryptography.ErrInvalidKeyLength) {
-			t.Errorf("Unwrap error = %v, want %v", err, cryptography.ErrInvalidKeyLength)
+			t.Errorf("got %v, want %v", err, cryptography.ErrInvalidKeyLength)
 		}
 	})
 }

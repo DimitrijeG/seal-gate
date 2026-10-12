@@ -117,7 +117,7 @@ func TestShamir(t *testing.T) {
 		s := cryptography.NewShamir(fixedRandom{})
 		_, err := s.Split([]byte("top secret"), 5, 3)
 		if !errors.Is(err, errShortRead) {
-			t.Errorf("got error %v, want %v", err, errShortRead)
+			t.Errorf("got %v, want %v", err, errShortRead)
 		}
 	})
 
@@ -288,7 +288,7 @@ func TestShamir(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := s.Split(tt.secret, tt.n, tt.k)
 				if !errors.Is(err, cryptography.ErrInvalidSplit) {
-					t.Errorf("got error %v, want %v", err, cryptography.ErrInvalidSplit)
+					t.Errorf("got %v, want %v", err, cryptography.ErrInvalidSplit)
 				}
 			})
 		}
@@ -346,7 +346,7 @@ func TestShamir(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				_, err := s.Combine(tt.shares)
 				if !errors.Is(err, cryptography.ErrInvalidShares) {
-					t.Errorf("got error %v, want %v", err, cryptography.ErrInvalidShares)
+					t.Errorf("got %v, want %v", err, cryptography.ErrInvalidShares)
 				}
 			})
 		}

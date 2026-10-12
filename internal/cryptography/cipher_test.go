@@ -13,7 +13,7 @@ func newCipher(t *testing.T) cryptography.Cipher {
 	t.Helper()
 	c, err := cryptography.NewAEADCipher("aes-256-gcm")
 	if err != nil {
-		t.Fatalf("failed to create cipher: %v", err)
+		t.Fatalf("NewAEADCipher: %v", err)
 	}
 	return c
 }
@@ -22,7 +22,7 @@ func newKey(t *testing.T) []byte {
 	t.Helper()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate random key: %v", err)
+		t.Fatalf("rand.Read: %v", err)
 	}
 	return key
 }
@@ -40,16 +40,16 @@ func TestAES256GCM(t *testing.T) {
 
 		ct, err := c.Encrypt(key, plaintext, ad)
 		if err != nil {
-			t.Fatalf("Encrypt failed: %v", err)
+			t.Fatalf("Encrypt: %v", err)
 		}
 
 		got, err := c.Decrypt(key, ct, ad)
 		if err != nil {
-			t.Fatalf("Decrypt failed: %v", err)
+			t.Fatalf("Decrypt: %v", err)
 		}
 
 		if !bytes.Equal(got, plaintext) {
-			t.Errorf("Decrypt = %q, want %q", got, plaintext)
+			t.Errorf("got %q, want %q", got, plaintext)
 		}
 	})
 
@@ -59,12 +59,12 @@ func TestAES256GCM(t *testing.T) {
 
 		ct, err := c.Encrypt(key, plaintext, ad)
 		if err != nil {
-			t.Fatalf("Encrypt failed: %v", err)
+			t.Fatalf("Encrypt: %v", err)
 		}
 
 		const overhead = 12 + 16 // nonce + tag
 		if got, want := len(ct), len(plaintext)+overhead; got != want {
-			t.Errorf("len(ciphertext) = %d, want %d", got, want)
+			t.Errorf("got %d bytes, want %d", got, want)
 		}
 
 		if bytes.Contains(ct, plaintext) {
@@ -78,12 +78,12 @@ func TestAES256GCM(t *testing.T) {
 
 		ct1, err := c.Encrypt(key, plaintext, ad)
 		if err != nil {
-			t.Fatalf("Encrypt failed: %v", err)
+			t.Fatalf("Encrypt: %v", err)
 		}
 
 		ct2, err := c.Encrypt(key, plaintext, ad)
 		if err != nil {
-			t.Fatalf("Encrypt failed: %v", err)
+			t.Fatalf("Encrypt: %v", err)
 		}
 
 		if bytes.Equal(ct1, ct2) {
@@ -97,7 +97,7 @@ func TestAES256GCM(t *testing.T) {
 
 		ct, err := c.Encrypt(key, plaintext, ad)
 		if err != nil {
-			t.Fatalf("Encrypt failed: %v", err)
+			t.Fatalf("Encrypt: %v", err)
 		}
 
 		tests := []struct {
@@ -116,7 +116,7 @@ func TestAES256GCM(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				if _, err := c.Decrypt(tt.key, tt.ct, tt.ad); !errors.Is(err, cryptography.ErrDecryptionFailed) {
-					t.Errorf("Decrypt error = %v, want ErrDecryptionFailed", err)
+					t.Errorf("got %v, want %v", err, cryptography.ErrDecryptionFailed)
 				}
 			})
 		}
@@ -139,7 +139,7 @@ func TestAES256GCM(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				if _, err := c.Decrypt(key, tt.ct, nil); !errors.Is(err, cryptography.ErrDecryptionFailed) {
-					t.Errorf("Decrypt error = %v, want ErrDecryptionFailed", err)
+					t.Errorf("got %v, want %v", err, cryptography.ErrDecryptionFailed)
 				}
 			})
 		}
@@ -163,11 +163,11 @@ func TestAES256GCM(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				if _, err := c.Encrypt(tt.key, nil, nil); !errors.Is(err, cryptography.ErrInvalidKeyLength) {
-					t.Errorf("Encrypt error = %v, want ErrInvalidKeyLength", err)
+					t.Errorf("Encrypt: got %v, want %v", err, cryptography.ErrInvalidKeyLength)
 				}
 
 				if _, err := c.Decrypt(tt.key, nil, nil); !errors.Is(err, cryptography.ErrInvalidKeyLength) {
-					t.Errorf("Decrypt error = %v, want ErrInvalidKeyLength", err)
+					t.Errorf("Decrypt: got %v, want %v", err, cryptography.ErrInvalidKeyLength)
 				}
 			})
 		}
@@ -191,16 +191,16 @@ func TestAES256GCM(t *testing.T) {
 
 				ct, err := c.Encrypt(key, tt.pt, tt.ad)
 				if err != nil {
-					t.Fatalf("Encrypt failed: %v", err)
+					t.Fatalf("Encrypt: %v", err)
 				}
 
 				got, err := c.Decrypt(key, ct, tt.ad)
 				if err != nil {
-					t.Fatalf("Decrypt failed: %v", err)
+					t.Fatalf("Decrypt: %v", err)
 				}
 
 				if !bytes.Equal(got, tt.pt) {
-					t.Errorf("Decrypt = %q, want %q", got, tt.pt)
+					t.Errorf("got %q, want %q", got, tt.pt)
 				}
 			})
 		}
@@ -209,7 +209,7 @@ func TestAES256GCM(t *testing.T) {
 	t.Run("NewAEADCipher rejects unsupported algorithms", func(t *testing.T) {
 		_, err := cryptography.NewAEADCipher("unsupported")
 		if !errors.Is(err, cryptography.ErrUnsupportedAlgorithm) {
-			t.Errorf("NewAEADCipher error = %v, want ErrUnsupportedAlgorithm", err)
+			t.Errorf("got %v, want %v", err, cryptography.ErrUnsupportedAlgorithm)
 		}
 	})
 }
