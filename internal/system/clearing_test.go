@@ -198,6 +198,7 @@ func TestKeyClearing(t *testing.T) {
 		}{
 			{"init succeeds", func(*retainingPorts) {}, nil, 2},
 			{"the second random read fails", func(p *retainingPorts) { p.random.failAt = 2 }, errFake, 1},
+			{"the token read fails", func(p *retainingPorts) { p.random.failAt = 3 }, errFake, 2},
 			{"the wrap fails", func(p *retainingPorts) { p.wrapper.wrapErr = errFake }, errFake, 2},
 			{"the split fails", func(p *retainingPorts) { p.sharing.splitErr = errFake }, errFake, 2},
 			{"the save fails", func(p *retainingPorts) { p.repo.saveErr = errFake }, errFake, 2},
@@ -213,7 +214,37 @@ func TestKeyClearing(t *testing.T) {
 					t.Fatalf("Init: got %v, want %v", err, tt.wantErr)
 				}
 
-				assertAllCleared(t, p.random.returned, tt.wantKeys)
+				// The third read is the root token, handed out on success.
+				keys := p.random.returned[:min(len(p.random.returned), 2)]
+				assertAllCleared(t, keys, tt.wantKeys)
+			})
+		}
+	})
+
+	t.Run("init clears the root token when it fails after generating it", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			inject func(p *retainingPorts)
+		}{
+			{"the wrap fails", func(p *retainingPorts) { p.wrapper.wrapErr = errFake }},
+			{"the split fails", func(p *retainingPorts) { p.sharing.splitErr = errFake }},
+			{"the save fails", func(p *retainingPorts) { p.repo.saveErr = errFake }},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, p := newRetainingService(t)
+				tt.inject(p)
+
+				_, err := s.Init(t.Context(), sealConfig)
+				if !errors.Is(err, errFake) {
+					t.Fatalf("Init: got %v, want %v", err, errFake)
+				}
+				if len(p.random.returned) < 3 {
+					t.Fatalf("got %d random reads, want 3", len(p.random.returned))
+				}
+
+				assertCleared(t, p.random.returned[2])
 			})
 		}
 	})

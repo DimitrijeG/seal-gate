@@ -3,6 +3,7 @@ package system_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -281,6 +282,64 @@ func TestService(t *testing.T) {
 		}
 	})
 
+	t.Run("init returns a root token of 32 bytes", func(t *testing.T) {
+		s, _, _ := newService(t)
+
+		result, err := s.Init(t.Context(), sealConfig)
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+
+		if len(result.RootToken) != 32 {
+			t.Errorf("got %d, want 32", len(result.RootToken))
+		}
+	})
+
+	t.Run("two inits return different root tokens", func(t *testing.T) {
+		first, _, _ := newService(t)
+		second, _, _ := newService(t)
+
+		a, err := first.Init(t.Context(), sealConfig)
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		b, err := second.Init(t.Context(), sealConfig)
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+
+		if bytes.Equal(a.RootToken, b.RootToken) {
+			t.Errorf("got equal tokens %x, want different", a.RootToken)
+		}
+	})
+
+	t.Run("init stores the hash of the root token", func(t *testing.T) {
+		s, repo, _ := newService(t)
+
+		result, err := s.Init(t.Context(), sealConfig)
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+
+		want := sha256.Sum256(result.RootToken)
+		if repo.state.RootTokenHash != want {
+			t.Errorf("got %x, want %x", repo.state.RootTokenHash, want)
+		}
+	})
+
+	t.Run("init wraps the key under format version 2", func(t *testing.T) {
+		s, repo, _ := newService(t)
+
+		_, err := s.Init(t.Context(), sealConfig)
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+
+		if repo.state.EncryptedKey.Version != 2 {
+			t.Errorf("got %d, want 2", repo.state.EncryptedKey.Version)
+		}
+	})
+
 	t.Run("init leaves the instance sealed", func(t *testing.T) {
 		s, _, _ := newService(t)
 		want := system.Status{Initialized: true, Sealed: true, Config: sealConfig}
@@ -522,7 +581,8 @@ func TestService(t *testing.T) {
 		}{
 			{"raised threshold", func(s *system.InitializationState) { s.Config.Threshold = 4 }, 4},
 			{"changed share count", func(s *system.InitializationState) { s.Config.Shares = 6 }, 3},
-			{"changed key version", func(s *system.InitializationState) { s.EncryptedKey.Version = 2 }, 3},
+			{"changed key version", func(s *system.InitializationState) { s.EncryptedKey.Version = 3 }, 3},
+			{"changed root token hash", func(s *system.InitializationState) { s.RootTokenHash[0] ^= 1 }, 3},
 		}
 
 		for _, tt := range tests {
