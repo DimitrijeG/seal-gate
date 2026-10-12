@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
@@ -100,6 +101,37 @@ func (f *fakeSecret) Delete(ctx context.Context, path string) error {
 func (f *fakeSecret) List(ctx context.Context, prefix string) ([]string, error) {
 	f.listPrefix = prefix
 	return f.listPaths, f.err
+}
+
+type policyBody struct {
+	Rules []ruleBody `json:"rules"`
+}
+
+type ruleBody struct {
+	Path         string   `json:"path"`
+	Capabilities []string `json:"capabilities"`
+}
+
+type fakePolicy struct {
+	name      string // the last name Get or Delete got
+	putPolicy authorization.Policy
+	getPolicy authorization.Policy
+	err       error
+}
+
+func (f *fakePolicy) Put(ctx context.Context, policy authorization.Policy) error {
+	f.putPolicy = policy
+	return f.err
+}
+
+func (f *fakePolicy) Get(ctx context.Context, name string) (authorization.Policy, error) {
+	f.name = name
+	return f.getPolicy, f.err
+}
+
+func (f *fakePolicy) Delete(ctx context.Context, name string) error {
+	f.name = name
+	return f.err
 }
 
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {

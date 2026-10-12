@@ -17,6 +17,8 @@ tags:
     description: Initialization, sealing and health. Reachable while sealed.
   - name: secrets
     description: Secret values by path. Every operation needs the instance unsealed.
+  - name: policies
+    description: Access policies by name. Every operation needs the instance unsealed.
 
 paths:
   /sys/init:
@@ -259,6 +261,89 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /policies/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: >
+          The policy's name: one segment of `[A-Za-z0-9._-]`, not `.` or `..`,
+          at most 128 bytes.
+        schema:
+          type: string
+          pattern: "^[A-Za-z0-9._-]+$"
+          maxLength: 128
+        example: dev
+
+    put:
+      operationId: putPolicy
+      tags: [policies]
+      summary: Store a policy, replacing any policy already under the name.
+      description: >
+        Open until authentication exists. Creates or replaces; the response is
+        the same either way. The name is taken from the path only.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyRequest"
+      responses:
+        "204":
+          description: Stored.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 65536 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      operationId: getPolicy
+      tags: [policies]
+      summary: Read a policy.
+      description: Open until authentication exists.
+      security: []
+      responses:
+        "200":
+          description: The policy's rules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: deletePolicy
+      tags: [policies]
+      summary: Delete a policy.
+      description: >
+        Open until authentication exists. Idempotent: deleting a missing policy
+        also succeeds.
+      security: []
+      responses:
+        "204":
+          description: Deleted, or there was nothing to delete.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   responses:
     BadRequest:
@@ -393,6 +478,51 @@ components:
           description: Full paths, sorted by byte order. Empty when nothing matches, never null.
           items:
             type: string
+      additionalProperties: false
+
+    PolicyRequest:
+      type: object
+      properties:
+        rules:
+          type: array
+          description: Absent stores a policy with no rules, which grants nothing.
+          items:
+            $ref: "#/components/schemas/Rule"
+      additionalProperties: false
+
+    PolicyResponse:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          description: Empty for a policy with no rules, never null.
+          items:
+            $ref: "#/components/schemas/Rule"
+      additionalProperties: false
+
+    Rule:
+      type: object
+      description: >
+        Grants its capabilities on every resource its path matches. Every matching
+        rule in every policy applies, and a matching `deny` refuses whatever else
+        is granted.
+      required: [path, capabilities]
+      properties:
+        path:
+          type: string
+          maxLength: 257
+          description: >
+            A resource path, matched exactly, or a prefix ending in `*` that
+            matches everything starting with it (`*` alone matches everything).
+            `*` anywhere else is invalid.
+          example: secrets/dev/*
+        capabilities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [create, read, update, delete, list, rotate, manage, deny]
       additionalProperties: false
 
     ErrorResponse:
