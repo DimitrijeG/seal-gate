@@ -7,12 +7,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/dimitrijegasic/seal-gate/internal/barrier"
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 	"github.com/dimitrijegasic/seal-gate/internal/repository"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
-	"github.com/dimitrijegasic/seal-gate/internal/storage"
-	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 )
 
 // storedSecret decodes the stored layout without the repository's own type.
@@ -21,44 +18,9 @@ type storedSecret struct {
 	Value   []byte `json:"value"`
 }
 
-// secretsFixture holds the repository with the raw backend and the barrier beneath it.
-type secretsFixture struct {
-	set       *repository.Set
-	backend   storage.Backend
-	encrypted *barrier.AEADBarrier
-	keys      *cryptography.KeyHolder
-}
-
-func newSecrets(t *testing.T) secretsFixture {
-	t.Helper()
-
-	key, err := cryptography.CryptoRandom{}.Bytes(32)
-	if err != nil {
-		t.Fatalf("Bytes: %v", err)
-	}
-	keys := cryptography.NewKeyHolder()
-	if err := keys.Install(key); err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-
-	cipher, err := cryptography.NewAEADCipher("aes-256-gcm")
-	if err != nil {
-		t.Fatalf("NewAEADCipher: %v", err)
-	}
-
-	backend := memory.New()
-	encrypted := barrier.NewAEADBarrier(backend, keys, cipher)
-	return secretsFixture{
-		set:       repository.NewSet(backend, encrypted),
-		backend:   backend,
-		encrypted: encrypted,
-		keys:      keys,
-	}
-}
-
 func TestSecretRepository(t *testing.T) {
 	t.Run("a stored secret reads back", func(t *testing.T) {
-		f := newSecrets(t)
+		f := newBarrierFixture(t)
 		repo := f.set.Secret
 		path := "db/password"
 		want := []byte("secret")
@@ -77,7 +39,7 @@ func TestSecretRepository(t *testing.T) {
 	})
 
 	t.Run("storage holds only ciphertext", func(t *testing.T) {
-		f := newSecrets(t)
+		f := newBarrierFixture(t)
 		repo := f.set.Secret
 		plaintext := []byte("very secret value")
 
@@ -115,7 +77,7 @@ func TestSecretRepository(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				f := newSecrets(t)
+				f := newBarrierFixture(t)
 				repo := f.set.Secret
 				value := []byte("secret")
 
@@ -135,7 +97,7 @@ func TestSecretRepository(t *testing.T) {
 	})
 
 	t.Run("the stored record is version 1 JSON holding the value", func(t *testing.T) {
-		f := newSecrets(t)
+		f := newBarrierFixture(t)
 		repo := f.set.Secret
 		value := []byte("very secret value")
 
@@ -160,7 +122,7 @@ func TestSecretRepository(t *testing.T) {
 	})
 
 	t.Run("a secret at a sys/ path leaves the system record intact", func(t *testing.T) {
-		f := newSecrets(t)
+		f := newBarrierFixture(t)
 		want := newSystemState()
 		repo := f.set.Secret
 		value := []byte("overwrite")
@@ -186,7 +148,7 @@ func TestSecretRepository(t *testing.T) {
 		path := "db/password"
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				f := newSecrets(t)
+				f := newBarrierFixture(t)
 				repo := f.set.Secret
 
 				if err := repo.Put(t.Context(), path, tt.value); err != nil {
@@ -205,7 +167,7 @@ func TestSecretRepository(t *testing.T) {
 	})
 
 	t.Run("reading a missing secret is not found", func(t *testing.T) {
-		f := newSecrets(t)
+		f := newBarrierFixture(t)
 		repo := f.set.Secret
 
 		_, err := repo.Get(t.Context(), "missing")
@@ -216,7 +178,7 @@ func TestSecretRepository(t *testing.T) {
 	})
 
 	t.Run("a deleted secret is not found", func(t *testing.T) {
-		f := newSecrets(t)
+		f := newBarrierFixture(t)
 		repo := f.set.Secret
 		path := "db/password"
 		value := []byte("secret")
@@ -235,7 +197,7 @@ func TestSecretRepository(t *testing.T) {
 	})
 
 	t.Run("a tampered secret is not reported as missing", func(t *testing.T) {
-		f := newSecrets(t)
+		f := newBarrierFixture(t)
 		repo := f.set.Secret
 		path := "db/password"
 		key := "secrets/db/password"
@@ -271,7 +233,7 @@ func TestSecretRepository(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				f := newSecrets(t)
+				f := newBarrierFixture(t)
 				repo := f.set.Secret
 				value := []byte("secret")
 
@@ -319,7 +281,7 @@ func TestSecretRepository(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				f := newSecrets(t)
+				f := newBarrierFixture(t)
 				if err := f.set.Secret.Put(t.Context(), path, value); err != nil {
 					t.Fatalf("Put: %v", err)
 				}

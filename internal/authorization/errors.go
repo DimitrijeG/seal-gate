@@ -10,4 +10,6 @@ var (
 	ErrInvalidRule = errors.New("authorization: invalid rule")
 	ErrSealed      = errors.New("authorization: sealed")
 	ErrDenied      = errors.New("authorization: denied")
+	// ErrUnreadablePolicy reports a stored policy that does not decode or has an unknown version.
+	ErrUnreadablePolicy = errors.New("authorization: unreadable policy")
 )

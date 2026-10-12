@@ -11,11 +11,14 @@ import (
 type Set struct {
 	System *systemRepository
 	Secret *secretRepository
+	Policy *policyRepository
 }
 
+// NewSet builds every repository over backend, the encrypted ones through encrypted.
 func NewSet(backend storage.Backend, encrypted *barrier.AEADBarrier) *Set {
 	return &Set{
 		System: &systemRepository{backend: backend},
 		Secret: &secretRepository{encrypted: encrypted},
+		Policy: &policyRepository{encrypted: encrypted},
 	}
 }

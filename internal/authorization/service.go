@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// Repository stores policies by name. Get returns ErrNotFound for a missing name and
-// Delete does not fail on one; every method returns ErrSealed while sealed.
+// Repository stores policies by name. Get returns ErrNotFound for a missing name and ErrUnreadablePolicy
+// for a corrupt record; Delete does not fail on a missing name; every method returns ErrSealed while sealed.
 type Repository interface {
 	Put(ctx context.Context, policy Policy) error
 	Get(ctx context.Context, name string) (Policy, error)
@@ -52,7 +52,7 @@ func (s *Service) Get(ctx context.Context, name string) (Policy, error) {
 	}
 
 	policy, err := s.repo.Get(ctx, name)
-	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrSealed) {
+	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrSealed) && !errors.Is(err, ErrUnreadablePolicy) {
 		return Policy{}, fmt.Errorf("authorization: %w", err)
 	}
 	return policy, err
