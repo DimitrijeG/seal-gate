@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -39,6 +40,15 @@ type secretBody struct {
 
 type listBody struct {
 	Paths []string `json:"paths"`
+}
+
+type policyBody struct {
+	Rules []ruleBody `json:"rules"`
+}
+
+type ruleBody struct {
+	Path         string   `json:"path"`
+	Capabilities []string `json:"capabilities"`
 }
 
 type fakeClock struct{ now time.Time }
@@ -423,6 +433,25 @@ func TestSealLifecycle(t *testing.T) {
 
 		if !slices.Equal(got, want) {
 			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a policy written after unseal reads back", func(t *testing.T) {
+		router := unsealed(t)
+		want := policyBody{Rules: []ruleBody{{Path: "secrets/dev/*", Capabilities: []string{"read", "list"}}}}
+
+		rec := send(t, router, http.MethodPut, "/v1/policies/dev", `{"rules":[{"path":"secrets/dev/*","capabilities":["read","list"]}]}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		rec = send(t, router, http.MethodGet, "/v1/policies/dev", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[policyBody](t, rec)
+
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
 }

@@ -16,6 +16,7 @@ func TestRouter(t *testing.T) {
 			{"init", http.MethodPost, "/v1/sys/init"},
 			{"unseal", http.MethodPost, "/v1/sys/unseal"},
 			{"put secret", http.MethodPut, "/v1/secrets/db/password"},
+			{"put policy", http.MethodPut, "/v1/policies/dev"},
 		}
 		// Bodies fit no endpoint in particular, so each case applies to every route.
 		tests := []struct {
@@ -38,6 +39,7 @@ func TestRouter(t *testing.T) {
 					router := httpapi.NewRouter(&httpapi.Handlers{
 						System: &fakeSystem{},
 						Secret: &fakeSecret{},
+						Policy: &fakePolicy{},
 					})
 
 					router.ServeHTTP(rec, req)
@@ -56,6 +58,7 @@ func TestRouter(t *testing.T) {
 			{"init", http.MethodPost, "/v1/sys/init", 16384},
 			{"unseal", http.MethodPost, "/v1/sys/unseal", 16384},
 			{"put secret", http.MethodPut, "/v1/secrets/db/password", 88408},
+			{"put policy", http.MethodPut, "/v1/policies/dev", 65536},
 		}
 
 		for _, route := range routes {
@@ -65,6 +68,7 @@ func TestRouter(t *testing.T) {
 				router := httpapi.NewRouter(&httpapi.Handlers{
 					System: &fakeSystem{},
 					Secret: &fakeSecret{},
+					Policy: &fakePolicy{},
 				})
 
 				rec := do(t, router, route.method, route.path, body)
@@ -79,6 +83,7 @@ func TestRouter(t *testing.T) {
 			{"parent segment", "/v1/secrets/db/../password"},
 			{"current segment", "/v1/secrets/db/./password"},
 			{"empty segment", "/v1/secrets/db//password"},
+			{"empty segment before the route", "/v1//secrets/db/password"},
 		}
 
 		for _, tt := range tests {
@@ -88,6 +93,27 @@ func TestRouter(t *testing.T) {
 				rec := do(t, router, http.MethodGet, tt.target, "")
 
 				assertError(t, rec, http.StatusBadRequest, "invalid secret path")
+			})
+		}
+	})
+
+	t.Run("a policy path that is not in its clean form is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment", "/v1/policies/dev/../admin"},
+			{"current segment", "/v1/policies/./dev"},
+			{"empty segment", "/v1/policies//dev"},
+			{"empty segment before the route", "/v1//policies/dev"},
+			{"empty segment before the version", "//v1/policies/dev"},
+			{"parent segment from another route", "/v1/secrets/../policies/dev"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{}})
+
+				rec := do(t, router, http.MethodPut, tt.target, devPolicyJSON)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid policy name")
 			})
 		}
 	})
