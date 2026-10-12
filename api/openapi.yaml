@@ -271,7 +271,7 @@ paths:
           at most 128 bytes.
         schema:
           type: string
-          pattern: "^[A-Za-z0-9._-]+$"
+          pattern: "^(?!\\.\\.?$)[A-Za-z0-9._-]+$"
           maxLength: 128
         example: dev
 

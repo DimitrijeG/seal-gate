@@ -68,17 +68,22 @@ func NewRouter(h *Handlers) http.Handler {
 // unclean path and let a write land on a path the client never named.
 func (h *Handlers) refuseUncleanPaths(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, guarded := range uncleanPathErrors {
-			if strings.HasPrefix(r.URL.Path, guarded.prefix) && path.Clean(r.URL.Path) != r.URL.Path {
-				writeError(w, h.Logger, guarded.err)
-				return
+		// Matched on the cleaned path, where the redirect would land: an empty
+		// segment before the route (/v1//policies/dev) hides it from the raw one.
+		cleaned := path.Clean(r.URL.Path)
+		if cleaned != r.URL.Path {
+			for _, guarded := range uncleanPathErrors {
+				if strings.HasPrefix(cleaned, guarded.prefix) {
+					writeError(w, h.Logger, guarded.err)
+					return
+				}
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// uncleanPathErrors names, per route, the error an unclean path under it is refused with.
+// uncleanPathErrors names, per route, the error an unclean path landing under it is refused with.
 var uncleanPathErrors = []struct {
 	prefix string
 	err    error

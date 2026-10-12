@@ -83,6 +83,7 @@ func TestRouter(t *testing.T) {
 			{"parent segment", "/v1/secrets/db/../password"},
 			{"current segment", "/v1/secrets/db/./password"},
 			{"empty segment", "/v1/secrets/db//password"},
+			{"empty segment before the route", "/v1//secrets/db/password"},
 		}
 
 		for _, tt := range tests {
@@ -101,6 +102,9 @@ func TestRouter(t *testing.T) {
 			{"parent segment", "/v1/policies/dev/../admin"},
 			{"current segment", "/v1/policies/./dev"},
 			{"empty segment", "/v1/policies//dev"},
+			{"empty segment before the route", "/v1//policies/dev"},
+			{"empty segment before the version", "//v1/policies/dev"},
+			{"parent segment from another route", "/v1/secrets/../policies/dev"},
 		}
 
 		for _, tt := range tests {
