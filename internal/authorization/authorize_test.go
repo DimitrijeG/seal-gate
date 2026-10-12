@@ -286,6 +286,20 @@ func TestAuthorize(t *testing.T) {
 		}
 	})
 
+	t.Run("a corrupt deny fails the decision rather than being ignored", func(t *testing.T) {
+		grant := policyWithRule("secrets/*", authorization.CapabilityRead)
+		grant.Name = "grant"
+		// A deny whose capabilities were lost: skipped, it would let the grant through.
+		corrupt := policyWithRule("secrets/*")
+		s, _ := newAuthorizer(t, grant, corrupt)
+
+		err := s.Authorize(t.Context(), []string{"grant", "dev"}, "secrets/db", authorization.CapabilityRead)
+
+		if !errors.Is(err, authorization.ErrUnreadablePolicy) {
+			t.Errorf("got %v, want %v", err, authorization.ErrUnreadablePolicy)
+		}
+	})
+
 	t.Run("an invalid policy name is refused before the repository", func(t *testing.T) {
 		s, repo := newAuthorizer(t)
 

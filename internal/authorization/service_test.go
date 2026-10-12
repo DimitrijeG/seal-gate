@@ -329,6 +329,31 @@ func TestService(t *testing.T) {
 		}
 	})
 
+	t.Run("a stored rule that is not valid is unreadable", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			policy authorization.Policy
+		}{
+			{"no capabilities", policyWithRule("secrets/*")},
+			{"unknown capability", policyWithRule("secrets/*", "sudo")},
+			{"invalid pattern", policyWithRule("secrets/*/db", authorization.CapabilityDeny)},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, repo := newService(t)
+				// Seeded past Put, as a record from a faulty encoder would arrive.
+				repo.policies[tt.policy.Name] = tt.policy
+
+				_, err := s.Get(t.Context(), tt.policy.Name)
+
+				if !errors.Is(err, authorization.ErrUnreadablePolicy) {
+					t.Errorf("got %v, want %v", err, authorization.ErrUnreadablePolicy)
+				}
+			})
+		}
+	})
+
 	t.Run("every operation reports sealed", func(t *testing.T) {
 		for _, op := range operations {
 			t.Run(op.name, func(t *testing.T) {

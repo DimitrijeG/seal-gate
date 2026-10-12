@@ -45,7 +45,7 @@ func (s *Service) Put(ctx context.Context, policy Policy) error {
 	return err
 }
 
-// Get returns the policy named name, or ErrNotFound if there is none.
+// Get returns the policy named name; ErrNotFound if there is none, ErrUnreadablePolicy if its record or any rule in it is invalid.
 func (s *Service) Get(ctx context.Context, name string) (Policy, error) {
 	if !validName(name) {
 		return Policy{}, ErrInvalidName
@@ -55,7 +55,17 @@ func (s *Service) Get(ctx context.Context, name string) (Policy, error) {
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrSealed) && !errors.Is(err, ErrUnreadablePolicy) {
 		return Policy{}, fmt.Errorf("authorization: %w", err)
 	}
-	return policy, err
+	if err != nil {
+		return Policy{}, err
+	}
+
+	// Checked again on read: an invalid deny rule would grant nothing, so a corrupt record would widen access.
+	for _, rule := range policy.Rules {
+		if !validRule(rule) {
+			return Policy{}, ErrUnreadablePolicy
+		}
+	}
+	return policy, nil
 }
 
 // Delete removes the policy named name; a missing name is not an error.
