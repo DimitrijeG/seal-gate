@@ -36,12 +36,16 @@ type PolicyService interface {
 	Delete(ctx context.Context, name string) error
 }
 
-// EntityService is entity storage and token issuing as the handlers use it.
+// EntityService is entity storage as the handlers use it.
 type EntityService interface {
 	CreateEntity(ctx context.Context, entity identity.Entity) (string, error)
 	GetEntity(ctx context.Context, id string) (identity.Entity, error)
 	UpdateEntity(ctx context.Context, entity identity.Entity) error
 	DeleteEntity(ctx context.Context, id string) error
+}
+
+// TokenService is token issuing as the handlers use it.
+type TokenService interface {
 	CreateToken(ctx context.Context, entityID string) ([]byte, error)
 }
 
@@ -51,6 +55,7 @@ type Handlers struct {
 	Secret SecretService
 	Policy PolicyService
 	Entity EntityService
+	Token  TokenService
 	Logger *slog.Logger
 }
 

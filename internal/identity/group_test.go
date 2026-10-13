@@ -2,7 +2,6 @@ package identity_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"reflect"
 	"strings"
@@ -99,13 +98,11 @@ func (r *racingGroups) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-func newGroupService(t *testing.T) (*identity.Service, *fakeGroups, *fakeRandom) {
+func newGroupService(t *testing.T) (*identity.GroupService, *fakeGroups, *fakeRandom) {
 	t.Helper()
-	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
-	tokens := &fakeTokens{tokens: make(map[[sha256.Size]byte]string)}
 	groups := &fakeGroups{groups: make(map[string]identity.Group)}
 	random := &fakeRandom{}
-	return identity.New(entities, tokens, groups, random), groups, random
+	return identity.NewGroupService(groups, random), groups, random
 }
 
 func TestGroup(t *testing.T) {
@@ -297,16 +294,16 @@ func TestGroup(t *testing.T) {
 	t.Run("every operation refuses an invalid group ID before the repository", func(t *testing.T) {
 		tests := []struct {
 			name string
-			call func(ctx context.Context, s *identity.Service) error
+			call func(ctx context.Context, s *identity.GroupService) error
 		}{
-			{"get", func(ctx context.Context, s *identity.Service) error {
+			{"get", func(ctx context.Context, s *identity.GroupService) error {
 				_, err := s.GetGroup(ctx, "../dev")
 				return err
 			}},
-			{"update", func(ctx context.Context, s *identity.Service) error {
+			{"update", func(ctx context.Context, s *identity.GroupService) error {
 				return s.UpdateGroup(ctx, identity.Group{ID: "../dev"})
 			}},
-			{"delete", func(ctx context.Context, s *identity.Service) error {
+			{"delete", func(ctx context.Context, s *identity.GroupService) error {
 				return s.DeleteGroup(ctx, "../dev")
 			}},
 		}
@@ -368,13 +365,13 @@ func TestGroup(t *testing.T) {
 
 		tests := []struct {
 			name string
-			call func(ctx context.Context, s *identity.Service) error
+			call func(ctx context.Context, s *identity.GroupService) error
 		}{
-			{"create", func(ctx context.Context, s *identity.Service) error {
+			{"create", func(ctx context.Context, s *identity.GroupService) error {
 				_, err := s.CreateGroup(ctx, bad)
 				return err
 			}},
-			{"update", func(ctx context.Context, s *identity.Service) error {
+			{"update", func(ctx context.Context, s *identity.GroupService) error {
 				return s.UpdateGroup(ctx, bad)
 			}},
 		}
@@ -441,7 +438,7 @@ func TestGroup(t *testing.T) {
 	t.Run("an update racing a delete cannot bring the group back", func(t *testing.T) {
 		groups := newRacingGroups()
 		groups.groups[hexID] = identity.Group{ID: hexID}
-		s := identity.New(&fakeEntities{}, &fakeTokens{}, groups, &fakeRandom{})
+		s := identity.NewGroupService(groups, &fakeRandom{})
 		ctx := t.Context()
 
 		var updateErr, deleteErr error
@@ -499,20 +496,20 @@ func TestGroup(t *testing.T) {
 // groupOperations calls each group method with valid input, so only the repository can fail it.
 var groupOperations = []struct {
 	name string
-	call func(ctx context.Context, s *identity.Service) error
+	call func(ctx context.Context, s *identity.GroupService) error
 }{
-	{"create", func(ctx context.Context, s *identity.Service) error {
+	{"create", func(ctx context.Context, s *identity.GroupService) error {
 		_, err := s.CreateGroup(ctx, identity.Group{})
 		return err
 	}},
-	{"get", func(ctx context.Context, s *identity.Service) error {
+	{"get", func(ctx context.Context, s *identity.GroupService) error {
 		_, err := s.GetGroup(ctx, hexID)
 		return err
 	}},
-	{"update", func(ctx context.Context, s *identity.Service) error {
+	{"update", func(ctx context.Context, s *identity.GroupService) error {
 		return s.UpdateGroup(ctx, identity.Group{ID: hexID})
 	}},
-	{"delete", func(ctx context.Context, s *identity.Service) error {
+	{"delete", func(ctx context.Context, s *identity.GroupService) error {
 		return s.DeleteGroup(ctx, hexID)
 	}},
 }

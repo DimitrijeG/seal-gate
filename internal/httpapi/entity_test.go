@@ -168,7 +168,10 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{err: identity.ErrSealed}})
+				router := httpapi.NewRouter(&httpapi.Handlers{
+					Entity: &fakeEntity{err: identity.ErrSealed},
+					Token:  &fakeToken{err: identity.ErrSealed},
+				})
 
 				rec := do(t, router, tt.method, tt.path, tt.body)
 
@@ -204,7 +207,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an issued token is returned in base64", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{token: bytes.Repeat([]byte{0xab}, 32)}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Token: &fakeToken{token: bytes.Repeat([]byte{0xab}, 32)}})
 		// A copy: the handler clears the fake's slice once the response is written.
 		want := bytes.Repeat([]byte{0xab}, 32)
 
@@ -223,19 +226,19 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a token is issued for the entity in the URL", func(t *testing.T) {
-		fake := &fakeEntity{token: make([]byte, 32)}
-		router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+		fake := &fakeToken{token: make([]byte, 32)}
+		router := httpapi.NewRouter(&httpapi.Handlers{Token: fake})
 
 		do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
 
-		if fake.id != entityID {
-			t.Errorf("got %q, want %q", fake.id, entityID)
+		if fake.entityID != entityID {
+			t.Errorf("got %q, want %q", fake.entityID, entityID)
 		}
 	})
 
 	t.Run("an issued token is cleared after the response is written", func(t *testing.T) {
-		fake := &fakeEntity{token: bytes.Repeat([]byte{0xab}, 32)}
-		router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+		fake := &fakeToken{token: bytes.Repeat([]byte{0xab}, 32)}
+		router := httpapi.NewRouter(&httpapi.Handlers{Token: fake})
 		want := make([]byte, 32)
 
 		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
@@ -249,7 +252,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an issued token forbids caching", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{token: make([]byte, 32)}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Token: &fakeToken{token: make([]byte, 32)}})
 		want := "no-store"
 
 		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")

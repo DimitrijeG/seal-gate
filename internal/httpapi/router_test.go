@@ -171,7 +171,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Token: &fakeToken{}})
 
 				rec := do(t, router, http.MethodPost, tt.target, "")
 

@@ -145,12 +145,11 @@ type createEntityBody struct {
 }
 
 type fakeEntity struct {
-	id        string // the last ID Get, Delete or CreateToken got
+	id        string // the last ID Get or Delete got
 	created   identity.Entity
 	createID  string
 	getEntity identity.Entity
 	updated   identity.Entity
-	token     []byte
 	err       error
 }
 
@@ -174,8 +173,14 @@ func (f *fakeEntity) DeleteEntity(ctx context.Context, id string) error {
 	return f.err
 }
 
-func (f *fakeEntity) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
-	f.id = entityID
+type fakeToken struct {
+	entityID string
+	token    []byte
+	err      error
+}
+
+func (f *fakeToken) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
+	f.entityID = entityID
 	return f.token, f.err
 }
 

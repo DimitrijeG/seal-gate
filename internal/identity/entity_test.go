@@ -117,15 +117,16 @@ func (r *fakeRandom) Bytes(n int) ([]byte, error) {
 
 const hexID = "0123456789abcdef0123456789abcdef"
 
-func newService(t *testing.T) (*identity.Service, *fakeEntities, *fakeRandom) {
+func newEntityService(t *testing.T) (*identity.EntityService, *fakeEntities, *fakeRandom) {
 	t.Helper()
-	s, entities, _, random := newTokenService(t)
-	return s, entities, random
+	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
+	random := &fakeRandom{}
+	return identity.NewEntityService(entities, random), entities, random
 }
 
 func TestEntity(t *testing.T) {
 	t.Run("a created entity reads back with its policies and groups", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 		entity := identity.Entity{Policies: []string{"dev"}, Groups: []string{hexID}}
 
 		id, err := s.CreateEntity(t.Context(), entity)
@@ -144,7 +145,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a created entity's ID is 16 random bytes in hex", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 
 		id, err := s.CreateEntity(t.Context(), identity.Entity{})
 		if err != nil {
@@ -158,7 +159,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an ID given to create is replaced", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 
 		id, err := s.CreateEntity(t.Context(), identity.Entity{ID: hexID})
 		if err != nil {
@@ -171,7 +172,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a failed random source stores nothing", func(t *testing.T) {
-		s, entities, random := newService(t)
+		s, entities, random := newEntityService(t)
 		randomErr := errors.New("entropy exhausted")
 		random.err = randomErr
 
@@ -186,7 +187,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("reading a missing entity is not found", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 
 		_, err := s.GetEntity(t.Context(), hexID)
 
@@ -196,7 +197,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a deleted entity is not found", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 		id, err := s.CreateEntity(t.Context(), identity.Entity{})
 		if err != nil {
 			t.Fatalf("CreateEntity: %v", err)
@@ -213,7 +214,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("deleting a missing entity is not an error", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 
 		if err := s.DeleteEntity(t.Context(), hexID); err != nil {
 			t.Errorf("got %v, want nil", err)
@@ -221,7 +222,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an update replaces the policies and groups", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 		id, err := s.CreateEntity(t.Context(), identity.Entity{Policies: []string{"dev"}})
 		if err != nil {
 			t.Fatalf("CreateEntity: %v", err)
@@ -242,7 +243,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("updating a missing entity is not found", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 
 		err := s.UpdateEntity(t.Context(), identity.Entity{ID: hexID})
 
@@ -252,7 +253,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("updating a missing entity does not create it", func(t *testing.T) {
-		s, _, _ := newService(t)
+		s, _, _ := newEntityService(t)
 		_ = s.UpdateEntity(t.Context(), identity.Entity{ID: hexID}) // its error is the previous test's
 
 		_, err := s.GetEntity(t.Context(), hexID)
@@ -277,7 +278,7 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				s, _, _ := newService(t)
+				s, _, _ := newEntityService(t)
 
 				_, err := s.GetEntity(t.Context(), tt.id)
 
@@ -299,7 +300,7 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				s, entities, _ := newService(t)
+				s, entities, _ := newEntityService(t)
 				entities.entities[tt.id] = identity.Entity{ID: tt.id}
 
 				if _, err := s.GetEntity(t.Context(), tt.id); err != nil {
@@ -312,23 +313,23 @@ func TestEntity(t *testing.T) {
 	t.Run("every operation refuses an invalid entity ID before the repository", func(t *testing.T) {
 		tests := []struct {
 			name string
-			call func(ctx context.Context, s *identity.Service) error
+			call func(ctx context.Context, s *identity.EntityService) error
 		}{
-			{"get", func(ctx context.Context, s *identity.Service) error {
+			{"get", func(ctx context.Context, s *identity.EntityService) error {
 				_, err := s.GetEntity(ctx, "../dev")
 				return err
 			}},
-			{"update", func(ctx context.Context, s *identity.Service) error {
+			{"update", func(ctx context.Context, s *identity.EntityService) error {
 				return s.UpdateEntity(ctx, identity.Entity{ID: "../dev"})
 			}},
-			{"delete", func(ctx context.Context, s *identity.Service) error {
+			{"delete", func(ctx context.Context, s *identity.EntityService) error {
 				return s.DeleteEntity(ctx, "../dev")
 			}},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				s, entities, _ := newService(t)
+				s, entities, _ := newEntityService(t)
 
 				err := tt.call(t.Context(), s)
 
@@ -345,7 +346,7 @@ func TestEntity(t *testing.T) {
 	t.Run("an invalid policy name is refused", func(t *testing.T) {
 		for _, tt := range invalidPolicyNames {
 			t.Run(tt.name, func(t *testing.T) {
-				s, _, _ := newService(t)
+				s, _, _ := newEntityService(t)
 
 				_, err := s.CreateEntity(t.Context(), identity.Entity{Policies: []string{tt.policy}})
 
@@ -359,7 +360,7 @@ func TestEntity(t *testing.T) {
 	t.Run("a valid policy name is accepted", func(t *testing.T) {
 		for _, tt := range validPolicyNames {
 			t.Run(tt.name, func(t *testing.T) {
-				s, _, _ := newService(t)
+				s, _, _ := newEntityService(t)
 
 				if _, err := s.CreateEntity(t.Context(), identity.Entity{Policies: []string{tt.policy}}); err != nil {
 					t.Errorf("got %v, want nil", err)
@@ -380,7 +381,7 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				s, _, _ := newService(t)
+				s, _, _ := newEntityService(t)
 
 				_, err := s.CreateEntity(t.Context(), identity.Entity{Groups: []string{tt.group}})
 
@@ -397,28 +398,28 @@ func TestEntity(t *testing.T) {
 
 		tests := []struct {
 			name string
-			call func(ctx context.Context, s *identity.Service) error
+			call func(ctx context.Context, s *identity.EntityService) error
 			want error
 		}{
-			{"create, policy name", func(ctx context.Context, s *identity.Service) error {
+			{"create, policy name", func(ctx context.Context, s *identity.EntityService) error {
 				_, err := s.CreateEntity(ctx, badPolicy)
 				return err
 			}, identity.ErrInvalidPolicyName},
-			{"create, group ID", func(ctx context.Context, s *identity.Service) error {
+			{"create, group ID", func(ctx context.Context, s *identity.EntityService) error {
 				_, err := s.CreateEntity(ctx, badGroup)
 				return err
 			}, identity.ErrInvalidGroupID},
-			{"update, policy name", func(ctx context.Context, s *identity.Service) error {
+			{"update, policy name", func(ctx context.Context, s *identity.EntityService) error {
 				return s.UpdateEntity(ctx, badPolicy)
 			}, identity.ErrInvalidPolicyName},
-			{"update, group ID", func(ctx context.Context, s *identity.Service) error {
+			{"update, group ID", func(ctx context.Context, s *identity.EntityService) error {
 				return s.UpdateEntity(ctx, badGroup)
 			}, identity.ErrInvalidGroupID},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				s, entities, _ := newService(t)
+				s, entities, _ := newEntityService(t)
 
 				err := tt.call(t.Context(), s)
 
@@ -443,7 +444,7 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				s, _, _ := newService(t)
+				s, _, _ := newEntityService(t)
 
 				if _, err := s.CreateEntity(t.Context(), tt.entity); err != nil {
 					t.Errorf("got %v, want nil", err)
@@ -463,7 +464,7 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				s, entities, _ := newService(t)
+				s, entities, _ := newEntityService(t)
 				// Seeded past create, as a record from a faulty encoder would arrive.
 				entities.entities[hexID] = tt.entity
 
@@ -477,7 +478,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a stored entity that fails validation cannot be updated", func(t *testing.T) {
-		s, entities, _ := newService(t)
+		s, entities, _ := newEntityService(t)
 		entities.entities[hexID] = identity.Entity{ID: hexID, Policies: []string{"dev/ops"}}
 
 		err := s.UpdateEntity(t.Context(), identity.Entity{ID: hexID, Policies: []string{"ops"}})
@@ -490,7 +491,7 @@ func TestEntity(t *testing.T) {
 	t.Run("an update racing a delete cannot bring the entity back", func(t *testing.T) {
 		entities := newRacingEntities()
 		entities.entities[hexID] = identity.Entity{ID: hexID}
-		s := identity.New(entities, &fakeTokens{}, &fakeGroups{}, &fakeRandom{})
+		s := identity.NewEntityService(entities, &fakeRandom{})
 		ctx := t.Context()
 
 		var updateErr, deleteErr error
@@ -516,7 +517,7 @@ func TestEntity(t *testing.T) {
 	t.Run("every operation reports sealed", func(t *testing.T) {
 		for _, op := range operations {
 			t.Run(op.name, func(t *testing.T) {
-				s, entities, _ := newService(t)
+				s, entities, _ := newEntityService(t)
 				entities.err = identity.ErrSealed
 
 				err := op.call(t.Context(), s)
@@ -531,7 +532,7 @@ func TestEntity(t *testing.T) {
 	t.Run("an unexpected repository failure reaches the caller", func(t *testing.T) {
 		for _, op := range operations {
 			t.Run(op.name, func(t *testing.T) {
-				s, entities, _ := newService(t)
+				s, entities, _ := newEntityService(t)
 				repoErr := errors.New("disk failed")
 				entities.err = repoErr
 
@@ -573,20 +574,20 @@ var validPolicyNames = []struct {
 // operations calls each service method with valid input, so only the repository can fail it.
 var operations = []struct {
 	name string
-	call func(ctx context.Context, s *identity.Service) error
+	call func(ctx context.Context, s *identity.EntityService) error
 }{
-	{"create", func(ctx context.Context, s *identity.Service) error {
+	{"create", func(ctx context.Context, s *identity.EntityService) error {
 		_, err := s.CreateEntity(ctx, identity.Entity{})
 		return err
 	}},
-	{"get", func(ctx context.Context, s *identity.Service) error {
+	{"get", func(ctx context.Context, s *identity.EntityService) error {
 		_, err := s.GetEntity(ctx, hexID)
 		return err
 	}},
-	{"update", func(ctx context.Context, s *identity.Service) error {
+	{"update", func(ctx context.Context, s *identity.EntityService) error {
 		return s.UpdateEntity(ctx, identity.Entity{ID: hexID})
 	}},
-	{"delete", func(ctx context.Context, s *identity.Service) error {
+	{"delete", func(ctx context.Context, s *identity.EntityService) error {
 		return s.DeleteEntity(ctx, hexID)
 	}},
 }
