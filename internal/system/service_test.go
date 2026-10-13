@@ -97,13 +97,19 @@ func newServiceWith(t *testing.T, repo system.Repository) (*system.Service, *cry
 	return system.NewService(keyring, clock), keys
 }
 
-func newInitializedService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.KeyHolder, [][]byte) {
+func initialize(t *testing.T, s *system.Service) system.InitResult {
 	t.Helper()
-	s, repo, keys := newService(t)
 	result, err := s.Init(t.Context(), sealConfig)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	return result
+}
+
+func newInitializedService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.KeyHolder, [][]byte) {
+	t.Helper()
+	s, repo, keys := newService(t)
+	result := initialize(t, s)
 	return s, repo, keys, result.Shares
 }
 
@@ -220,7 +226,7 @@ func TestService(t *testing.T) {
 		}
 	})
 
-	t.Run("concurrent init, unseal, seal and status do not race", func(t *testing.T) {
+	t.Run("concurrent init, unseal, seal, status and root checks do not race", func(t *testing.T) {
 		s, _, _ := newService(t)
 		ctx, junk := t.Context(), []byte{1, 2, 3}
 
@@ -231,6 +237,7 @@ func TestService(t *testing.T) {
 			wg.Go(func() { _, _ = s.Unseal(ctx, junk) })
 			wg.Go(func() { s.Seal(ctx) })
 			wg.Go(func() { _, _ = s.Status(ctx) })
+			wg.Go(func() { s.IsRoot(junk) })
 		}
 		wg.Wait()
 
@@ -653,6 +660,81 @@ func TestService(t *testing.T) {
 
 		if got != want {
 			t.Errorf("Status: got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("after unseal, the init root token is root", func(t *testing.T) {
+		s, _, _ := newService(t)
+		result := initialize(t, s)
+		unsealWith(t, s, result.Shares[:sealConfig.Threshold])
+
+		if !s.IsRoot(result.RootToken) {
+			t.Error("got false, want true")
+		}
+	})
+
+	t.Run("after unseal, a token that is not the root token is not root", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			token func(root []byte) []byte
+		}{
+			{"same length, other bytes", func(root []byte) []byte {
+				other := bytes.Clone(root)
+				other[0] ^= 1
+				return other
+			}},
+			{"nil token", func([]byte) []byte { return nil }},
+			{"empty token", func([]byte) []byte { return []byte{} }},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, _ := newService(t)
+				result := initialize(t, s)
+				unsealWith(t, s, result.Shares[:sealConfig.Threshold])
+
+				if s.IsRoot(tt.token(result.RootToken)) {
+					t.Error("got true, want false")
+				}
+			})
+		}
+	})
+
+	t.Run("initialized but sealed, the root token is not root", func(t *testing.T) {
+		s, _, _ := newService(t)
+		result := initialize(t, s)
+
+		if s.IsRoot(result.RootToken) {
+			t.Error("got true, want false")
+		}
+	})
+
+	t.Run("after seal, the root token is not root", func(t *testing.T) {
+		s, _, _ := newService(t)
+		result := initialize(t, s)
+		unsealWith(t, s, result.Shares[:sealConfig.Threshold])
+
+		s.Seal(t.Context())
+
+		if s.IsRoot(result.RootToken) {
+			t.Error("got true, want false")
+		}
+	})
+
+	t.Run("a tampered record's root token hash is never trusted", func(t *testing.T) {
+		s, repo, _ := newService(t)
+		result := initialize(t, s)
+		attacker := []byte("a token the attacker chose")
+		last := sealConfig.Threshold - 1
+
+		repo.state.RootTokenHash = sha256.Sum256(attacker)
+		unsealWith(t, s, result.Shares[:last])
+		if _, err := s.Unseal(t.Context(), result.Shares[last]); !errors.Is(err, system.ErrInvalidShare) {
+			t.Fatalf("Unseal: %v", err)
+		}
+
+		if s.IsRoot(attacker) {
+			t.Error("got true, want false")
 		}
 	})
 }

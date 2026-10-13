@@ -113,11 +113,20 @@ func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	return s.status(state), nil
 }
 
-// Seal discards buffered shares and clears the key;
+// Seal discards buffered shares and clears the key and the root token hash;
 // sealing a sealed instance changes nothing.
 func (s *Service) Seal(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.keyring.lock()
+}
+
+// IsRoot reports whether token is the root token verified at the last unseal;
+// it is false for every token while sealed.
+func (s *Service) IsRoot(token []byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.keyring.isRoot(token)
 }
