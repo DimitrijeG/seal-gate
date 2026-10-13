@@ -90,7 +90,7 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 		system: system.NewService(keyring, infra.clock),
 		secret: secret.New(repositories.set.Secret),
 		policy: authorization.New(repositories.set.Policy),
-		entity: identity.New(repositories.set.Entity, repositories.set.Token, infra.random),
+		entity: identity.New(repositories.set.Entity, repositories.set.Token, repositories.set.Group, infra.random),
 	}
 }
 

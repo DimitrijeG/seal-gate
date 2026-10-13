@@ -47,7 +47,8 @@ func newTokenService(t *testing.T) (*identity.Service, *fakeEntities, *fakeToken
 	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
 	tokens := &fakeTokens{tokens: make(map[[sha256.Size]byte]string)}
 	random := &fakeRandom{}
-	return identity.New(entities, tokens, random), entities, tokens, random
+	groups := &fakeGroups{groups: make(map[string]identity.Group)}
+	return identity.New(entities, tokens, groups, random), entities, tokens, random
 }
 
 func TestToken(t *testing.T) {

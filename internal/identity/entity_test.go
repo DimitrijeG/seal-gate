@@ -343,21 +343,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an invalid policy name is refused", func(t *testing.T) {
-		tests := []struct {
-			name   string
-			policy string
-		}{
-			{"empty", ""},
-			{"slash", "dev/ops"},
-			{"dot", "."},
-			{"dot-dot", ".."},
-			{"wildcard", "dev*"},
-			{"space", "dev ops"},
-			{"non-ASCII letter", "dév"},
-			{"over 128 bytes", strings.Repeat("a", 129)},
-		}
-
-		for _, tt := range tests {
+		for _, tt := range invalidPolicyNames {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _, _ := newService(t)
 
@@ -371,17 +357,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a valid policy name is accepted", func(t *testing.T) {
-		tests := []struct {
-			name   string
-			policy string
-		}{
-			{"every allowed character", "Az09._-"},
-			{"leading dot", ".ops"},
-			{"three dots", "..."},
-			{"exactly 128 bytes", strings.Repeat("a", 128)},
-		}
-
-		for _, tt := range tests {
+		for _, tt := range validPolicyNames {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _, _ := newService(t)
 
@@ -514,7 +490,7 @@ func TestEntity(t *testing.T) {
 	t.Run("an update racing a delete cannot bring the entity back", func(t *testing.T) {
 		entities := newRacingEntities()
 		entities.entities[hexID] = identity.Entity{ID: hexID}
-		s := identity.New(entities, &fakeTokens{}, &fakeRandom{})
+		s := identity.New(entities, &fakeTokens{}, &fakeGroups{}, &fakeRandom{})
 		ctx := t.Context()
 
 		var updateErr, deleteErr error
@@ -567,6 +543,31 @@ func TestEntity(t *testing.T) {
 			})
 		}
 	})
+}
+
+// invalidPolicyNames and validPolicyNames are shared by entities and groups, which hold names by the same rule.
+var invalidPolicyNames = []struct {
+	name   string
+	policy string
+}{
+	{"empty", ""},
+	{"slash", "dev/ops"},
+	{"dot", "."},
+	{"dot-dot", ".."},
+	{"wildcard", "dev*"},
+	{"space", "dev ops"},
+	{"non-ASCII letter", "dév"},
+	{"over 128 bytes", strings.Repeat("a", 129)},
+}
+
+var validPolicyNames = []struct {
+	name   string
+	policy string
+}{
+	{"every allowed character", "Az09._-"},
+	{"leading dot", ".ops"},
+	{"three dots", "..."},
+	{"exactly 128 bytes", strings.Repeat("a", 128)},
 }
 
 // operations calls each service method with valid input, so only the repository can fail it.

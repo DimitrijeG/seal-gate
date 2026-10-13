@@ -25,24 +25,33 @@ type TokenRepository interface {
 	Get(ctx context.Context, hash [sha256.Size]byte) (string, error)
 }
 
+// GroupRepository stores groups by ID. Get returns ErrGroupNotFound for a missing ID and ErrUnreadableGroup
+// for a corrupt record; Delete does not fail on a missing ID; every method returns ErrSealed while sealed.
+type GroupRepository interface {
+	Put(ctx context.Context, group Group) error
+	Get(ctx context.Context, id string) (Group, error)
+	Delete(ctx context.Context, id string) error
+}
+
 // Random is the source of generated IDs and tokens.
 type Random interface {
 	Bytes(n int) ([]byte, error)
 }
 
-// Service manages entities and the tokens issued to them, validating both before they reach a repository.
+// Service manages entities, groups and the tokens issued to entities, validating each before it reaches a repository.
 type Service struct {
-	// Held by update and delete, so no delete lands between update's existence check and its write
-	// and brings a deleted entity back with its tokens. Process-local: it assumes one instance.
+	// Held by update and delete of entities and groups, so no delete lands between an update's check and its write
+	// and brings one back with its tokens or grants. Process-local: it assumes one instance.
 	mu       sync.Mutex
 	entities EntityRepository
 	tokens   TokenRepository
+	groups   GroupRepository
 	random   Random
 }
 
-// New returns a Service over entities and tokens, taking IDs and tokens from random.
-func New(entities EntityRepository, tokens TokenRepository, random Random) *Service {
-	return &Service{entities: entities, tokens: tokens, random: random}
+// New returns a Service over entities, tokens and groups, taking IDs and tokens from random.
+func New(entities EntityRepository, tokens TokenRepository, groups GroupRepository, random Random) *Service {
+	return &Service{entities: entities, tokens: tokens, groups: groups, random: random}
 }
 
 // CreateToken issues a token for the entity with id; only its hash is stored, so the caller must clear it once delivered.
@@ -173,6 +182,88 @@ func (s *Service) UpdateEntity(ctx context.Context, entity Entity) error {
 	}
 
 	err := s.entities.Put(ctx, entity)
+	if err != nil && !ours(err) {
+		return fmt.Errorf("identity: %w", err)
+	}
+	return err
+}
+
+// CreateGroup stores group under a newly generated ID, replacing any ID it carries, and returns that ID.
+func (s *Service) CreateGroup(ctx context.Context, group Group) (string, error) {
+	if err := validateGroup(group); err != nil {
+		return "", err
+	}
+
+	id, err := s.random.Bytes(idBytes)
+	if err != nil {
+		return "", fmt.Errorf("identity: %w", err)
+	}
+	group.ID = hex.EncodeToString(id)
+
+	err = s.groups.Put(ctx, group)
+	if err != nil && !ours(err) {
+		return "", fmt.Errorf("identity: %w", err)
+	}
+	if err != nil {
+		return "", err
+	}
+	return group.ID, nil
+}
+
+// GetGroup returns the group with id; ErrGroupNotFound if there is none, ErrUnreadableGroup if its record is invalid.
+func (s *Service) GetGroup(ctx context.Context, id string) (Group, error) {
+	if !validID(id) {
+		return Group{}, ErrInvalidGroupID
+	}
+
+	group, err := s.groups.Get(ctx, id)
+	if err != nil && !ours(err) {
+		return Group{}, fmt.Errorf("identity: %w", err)
+	}
+	if err != nil {
+		return Group{}, err
+	}
+	// Checked again on read: an invalid stored name would change what the group grants.
+	if validateGroup(group) != nil {
+		return Group{}, ErrUnreadableGroup
+	}
+	return group, nil
+}
+
+// DeleteGroup removes the group with id; a missing ID is not an error.
+func (s *Service) DeleteGroup(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !validID(id) {
+		return ErrInvalidGroupID
+	}
+
+	err := s.groups.Delete(ctx, id)
+	if err != nil && !ours(err) {
+		return fmt.Errorf("identity: %w", err)
+	}
+	return err
+}
+
+// UpdateGroup replaces an existing group's policies; it never creates one, so a missing ID is ErrGroupNotFound.
+func (s *Service) UpdateGroup(ctx context.Context, group Group) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !validID(group.ID) {
+		return ErrInvalidGroupID
+	}
+	if err := validateGroup(group); err != nil {
+		return err
+	}
+
+	// GetGroup, not the repository: a group that fails validation on read is not updated either.
+	if _, err := s.GetGroup(ctx, group.ID); err != nil {
+		return err
+	}
+
+	err := s.groups.Put(ctx, group)
 	if err != nil && !ours(err) {
 		return fmt.Errorf("identity: %w", err)
 	}
