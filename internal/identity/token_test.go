@@ -42,12 +42,13 @@ func (r *fakeTokens) Get(_ context.Context, hash [sha256.Size]byte) (string, err
 	return entityID, nil
 }
 
-func newTokenService(t *testing.T) (*identity.Service, *fakeEntities, *fakeTokens, *fakeRandom) {
+func newTokenService(t *testing.T) (*identity.TokenService, *fakeEntities, *fakeTokens, *fakeRandom) {
 	t.Helper()
 	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
 	tokens := &fakeTokens{tokens: make(map[[sha256.Size]byte]string)}
 	random := &fakeRandom{}
-	return identity.New(entities, tokens, random), entities, tokens, random
+	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random), random)
+	return s, entities, tokens, random
 }
 
 func TestToken(t *testing.T) {
@@ -196,9 +197,7 @@ func TestToken(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateToken: %v", err)
 		}
-		if err := s.DeleteEntity(t.Context(), hexID); err != nil {
-			t.Fatalf("DeleteEntity: %v", err)
-		}
+		delete(entities.entities, hexID)
 
 		_, err = s.Resolve(t.Context(), token)
 
@@ -317,13 +316,13 @@ func TestToken(t *testing.T) {
 // so only the token repository can fail it.
 var tokenOperations = []struct {
 	name string
-	call func(ctx context.Context, s *identity.Service) error
+	call func(ctx context.Context, s *identity.TokenService) error
 }{
-	{"create", func(ctx context.Context, s *identity.Service) error {
+	{"create", func(ctx context.Context, s *identity.TokenService) error {
 		_, err := s.CreateToken(ctx, hexID)
 		return err
 	}},
-	{"resolve", func(ctx context.Context, s *identity.Service) error {
+	{"resolve", func(ctx context.Context, s *identity.TokenService) error {
 		_, err := s.Resolve(ctx, bytes.Repeat([]byte{1}, 32))
 		return err
 	}},

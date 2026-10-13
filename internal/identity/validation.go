@@ -26,6 +26,16 @@ func validateLists(entity Entity) error {
 	return nil
 }
 
+// validateGroup leaves out the ID, as validateLists does.
+func validateGroup(group Group) error {
+	for _, policy := range group.Policies {
+		if !authorization.ValidPolicyName(policy) {
+			return ErrInvalidPolicyName
+		}
+	}
+	return nil
+}
+
 func validID(id string) bool {
 	return len(id) == hex.EncodedLen(idBytes) && validHex(id)
 }
