@@ -213,6 +213,73 @@ func TestUnseal(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("a reset returns the service's status", func(t *testing.T) {
+		fake := &fakeSystem{
+			// Unseal's status differs, so a handler that submits a share cannot pass.
+			unsealResult: system.Status{Initialized: true, Sealed: true, Progress: 2},
+			resetResult:  system.Status{Initialized: true, Sealed: true, Config: system.SealConfiguration{Shares: 5, Threshold: 3}},
+		}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		want := statusBody{Initialized: true, Sealed: true, Shares: 5, Threshold: 3, Progress: 0}
+
+		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"reset":true}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[statusBody](t, rec)
+
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a reset maps service errors to statuses", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			err     error
+			status  int
+			message string
+		}{
+			{"already unsealed", system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
+			{"not initialized", system.ErrNotInitialized, http.StatusConflict, "not initialized"},
+			{"unknown error", errors.New("bolt: data.db: permission denied"), http.StatusInternalServerError, "internal error"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{resetErr: tt.err}})
+
+				rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"reset":true}`)
+
+				assertError(t, rec, tt.status, tt.message)
+			})
+		}
+	})
+
+	t.Run("a share and a reset together are rejected", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{}})
+
+		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"share":"AQI=","reset":true}`)
+
+		assertError(t, rec, http.StatusBadRequest, "share and reset cannot be sent together")
+	})
+
+	t.Run("a reset with an empty share is a reset", func(t *testing.T) {
+		fake := &fakeSystem{resetResult: system.Status{Initialized: true, Sealed: true}}
+		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		want := statusBody{Initialized: true, Sealed: true}
+
+		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"share":"","reset":true}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[statusBody](t, rec)
+
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
 }
 
 func TestSeal(t *testing.T) {

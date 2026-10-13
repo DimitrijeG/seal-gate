@@ -113,6 +113,24 @@ func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	return s.status(state), nil
 }
 
+// ResetUnseal discards the buffered shares so an unseal can start over;
+// once unsealed it is ErrAlreadyUnsealed, as a share would be.
+func (s *Service) ResetUnseal(ctx context.Context) (Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, err := s.keyring.load(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	if s.keyring.unlocked() {
+		return Status{}, ErrAlreadyUnsealed
+	}
+
+	s.keyring.discard()
+	return s.status(state), nil
+}
+
 // Seal discards buffered shares and clears the key and the root token hash;
 // sealing a sealed instance changes nothing.
 func (s *Service) Seal(ctx context.Context) {

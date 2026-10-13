@@ -70,11 +70,12 @@ paths:
     post:
       operationId: unseal
       tags: [system]
-      summary: Submit one unseal share.
+      summary: Submit one unseal share, or discard the buffered ones.
       description: >
         Open by design: a sealed instance cannot check a token. Shares are
         buffered until the threshold is reached, then combined; a failed
-        combination discards the buffer.
+        combination discards the buffer. A reset discards it on request, so
+        a partial unseal can start over.
       security: []
       requestBody:
         required: true
@@ -84,7 +85,9 @@ paths:
               $ref: "#/components/schemas/UnsealRequest"
       responses:
         "200":
-          description: Share accepted. The status shows the progress, or that the instance is unsealed.
+          description: >
+            Share accepted or buffer discarded. The status shows the progress,
+            or that the instance is unsealed.
           content:
             application/json:
               schema:
@@ -695,11 +698,14 @@ components:
 
     UnsealRequest:
       type: object
-      required: [share]
+      description: Exactly one of a share or `reset` set to true; both together is a 400.
       properties:
         share:
           type: string
           contentEncoding: base64
+        reset:
+          type: boolean
+          description: Discard the buffered shares instead of submitting one.
       additionalProperties: false
 
     StatusResponse:

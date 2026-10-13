@@ -26,6 +26,7 @@ var (
 	errUnsupportedMediaType = errors.New("expected Content-Type application/json")
 	errUnknownField         = errors.New("unknown field in request body")
 	errTrailingData         = errors.New("request body must contain a single JSON object")
+	errShareWithReset       = errors.New("share and reset cannot be sent together")
 	errSealed               = errors.New("the system is sealed")
 )
 
@@ -70,7 +71,8 @@ func classify(err error) (int, string) {
 		// The expected type is a Go type, and naming it would expose ours.
 		return http.StatusBadRequest, fmt.Sprintf("field %q has the wrong type", typeErr.Field)
 	case errors.Is(err, errUnknownField),
-		errors.Is(err, errTrailingData):
+		errors.Is(err, errTrailingData),
+		errors.Is(err, errShareWithReset):
 		return http.StatusBadRequest, err.Error()
 	case errors.As(err, &sizeErr):
 		return http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", sizeErr.Limit)

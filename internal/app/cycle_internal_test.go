@@ -332,17 +332,20 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("seal discards a partial unseal", func(t *testing.T) {
+	t.Run("reset discards a partial unseal", func(t *testing.T) {
 		router := newRouter(t)
 		shares := initialize(t, router).Shares
 		unseal(t, router, shares[0])
 
-		rec := send(t, router, http.MethodPost, "/v1/sys/seal", "")
-		if rec.Code != http.StatusNoContent {
-			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		rec := send(t, router, http.MethodPost, "/v1/sys/unseal", `{"reset":true}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("reset: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		if got := decode[statusBody](t, rec); got.Progress != 0 {
+			t.Fatalf("reset: got progress %d, want 0", got.Progress)
 		}
 
-		// Without the discard, the second share after the seal would reach the threshold.
+		// Without the discard, the second share after the reset would reach the threshold.
 		if got := unseal(t, router, shares[2]); got.Progress != 1 {
 			t.Fatalf("share 3: got progress %d, want 1", got.Progress)
 		}

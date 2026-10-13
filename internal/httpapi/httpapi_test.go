@@ -42,6 +42,8 @@ type fakeSystem struct {
 	unsealGiven  []byte
 	unsealResult system.Status
 	unsealErr    error
+	resetResult  system.Status
+	resetErr     error
 	sealed       bool
 	statusResult system.Status
 	statusErr    error
@@ -60,6 +62,10 @@ func (f *fakeSystem) Unseal(ctx context.Context, share []byte) (system.Status, e
 	f.unsealShare = bytes.Clone(share)
 	f.unsealGiven = share
 	return f.unsealResult, f.unsealErr
+}
+
+func (f *fakeSystem) ResetUnseal(ctx context.Context) (system.Status, error) {
+	return f.resetResult, f.resetErr
 }
 
 func (f *fakeSystem) Seal(ctx context.Context) {

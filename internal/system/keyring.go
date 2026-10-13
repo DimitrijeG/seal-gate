@@ -122,6 +122,10 @@ func (k *Keyring) submit(share []byte) {
 	k.buffer.add(share)
 }
 
+func (k *Keyring) discard() {
+	k.buffer.clear()
+}
+
 func (k *Keyring) progress() int {
 	return k.buffer.len()
 }

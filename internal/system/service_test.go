@@ -226,7 +226,7 @@ func TestService(t *testing.T) {
 		}
 	})
 
-	t.Run("concurrent init, unseal, seal, status and root checks do not race", func(t *testing.T) {
+	t.Run("concurrent init, unseal, reset, seal, status and root checks do not race", func(t *testing.T) {
 		s, _, _ := newService(t)
 		ctx, junk := t.Context(), []byte{1, 2, 3}
 
@@ -235,6 +235,7 @@ func TestService(t *testing.T) {
 		for range 5 {
 			wg.Go(func() { _, _ = s.Init(ctx, sealConfig) })
 			wg.Go(func() { _, _ = s.Unseal(ctx, junk) })
+			wg.Go(func() { _, _ = s.ResetUnseal(ctx) })
 			wg.Go(func() { s.Seal(ctx) })
 			wg.Go(func() { _, _ = s.Status(ctx) })
 			wg.Go(func() { s.IsRoot(junk) })
@@ -660,6 +661,69 @@ func TestService(t *testing.T) {
 
 		if got != want {
 			t.Errorf("Status: got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a reset after a share reports no progress", func(t *testing.T) {
+		s, _, _, shares := newInitializedService(t)
+		want := system.Status{
+			Initialized: true,
+			Sealed:      true,
+			Config:      sealConfig,
+			Progress:    0,
+		}
+
+		unsealWith(t, s, shares[:1])
+		got, err := s.ResetUnseal(t.Context())
+		if err != nil {
+			t.Fatalf("ResetUnseal: %v", err)
+		}
+
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("status after a reset reports no progress", func(t *testing.T) {
+		s, _, _, shares := newInitializedService(t)
+		want := system.Status{
+			Initialized: true,
+			Sealed:      true,
+			Config:      sealConfig,
+			Progress:    0,
+		}
+
+		unsealWith(t, s, shares[:1])
+		if _, err := s.ResetUnseal(t.Context()); err != nil {
+			t.Fatalf("ResetUnseal: %v", err)
+		}
+		got, err := s.Status(t.Context())
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a reset while unsealed is ErrAlreadyUnsealed", func(t *testing.T) {
+		s, _ := newUnsealedService(t)
+
+		_, err := s.ResetUnseal(t.Context())
+
+		if !errors.Is(err, system.ErrAlreadyUnsealed) {
+			t.Errorf("got %v, want %v", err, system.ErrAlreadyUnsealed)
+		}
+	})
+
+	t.Run("a reset before init is ErrNotInitialized", func(t *testing.T) {
+		s, _, _ := newService(t)
+
+		_, err := s.ResetUnseal(t.Context())
+
+		if !errors.Is(err, system.ErrNotInitialized) {
+			t.Errorf("got %v, want %v", err, system.ErrNotInitialized)
 		}
 	})
 
