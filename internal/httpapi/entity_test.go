@@ -1,0 +1,202 @@
+package httpapi_test
+
+import (
+	"net/http"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
+	"github.com/dimitrijegasic/seal-gate/internal/identity"
+)
+
+const (
+	entityID      = "0123456789abcdef0123456789abcdef"
+	groupID       = "fedcba9876543210fedcba9876543210"
+	devEntityJSON = `{"policies":["dev"],"groups":["` + groupID + `"]}`
+)
+
+func TestEntity(t *testing.T) {
+	t.Run("a created entity reaches the service with its policies and groups", func(t *testing.T) {
+		fake := &fakeEntity{}
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+		want := identity.Entity{Policies: []string{"dev"}, Groups: []string{groupID}}
+
+		rec := do(t, router, http.MethodPost, "/v1/entities", devEntityJSON)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if !reflect.DeepEqual(fake.created, want) {
+			t.Errorf("got %+v, want %+v", fake.created, want)
+		}
+	})
+
+	t.Run("a create answers with the new ID", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{createID: entityID}})
+
+		rec := do(t, router, http.MethodPost, "/v1/entities", devEntityJSON)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		got := decode[createEntityBody](t, rec)
+
+		if got.ID != entityID {
+			t.Errorf("got %q, want %q", got.ID, entityID)
+		}
+	})
+
+	t.Run("a body naming the ID is refused", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+
+		rec := do(t, router, http.MethodPost, "/v1/entities", `{"id":"`+entityID+`","policies":[]}`)
+
+		assertError(t, rec, http.StatusBadRequest, `unknown field in request body: "id"`)
+	})
+
+	t.Run("an empty object creates an entity without policies or groups", func(t *testing.T) {
+		fake := &fakeEntity{}
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+
+		rec := do(t, router, http.MethodPost, "/v1/entities", `{}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if len(fake.created.Policies) != 0 || len(fake.created.Groups) != 0 {
+			t.Errorf("got %+v, want no policies or groups", fake.created)
+		}
+	})
+
+	t.Run("a stored entity is returned with its policies and groups", func(t *testing.T) {
+		stored := identity.Entity{ID: entityID, Policies: []string{"dev"}, Groups: []string{groupID}}
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{getEntity: stored}})
+		want := entityBody{Policies: []string{"dev"}, Groups: []string{groupID}}
+
+		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[entityBody](t, rec)
+
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("an entity without policies or groups is returned with empty lists", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{getEntity: identity.Entity{ID: entityID}}})
+		want := `{"policies":[],"groups":[]}`
+
+		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("an update reaches the service with the ID from the URL", func(t *testing.T) {
+		fake := &fakeEntity{}
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+		want := identity.Entity{ID: entityID, Policies: []string{"dev"}, Groups: []string{groupID}}
+
+		rec := do(t, router, http.MethodPut, "/v1/entities/"+entityID, devEntityJSON)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if !reflect.DeepEqual(fake.updated, want) {
+			t.Errorf("got %+v, want %+v", fake.updated, want)
+		}
+	})
+
+	t.Run("a delete answers no content", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+
+		rec := do(t, router, http.MethodDelete, "/v1/entities/"+entityID, "")
+
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("body: got %q, want empty", rec.Body)
+		}
+	})
+
+	t.Run("each operation passes the ID to the service", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			method string
+		}{
+			{"get", http.MethodGet},
+			{"delete", http.MethodDelete},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeEntity{}
+				router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+
+				do(t, router, tt.method, "/v1/entities/"+entityID, "")
+
+				if fake.id != entityID {
+					t.Errorf("got %q, want %q", fake.id, entityID)
+				}
+			})
+		}
+	})
+
+	t.Run("each operation reports the service's error", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			method string
+			path   string
+			body   string
+		}{
+			{"create", http.MethodPost, "/v1/entities", devEntityJSON},
+			{"get", http.MethodGet, "/v1/entities/" + entityID, ""},
+			{"update", http.MethodPut, "/v1/entities/" + entityID, devEntityJSON},
+			{"delete", http.MethodDelete, "/v1/entities/" + entityID, ""},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{err: identity.ErrSealed}})
+
+				rec := do(t, router, tt.method, tt.path, tt.body)
+
+				assertError(t, rec, http.StatusServiceUnavailable, "the system is sealed")
+			})
+		}
+	})
+
+	t.Run("each domain error maps to its status and message", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			err     error
+			status  int
+			message string
+		}{
+			{"invalid entity ID", identity.ErrInvalidEntityID, http.StatusBadRequest, "invalid entity ID"},
+			{"invalid policy name", identity.ErrInvalidPolicyName, http.StatusBadRequest, "invalid policy name"},
+			{"invalid group ID", identity.ErrInvalidGroupID, http.StatusBadRequest, "invalid group ID"},
+			{"not found", identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
+			// A corrupt record is the server's fault, not the client's.
+			{"unreadable entity", identity.ErrUnreadableEntity, http.StatusInternalServerError, "internal error"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{err: tt.err}})
+
+				rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
+
+				assertError(t, rec, tt.status, tt.message)
+			})
+		}
+	})
+}

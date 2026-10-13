@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
+	"github.com/dimitrijegasic/seal-gate/internal/identity"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -112,6 +113,12 @@ var domainErrors = []struct {
 	{authorization.ErrInvalidRule, http.StatusBadRequest, "invalid policy rule"},
 	{authorization.ErrNotFound, http.StatusNotFound, "policy not found"},
 	{authorization.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
+
+	{identity.ErrInvalidEntityID, http.StatusBadRequest, "invalid entity ID"},
+	{identity.ErrInvalidPolicyName, http.StatusBadRequest, "invalid policy name"},
+	{identity.ErrInvalidGroupID, http.StatusBadRequest, "invalid group ID"},
+	{identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
+	{identity.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 }
 
 // writeJSON forbids caching on every body, since a body may carry a secret or a share.

@@ -19,6 +19,10 @@ tags:
     description: Secret values by path. Every operation needs the instance unsealed.
   - name: policies
     description: Access policies by name. Every operation needs the instance unsealed.
+  - name: entities
+    description: >
+      Identities that hold policies and group memberships, by generated ID.
+      Every operation needs the instance unsealed.
 
 paths:
   /sys/init:
@@ -344,6 +348,120 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /entities:
+    post:
+      operationId: createEntity
+      tags: [entities]
+      summary: Create an entity under a newly generated ID.
+      description: >
+        Open until authentication exists. The server chooses the ID and never
+        reuses one, so a deleted entity's tokens can never authenticate again.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateEntityResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 65536 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /entities/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The entity's ID, as returned on creation.
+        schema:
+          $ref: "#/components/schemas/ID"
+
+    get:
+      operationId: getEntity
+      tags: [entities]
+      summary: Read an entity.
+      description: Open until authentication exists.
+      security: []
+      responses:
+        "200":
+          description: The entity's policies and groups.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    put:
+      operationId: updateEntity
+      tags: [entities]
+      summary: Replace an existing entity's policies and groups.
+      description: >
+        Open until authentication exists. Never creates: an ID that does not
+        exist is not found. The ID is taken from the path only.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityRequest"
+      responses:
+        "204":
+          description: Updated.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 65536 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: deleteEntity
+      tags: [entities]
+      summary: Delete an entity, revoking its tokens.
+      description: >
+        Open until authentication exists. Idempotent: deleting a missing entity
+        also succeeds.
+      security: []
+      responses:
+        "204":
+          description: Deleted, or there was nothing to delete.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   responses:
     BadRequest:
@@ -523,6 +641,53 @@ components:
           items:
             type: string
             enum: [create, read, update, delete, list, rotate, manage, deny]
+      additionalProperties: false
+
+    ID:
+      type: string
+      description: 16 random bytes in lowercase hex.
+      pattern: "^[0-9a-f]{32}$"
+      example: 0123456789abcdef0123456789abcdef
+
+    EntityRequest:
+      type: object
+      properties:
+        policies:
+          type: array
+          description: Policy names. Absent holds none. A name need not exist yet; one that does not grants nothing.
+          items:
+            type: string
+            pattern: "^(?!\\.\\.?$)[A-Za-z0-9._-]+$"
+            maxLength: 128
+        groups:
+          type: array
+          description: Group IDs. Absent holds none.
+          items:
+            $ref: "#/components/schemas/ID"
+      additionalProperties: false
+
+    EntityResponse:
+      type: object
+      required: [policies, groups]
+      properties:
+        policies:
+          type: array
+          description: Empty when the entity holds none, never null.
+          items:
+            type: string
+        groups:
+          type: array
+          description: Empty when the entity holds none, never null.
+          items:
+            $ref: "#/components/schemas/ID"
+      additionalProperties: false
+
+    CreateEntityResponse:
+      type: object
+      required: [id]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
       additionalProperties: false
 
     ErrorResponse:

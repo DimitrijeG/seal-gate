@@ -17,6 +17,8 @@ func TestRouter(t *testing.T) {
 			{"unseal", http.MethodPost, "/v1/sys/unseal"},
 			{"put secret", http.MethodPut, "/v1/secrets/db/password"},
 			{"put policy", http.MethodPut, "/v1/policies/dev"},
+			{"create entity", http.MethodPost, "/v1/entities"},
+			{"update entity", http.MethodPut, "/v1/entities/" + entityID},
 		}
 		// Bodies fit no endpoint in particular, so each case applies to every route.
 		tests := []struct {
@@ -40,6 +42,7 @@ func TestRouter(t *testing.T) {
 						System: &fakeSystem{},
 						Secret: &fakeSecret{},
 						Policy: &fakePolicy{},
+						Entity: &fakeEntity{},
 					})
 
 					router.ServeHTTP(rec, req)
@@ -59,6 +62,8 @@ func TestRouter(t *testing.T) {
 			{"unseal", http.MethodPost, "/v1/sys/unseal", 16384},
 			{"put secret", http.MethodPut, "/v1/secrets/db/password", 88408},
 			{"put policy", http.MethodPut, "/v1/policies/dev", 65536},
+			{"create entity", http.MethodPost, "/v1/entities", 65536},
+			{"update entity", http.MethodPut, "/v1/entities/" + entityID, 65536},
 		}
 
 		for _, route := range routes {
@@ -69,6 +74,7 @@ func TestRouter(t *testing.T) {
 					System: &fakeSystem{},
 					Secret: &fakeSecret{},
 					Policy: &fakePolicy{},
+					Entity: &fakeEntity{},
 				})
 
 				rec := do(t, router, route.method, route.path, body)
@@ -114,6 +120,27 @@ func TestRouter(t *testing.T) {
 				rec := do(t, router, http.MethodPut, tt.target, devPolicyJSON)
 
 				assertError(t, rec, http.StatusBadRequest, "invalid policy name")
+			})
+		}
+	})
+
+	t.Run("an entity path that is not in its clean form is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment", "/v1/entities/x/../" + entityID},
+			{"current segment", "/v1/entities/./" + entityID},
+			{"empty segment", "/v1/entities//" + entityID},
+			{"empty segment before the route", "/v1//entities/" + entityID},
+			{"empty segment before the version", "//v1/entities/" + entityID},
+			{"parent segment from another route", "/v1/secrets/../entities/" + entityID},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+
+				rec := do(t, router, http.MethodPut, tt.target, devEntityJSON)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid entity ID")
 			})
 		}
 	})

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
+	"github.com/dimitrijegasic/seal-gate/internal/identity"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -35,11 +36,20 @@ type PolicyService interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// EntityService is entity storage as the handlers use it.
+type EntityService interface {
+	CreateEntity(ctx context.Context, entity identity.Entity) (string, error)
+	GetEntity(ctx context.Context, id string) (identity.Entity, error)
+	UpdateEntity(ctx context.Context, entity identity.Entity) error
+	DeleteEntity(ctx context.Context, id string) error
+}
+
 // Handlers holds what the HTTP handlers call.
 type Handlers struct {
 	System SystemService
 	Secret SecretService
 	Policy PolicyService
+	Entity EntityService
 	Logger *slog.Logger
 }
 
@@ -60,6 +70,11 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.HandleFunc("PUT /v1/policies/{name}", h.handlePutPolicy)
 	mux.HandleFunc("GET /v1/policies/{name}", h.handleGetPolicy)
 	mux.HandleFunc("DELETE /v1/policies/{name}", h.handleDeletePolicy)
+
+	mux.HandleFunc("POST /v1/entities", h.handleCreateEntity)
+	mux.HandleFunc("GET /v1/entities/{id}", h.handleGetEntity)
+	mux.HandleFunc("PUT /v1/entities/{id}", h.handleUpdateEntity)
+	mux.HandleFunc("DELETE /v1/entities/{id}", h.handleDeleteEntity)
 
 	return h.refuseUncleanPaths(mux)
 }
@@ -90,4 +105,5 @@ var uncleanPathErrors = []struct {
 }{
 	{"/v1/secrets/", secret.ErrInvalidPath},
 	{"/v1/policies/", authorization.ErrInvalidName},
+	{"/v1/entities/", identity.ErrInvalidEntityID},
 }
