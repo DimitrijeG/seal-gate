@@ -81,13 +81,17 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 	return err
 }
 
-// Authorize returns nil if the named policies grant capability on resource and none denies it, else ErrDenied.
-// A missing policy grants nothing; any other read failure is returned as is.
-func (s *Service) Authorize(ctx context.Context, policies []string, resource string, capability Capability) error {
+// Authorize returns nil if principal may use capability on resource, else ErrDenied: the root always may, others
+// when one of their policies grants it and none denies it. A missing policy grants nothing; any other read failure is returned as is.
+func (s *Service) Authorize(ctx context.Context, principal Principal, resource string, capability Capability) error {
+	if principal.root {
+		return nil
+	}
+
 	var granted, denied bool
 
 	// Deny wins over any grant, so every matching rule is seen before deciding.
-	for _, name := range policies {
+	for _, name := range principal.policies {
 		policy, err := s.Get(ctx, name)
 		if errors.Is(err, ErrNotFound) {
 			continue
