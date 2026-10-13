@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
+	"github.com/dimitrijegasic/seal-gate/internal/identity"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -35,11 +36,21 @@ type PolicyService interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// EntityService is entity storage and token issuing as the handlers use it.
+type EntityService interface {
+	CreateEntity(ctx context.Context, entity identity.Entity) (string, error)
+	GetEntity(ctx context.Context, id string) (identity.Entity, error)
+	UpdateEntity(ctx context.Context, entity identity.Entity) error
+	DeleteEntity(ctx context.Context, id string) error
+	CreateToken(ctx context.Context, entityID string) ([]byte, error)
+}
+
 // Handlers holds what the HTTP handlers call.
 type Handlers struct {
 	System SystemService
 	Secret SecretService
 	Policy PolicyService
+	Entity EntityService
 	Logger *slog.Logger
 }
 
@@ -61,6 +72,12 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.HandleFunc("GET /v1/policies/{name}", h.handleGetPolicy)
 	mux.HandleFunc("DELETE /v1/policies/{name}", h.handleDeletePolicy)
 
+	mux.HandleFunc("POST /v1/entities", h.handleCreateEntity)
+	mux.HandleFunc("GET /v1/entities/{id}", h.handleGetEntity)
+	mux.HandleFunc("PUT /v1/entities/{id}", h.handleUpdateEntity)
+	mux.HandleFunc("DELETE /v1/entities/{id}", h.handleDeleteEntity)
+	mux.HandleFunc("POST /v1/entities/{id}/tokens", h.handleCreateToken)
+
 	return h.refuseUncleanPaths(mux)
 }
 
@@ -73,7 +90,8 @@ func (h *Handlers) refuseUncleanPaths(next http.Handler) http.Handler {
 		cleaned := path.Clean(r.URL.Path)
 		if cleaned != r.URL.Path {
 			for _, guarded := range uncleanPathErrors {
-				if strings.HasPrefix(cleaned, guarded.prefix) {
+				// The added slash also catches a path that cleans to the collection itself (/v1/entities/x/..).
+				if strings.HasPrefix(cleaned+"/", guarded.prefix) {
 					writeError(w, h.Logger, guarded.err)
 					return
 				}
@@ -90,4 +108,5 @@ var uncleanPathErrors = []struct {
 }{
 	{"/v1/secrets/", secret.ErrInvalidPath},
 	{"/v1/policies/", authorization.ErrInvalidName},
+	{"/v1/entities/", identity.ErrInvalidEntityID},
 }

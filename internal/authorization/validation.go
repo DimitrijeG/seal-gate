@@ -7,6 +7,11 @@ const (
 	maxPatternLength = 257
 )
 
+// ValidPolicyName reports whether name is a valid policy name: one segment of [A-Za-z0-9._-], not . or .., at most 128 bytes.
+func ValidPolicyName(name string) bool {
+	return validName(name)
+}
+
 func validName(name string) bool {
 	return len(name) <= maxNameLength && validSegment(name)
 }
