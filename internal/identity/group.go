@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -21,7 +22,7 @@ type GroupRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
-// GroupService manages groups, validating them before they reach the repository.
+// GroupService manages groups and combines an entity's policies with its groups'.
 type GroupService struct {
 	// Held by update and delete, so no delete lands between update's existence check and its write and
 	// brings a deleted group back, re-granting its policies. Process-local: it assumes one instance.
@@ -115,4 +116,34 @@ func (s *GroupService) UpdateGroup(ctx context.Context, group Group) error {
 		return fmt.Errorf("identity: %w", err)
 	}
 	return err
+}
+
+// EffectivePolicies returns the entity's own policy names, then each of its groups', each name once.
+// A missing group is skipped; any other read failure, an unreadable group included, is returned.
+func (s *GroupService) EffectivePolicies(ctx context.Context, entity Entity) ([]string, error) {
+	seen := make(map[string]bool)
+	policies := make([]string, 0, len(entity.Policies))
+	add := func(names []string) {
+		for _, name := range names {
+			if !seen[name] {
+				seen[name] = true
+				policies = append(policies, name)
+			}
+		}
+	}
+
+	add(entity.Policies)
+	for _, groupID := range entity.Groups {
+		group, err := s.GetGroup(ctx, groupID)
+		// Before the error return: a deleted group grants nothing, but any other failure could hide a deny.
+		if errors.Is(err, ErrGroupNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		add(group.Policies)
+	}
+
+	return policies, nil
 }
