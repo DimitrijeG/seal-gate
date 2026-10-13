@@ -188,6 +188,43 @@ type tokenBody struct {
 	Token string `json:"token"`
 }
 
+type groupBody struct {
+	Policies []string `json:"policies"`
+}
+
+type createGroupBody struct {
+	ID string `json:"id"`
+}
+
+type fakeGroup struct {
+	id       string // the last ID Get or Delete got
+	created  identity.Group
+	createID string
+	getGroup identity.Group
+	updated  identity.Group
+	err      error
+}
+
+func (f *fakeGroup) CreateGroup(ctx context.Context, group identity.Group) (string, error) {
+	f.created = group
+	return f.createID, f.err
+}
+
+func (f *fakeGroup) GetGroup(ctx context.Context, id string) (identity.Group, error) {
+	f.id = id
+	return f.getGroup, f.err
+}
+
+func (f *fakeGroup) UpdateGroup(ctx context.Context, group identity.Group) error {
+	f.updated = group
+	return f.err
+}
+
+func (f *fakeGroup) DeleteGroup(ctx context.Context, id string) error {
+	f.id = id
+	return f.err
+}
+
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
