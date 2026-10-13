@@ -36,7 +36,9 @@ type services struct {
 	system *system.Service
 	secret *secret.Service
 	policy *authorization.Service
-	entity *identity.Service
+	entity *identity.EntityService
+	token  *identity.TokenService
+	group  *identity.GroupService
 }
 
 func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
@@ -86,11 +88,15 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 		infra.keys,
 	)
 
+	entity := identity.NewEntityService(repositories.set.Entity, infra.random)
+
 	return &services{
 		system: system.NewService(keyring, infra.clock),
 		secret: secret.New(repositories.set.Secret),
 		policy: authorization.New(repositories.set.Policy),
-		entity: identity.New(repositories.set.Entity, repositories.set.Token, infra.random),
+		entity: entity,
+		token:  identity.NewTokenService(repositories.set.Token, entity, infra.random),
+		group:  identity.NewGroupService(repositories.set.Group, infra.random),
 	}
 }
 
@@ -100,6 +106,8 @@ func buildRouter(services *services, logger *slog.Logger) http.Handler {
 		Secret: services.secret,
 		Policy: services.policy,
 		Entity: services.entity,
+		Token:  services.token,
+		Group:  services.group,
 		Logger: logger,
 	})
 }

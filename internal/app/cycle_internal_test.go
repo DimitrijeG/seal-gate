@@ -64,6 +64,14 @@ type tokenBody struct {
 	Token string `json:"token"`
 }
 
+type groupBody struct {
+	Policies []string `json:"policies"`
+}
+
+type createGroupBody struct {
+	ID string `json:"id"`
+}
+
 type fakeClock struct{ now time.Time }
 
 func (c fakeClock) Now() time.Time { return c.now }
@@ -528,6 +536,26 @@ func TestSealLifecycle(t *testing.T) {
 
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body)
+		}
+	})
+
+	t.Run("a group created after unseal reads back", func(t *testing.T) {
+		router := unsealed(t)
+		want := groupBody{Policies: []string{"dev"}}
+
+		rec := send(t, router, http.MethodPost, "/v1/groups", `{"policies":["dev"]}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		id := decode[createGroupBody](t, rec).ID
+		rec = send(t, router, http.MethodGet, "/v1/groups/"+id, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[groupBody](t, rec)
+
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
 }

@@ -118,6 +118,7 @@ var domainErrors = []struct {
 	{identity.ErrInvalidPolicyName, http.StatusBadRequest, "invalid policy name"},
 	{identity.ErrInvalidGroupID, http.StatusBadRequest, "invalid group ID"},
 	{identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
+	{identity.ErrGroupNotFound, http.StatusNotFound, "group not found"},
 	{identity.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 }
 

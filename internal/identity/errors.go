@@ -16,6 +16,9 @@ var (
 	ErrInvalidToken = errors.New("identity: invalid token")
 	// ErrUnreadableToken reports a stored token record that does not decode or names an invalid entity ID.
 	ErrUnreadableToken = errors.New("identity: unreadable token")
+	ErrGroupNotFound   = errors.New("identity: group not found")
+	// ErrUnreadableGroup reports a stored group that does not decode, or whose policy names are invalid.
+	ErrUnreadableGroup = errors.New("identity: unreadable group")
 )
 
 // ours reports the sentinels a repository may return, which pass up unwrapped so their prefix is not doubled.
@@ -24,5 +27,7 @@ func ours(err error) bool {
 		errors.Is(err, ErrUnreadableEntity) ||
 		errors.Is(err, ErrSealed) ||
 		errors.Is(err, ErrInvalidToken) ||
-		errors.Is(err, ErrUnreadableToken)
+		errors.Is(err, ErrUnreadableToken) ||
+		errors.Is(err, ErrGroupNotFound) ||
+		errors.Is(err, ErrUnreadableGroup)
 }

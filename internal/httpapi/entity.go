@@ -87,7 +87,7 @@ type createTokenResponse struct {
 func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	token, err := h.Entity.CreateToken(r.Context(), id)
+	token, err := h.Token.CreateToken(r.Context(), id)
 	// Deferred before the error check: cleared after the response is written, whatever CreateToken returned.
 	defer clear(token)
 	if err != nil {

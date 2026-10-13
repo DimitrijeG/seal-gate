@@ -23,6 +23,11 @@ tags:
     description: >
       Identities that hold policies and group memberships, by generated ID.
       Every operation needs the instance unsealed.
+  - name: groups
+    description: >
+      Policy sets that entities join by naming the group's ID. Membership
+      lives on the entity, so a group has no member list. Every operation
+      needs the instance unsealed.
 
 paths:
   /sys/init:
@@ -496,6 +501,121 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /groups:
+    post:
+      operationId: createGroup
+      tags: [groups]
+      summary: Create a group under a newly generated ID.
+      description: >
+        Open until authentication exists. The server chooses the ID and never
+        reuses one, so a deleted group cannot come back and re-grant its
+        policies to entities that still name it.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateGroupResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 65536 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /groups/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The group's ID, as returned on creation.
+        schema:
+          $ref: "#/components/schemas/ID"
+
+    get:
+      operationId: getGroup
+      tags: [groups]
+      summary: Read a group.
+      description: Open until authentication exists.
+      security: []
+      responses:
+        "200":
+          description: The group's policies.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    put:
+      operationId: updateGroup
+      tags: [groups]
+      summary: Replace an existing group's policies.
+      description: >
+        Open until authentication exists. Never creates: an ID that does not
+        exist is not found. The ID is taken from the path only.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupRequest"
+      responses:
+        "204":
+          description: Updated.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 65536 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: deleteGroup
+      tags: [groups]
+      summary: Delete a group.
+      description: >
+        Open until authentication exists. Idempotent: deleting a missing group
+        also succeeds. Entities that name it keep the ID, which grants nothing.
+      security: []
+      responses:
+        "204":
+          description: Deleted, or there was nothing to delete.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   responses:
     BadRequest:
@@ -732,6 +852,37 @@ components:
           type: string
           contentEncoding: base64
           description: 32 bytes. Returned only here; it cannot be recovered later.
+      additionalProperties: false
+
+    GroupRequest:
+      type: object
+      properties:
+        policies:
+          type: array
+          description: Policy names. Absent holds none. A name need not exist yet; one that does not grants nothing.
+          items:
+            type: string
+            pattern: "^(?!\\.\\.?$)[A-Za-z0-9._-]+$"
+            maxLength: 128
+      additionalProperties: false
+
+    GroupResponse:
+      type: object
+      required: [policies]
+      properties:
+        policies:
+          type: array
+          description: Empty when the group holds none, never null.
+          items:
+            type: string
+      additionalProperties: false
+
+    CreateGroupResponse:
+      type: object
+      required: [id]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
       additionalProperties: false
 
     ErrorResponse:

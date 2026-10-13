@@ -145,12 +145,11 @@ type createEntityBody struct {
 }
 
 type fakeEntity struct {
-	id        string // the last ID Get, Delete or CreateToken got
+	id        string // the last ID Get or Delete got
 	created   identity.Entity
 	createID  string
 	getEntity identity.Entity
 	updated   identity.Entity
-	token     []byte
 	err       error
 }
 
@@ -174,13 +173,56 @@ func (f *fakeEntity) DeleteEntity(ctx context.Context, id string) error {
 	return f.err
 }
 
-func (f *fakeEntity) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
-	f.id = entityID
+type fakeToken struct {
+	entityID string
+	token    []byte
+	err      error
+}
+
+func (f *fakeToken) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
+	f.entityID = entityID
 	return f.token, f.err
 }
 
 type tokenBody struct {
 	Token string `json:"token"`
+}
+
+type groupBody struct {
+	Policies []string `json:"policies"`
+}
+
+type createGroupBody struct {
+	ID string `json:"id"`
+}
+
+type fakeGroup struct {
+	id       string // the last ID Get or Delete got
+	created  identity.Group
+	createID string
+	getGroup identity.Group
+	updated  identity.Group
+	err      error
+}
+
+func (f *fakeGroup) CreateGroup(ctx context.Context, group identity.Group) (string, error) {
+	f.created = group
+	return f.createID, f.err
+}
+
+func (f *fakeGroup) GetGroup(ctx context.Context, id string) (identity.Group, error) {
+	f.id = id
+	return f.getGroup, f.err
+}
+
+func (f *fakeGroup) UpdateGroup(ctx context.Context, group identity.Group) error {
+	f.updated = group
+	return f.err
+}
+
+func (f *fakeGroup) DeleteGroup(ctx context.Context, id string) error {
+	f.id = id
+	return f.err
 }
 
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {

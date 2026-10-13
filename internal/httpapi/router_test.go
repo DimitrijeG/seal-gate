@@ -19,6 +19,8 @@ func TestRouter(t *testing.T) {
 			{"put policy", http.MethodPut, "/v1/policies/dev"},
 			{"create entity", http.MethodPost, "/v1/entities"},
 			{"update entity", http.MethodPut, "/v1/entities/" + entityID},
+			{"create group", http.MethodPost, "/v1/groups"},
+			{"update group", http.MethodPut, "/v1/groups/" + groupID},
 		}
 		// Bodies fit no endpoint in particular, so each case applies to every route.
 		tests := []struct {
@@ -64,6 +66,8 @@ func TestRouter(t *testing.T) {
 			{"put policy", http.MethodPut, "/v1/policies/dev", 65536},
 			{"create entity", http.MethodPost, "/v1/entities", 65536},
 			{"update entity", http.MethodPut, "/v1/entities/" + entityID, 65536},
+			{"create group", http.MethodPost, "/v1/groups", 65536},
+			{"update group", http.MethodPut, "/v1/groups/" + groupID, 65536},
 		}
 
 		for _, route := range routes {
@@ -75,6 +79,7 @@ func TestRouter(t *testing.T) {
 					Secret: &fakeSecret{},
 					Policy: &fakePolicy{},
 					Entity: &fakeEntity{},
+					Group:  &fakeGroup{},
 				})
 
 				rec := do(t, router, route.method, route.path, body)
@@ -163,6 +168,44 @@ func TestRouter(t *testing.T) {
 		}
 	})
 
+	t.Run("a group path that is not in its clean form is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment", "/v1/groups/x/../" + groupID},
+			{"current segment", "/v1/groups/./" + groupID},
+			{"empty segment", "/v1/groups//" + groupID},
+			{"empty segment before the route", "/v1//groups/" + groupID},
+			{"empty segment before the version", "//v1/groups/" + groupID},
+			{"parent segment from another route", "/v1/secrets/../groups/" + groupID},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{}})
+
+				rec := do(t, router, http.MethodPut, tt.target, devGroupJSON)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid group ID")
+			})
+		}
+	})
+
+	t.Run("an unclean path that cleans to the group collection is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment", "/v1/groups/" + groupID + "/.."},
+			{"empty segment before the route", "/v1//groups"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{}})
+
+				rec := do(t, router, http.MethodPost, tt.target, devGroupJSON)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid group ID")
+			})
+		}
+	})
+
 	t.Run("a token path that is not in its clean form is refused", func(t *testing.T) {
 		tests := []struct{ name, target string }{
 			{"parent segment", "/v1/entities/x/../" + entityID + "/tokens"},
@@ -171,7 +214,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Token: &fakeToken{}})
 
 				rec := do(t, router, http.MethodPost, tt.target, "")
 
