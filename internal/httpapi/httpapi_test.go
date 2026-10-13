@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
+	"github.com/dimitrijegasic/seal-gate/internal/identity"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
@@ -132,6 +133,54 @@ func (f *fakePolicy) Get(ctx context.Context, name string) (authorization.Policy
 func (f *fakePolicy) Delete(ctx context.Context, name string) error {
 	f.name = name
 	return f.err
+}
+
+type entityBody struct {
+	Policies []string `json:"policies"`
+	Groups   []string `json:"groups"`
+}
+
+type createEntityBody struct {
+	ID string `json:"id"`
+}
+
+type fakeEntity struct {
+	id        string // the last ID Get, Delete or CreateToken got
+	created   identity.Entity
+	createID  string
+	getEntity identity.Entity
+	updated   identity.Entity
+	token     []byte
+	err       error
+}
+
+func (f *fakeEntity) CreateEntity(ctx context.Context, entity identity.Entity) (string, error) {
+	f.created = entity
+	return f.createID, f.err
+}
+
+func (f *fakeEntity) GetEntity(ctx context.Context, id string) (identity.Entity, error) {
+	f.id = id
+	return f.getEntity, f.err
+}
+
+func (f *fakeEntity) UpdateEntity(ctx context.Context, entity identity.Entity) error {
+	f.updated = entity
+	return f.err
+}
+
+func (f *fakeEntity) DeleteEntity(ctx context.Context, id string) error {
+	f.id = id
+	return f.err
+}
+
+func (f *fakeEntity) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
+	f.id = entityID
+	return f.token, f.err
+}
+
+type tokenBody struct {
+	Token string `json:"token"`
 }
 
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
