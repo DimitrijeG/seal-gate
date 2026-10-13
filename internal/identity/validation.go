@@ -6,7 +6,10 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 )
 
-const idBytes = 16
+const (
+	idBytes    = 16
+	tokenBytes = 32
+)
 
 // validateLists leaves out the ID: create checks the entity before it has one.
 func validateLists(entity Entity) error {

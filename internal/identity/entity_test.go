@@ -117,9 +117,8 @@ const hexID = "0123456789abcdef0123456789abcdef"
 
 func newService(t *testing.T) (*identity.Service, *fakeEntities, *fakeRandom) {
 	t.Helper()
-	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
-	random := &fakeRandom{}
-	return identity.New(entities, random), entities, random
+	s, entities, _, random := newTokenService(t)
+	return s, entities, random
 }
 
 func TestEntity(t *testing.T) {
@@ -502,7 +501,7 @@ func TestEntity(t *testing.T) {
 	t.Run("an update racing a delete cannot bring the entity back", func(t *testing.T) {
 		entities := newRacingEntities()
 		entities.entities[hexID] = identity.Entity{ID: hexID}
-		s := identity.New(entities, &fakeRandom{})
+		s := identity.New(entities, &fakeTokens{}, &fakeRandom{})
 		ctx := t.Context()
 
 		var updateErr, deleteErr error
