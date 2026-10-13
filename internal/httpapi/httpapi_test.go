@@ -145,11 +145,12 @@ type createEntityBody struct {
 }
 
 type fakeEntity struct {
-	id        string // the last ID Get or Delete got
+	id        string // the last ID Get, Delete or CreateToken got
 	created   identity.Entity
 	createID  string
 	getEntity identity.Entity
 	updated   identity.Entity
+	token     []byte
 	err       error
 }
 
@@ -171,6 +172,15 @@ func (f *fakeEntity) UpdateEntity(ctx context.Context, entity identity.Entity) e
 func (f *fakeEntity) DeleteEntity(ctx context.Context, id string) error {
 	f.id = id
 	return f.err
+}
+
+func (f *fakeEntity) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
+	f.id = entityID
+	return f.token, f.err
+}
+
+type tokenBody struct {
+	Token string `json:"token"`
 }
 
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {

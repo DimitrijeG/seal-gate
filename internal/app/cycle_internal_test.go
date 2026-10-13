@@ -60,6 +60,10 @@ type createEntityBody struct {
 	ID string `json:"id"`
 }
 
+type tokenBody struct {
+	Token string `json:"token"`
+}
+
 type fakeClock struct{ now time.Time }
 
 func (c fakeClock) Now() time.Time { return c.now }
@@ -168,6 +172,16 @@ func getSecret(t *testing.T, h http.Handler, path string) string {
 		t.Fatalf("get %s: got %d, want %d: %s", path, rec.Code, http.StatusOK, rec.Body)
 	}
 	return decode[secretBody](t, rec).Value
+}
+
+// createEntity creates an entity with no policies or groups and returns its ID.
+func createEntity(t *testing.T, h http.Handler) string {
+	t.Helper()
+	rec := send(t, h, http.MethodPost, "/v1/entities", `{}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	return decode[createEntityBody](t, rec).ID
 }
 
 func boltConfig(t *testing.T) *config.Config {
@@ -482,6 +496,38 @@ func TestSealLifecycle(t *testing.T) {
 
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a token is issued for an entity created after unseal", func(t *testing.T) {
+		router := unsealed(t)
+		id := createEntity(t, router)
+
+		rec := send(t, router, http.MethodPost, "/v1/entities/"+id+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("issue: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		token, err := base64.StdEncoding.DecodeString(decode[tokenBody](t, rec).Token)
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+
+		if len(token) != 32 {
+			t.Errorf("got %d bytes, want 32", len(token))
+		}
+	})
+
+	t.Run("a deleted entity is not issued a token", func(t *testing.T) {
+		router := unsealed(t)
+		id := createEntity(t, router)
+		if rec := send(t, router, http.MethodDelete, "/v1/entities/"+id, ""); rec.Code != http.StatusNoContent {
+			t.Fatalf("delete: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		rec := send(t, router, http.MethodPost, "/v1/entities/"+id+"/tokens", "")
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body)
 		}
 	})
 }

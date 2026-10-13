@@ -144,4 +144,21 @@ func TestRouter(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("a token path that is not in its clean form is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment", "/v1/entities/x/../" + entityID + "/tokens"},
+			{"current segment", "/v1/entities/" + entityID + "/./tokens"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+
+				rec := do(t, router, http.MethodPost, tt.target, "")
+
+				assertError(t, rec, http.StatusBadRequest, "invalid entity ID")
+			})
+		}
+	})
 }

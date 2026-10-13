@@ -79,6 +79,25 @@ func (h *Handlers) handleDeleteEntity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// createTokenResponse carries the token once; []byte encodes as base64.
+type createTokenResponse struct {
+	Token []byte `json:"token"`
+}
+
+func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	token, err := h.Entity.CreateToken(r.Context(), id)
+	// Deferred before the error check: cleared after the response is written, whatever CreateToken returned.
+	defer clear(token)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token})
+}
+
 // entity takes id from the URL, or none on create, never from the body: IDs are generated, not chosen.
 func (req entityRequest) entity(id string) identity.Entity {
 	return identity.Entity{

@@ -1,6 +1,8 @@
 package httpapi_test
 
 import (
+	"bytes"
+	"encoding/base64"
 	"net/http"
 	"reflect"
 	"strings"
@@ -161,6 +163,7 @@ func TestEntity(t *testing.T) {
 			{"get", http.MethodGet, "/v1/entities/" + entityID, ""},
 			{"update", http.MethodPut, "/v1/entities/" + entityID, devEntityJSON},
 			{"delete", http.MethodDelete, "/v1/entities/" + entityID, ""},
+			{"issue token", http.MethodPost, "/v1/entities/" + entityID + "/tokens", ""},
 		}
 
 		for _, tt := range tests {
@@ -197,6 +200,62 @@ func TestEntity(t *testing.T) {
 
 				assertError(t, rec, tt.status, tt.message)
 			})
+		}
+	})
+
+	t.Run("an issued token is returned in base64", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{token: bytes.Repeat([]byte{0xab}, 32)}})
+		// A copy: the handler clears the fake's slice once the response is written.
+		want := bytes.Repeat([]byte{0xab}, 32)
+
+		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		got, err := base64.StdEncoding.DecodeString(decode[tokenBody](t, rec).Token)
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+
+		if !bytes.Equal(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
+	t.Run("a token is issued for the entity in the URL", func(t *testing.T) {
+		fake := &fakeEntity{token: make([]byte, 32)}
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+
+		do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+
+		if fake.id != entityID {
+			t.Errorf("got %q, want %q", fake.id, entityID)
+		}
+	})
+
+	t.Run("an issued token is cleared after the response is written", func(t *testing.T) {
+		fake := &fakeEntity{token: bytes.Repeat([]byte{0xab}, 32)}
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: fake})
+		want := make([]byte, 32)
+
+		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if !bytes.Equal(fake.token, want) {
+			t.Errorf("got %x, want %x", fake.token, want)
+		}
+	})
+
+	t.Run("an issued token forbids caching", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{token: make([]byte, 32)}})
+		want := "no-store"
+
+		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+
+		if got := rec.Header().Get("Cache-Control"); got != want {
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 }

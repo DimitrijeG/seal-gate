@@ -462,6 +462,40 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /entities/{id}/tokens:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The ID of the entity the token authenticates as.
+        schema:
+          $ref: "#/components/schemas/ID"
+
+    post:
+      operationId: createToken
+      tags: [entities]
+      summary: Issue a token for an entity.
+      description: >
+        Open until authentication exists. Takes no request body. The token in
+        the response is the only copy: the server stores only its hash.
+        Deleting the entity revokes it.
+      security: []
+      responses:
+        "201":
+          description: Issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   responses:
     BadRequest:
@@ -688,6 +722,16 @@ components:
       properties:
         id:
           $ref: "#/components/schemas/ID"
+      additionalProperties: false
+
+    CreateTokenResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          contentEncoding: base64
+          description: 32 bytes. Returned only here; it cannot be recovered later.
       additionalProperties: false
 
     ErrorResponse:
