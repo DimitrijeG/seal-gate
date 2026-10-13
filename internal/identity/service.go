@@ -58,10 +58,12 @@ func (s *Service) CreateToken(ctx context.Context, entityID string) ([]byte, err
 	}
 
 	err = s.tokens.Put(ctx, sha256.Sum256(token), entityID)
-	if err != nil && !ours(err) {
-		return nil, fmt.Errorf("identity: %w", err)
-	}
 	if err != nil {
+		// Never returned, so no caller can clear it.
+		clear(token)
+		if !ours(err) {
+			return nil, fmt.Errorf("identity: %w", err)
+		}
 		return nil, err
 	}
 	return token, nil
@@ -165,15 +167,12 @@ func (s *Service) UpdateEntity(ctx context.Context, entity Entity) error {
 		return err
 	}
 
-	_, err := s.entities.Get(ctx, entity.ID)
-	if err != nil && !ours(err) {
-		return fmt.Errorf("identity: %w", err)
-	}
-	if err != nil {
+	// GetEntity, not the repository: an entity that fails validation on read is not updated either.
+	if _, err := s.GetEntity(ctx, entity.ID); err != nil {
 		return err
 	}
 
-	err = s.entities.Put(ctx, entity)
+	err := s.entities.Put(ctx, entity)
 	if err != nil && !ours(err) {
 		return fmt.Errorf("identity: %w", err)
 	}

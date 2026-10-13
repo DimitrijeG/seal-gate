@@ -99,9 +99,10 @@ func (r *racingEntities) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-// fakeRandom fills each call's bytes with the call's number, starting at 1.
+// fakeRandom fills each call's bytes with the call's number, starting at 1, and keeps the last slice it returned.
 type fakeRandom struct {
 	calls byte
+	last  []byte
 	err   error
 }
 
@@ -110,7 +111,8 @@ func (r *fakeRandom) Bytes(n int) ([]byte, error) {
 		return nil, r.err
 	}
 	r.calls++
-	return bytes.Repeat([]byte{r.calls}, n), nil
+	r.last = bytes.Repeat([]byte{r.calls}, n)
+	return r.last, nil
 }
 
 const hexID = "0123456789abcdef0123456789abcdef"
@@ -495,6 +497,17 @@ func TestEntity(t *testing.T) {
 					t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
 				}
 			})
+		}
+	})
+
+	t.Run("a stored entity that fails validation cannot be updated", func(t *testing.T) {
+		s, entities, _ := newService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID, Policies: []string{"dev/ops"}}
+
+		err := s.UpdateEntity(t.Context(), identity.Entity{ID: hexID, Policies: []string{"ops"}})
+
+		if !errors.Is(err, identity.ErrUnreadableEntity) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
 		}
 	})
 

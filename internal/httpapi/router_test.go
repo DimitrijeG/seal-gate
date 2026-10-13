@@ -90,6 +90,7 @@ func TestRouter(t *testing.T) {
 			{"current segment", "/v1/secrets/db/./password"},
 			{"empty segment", "/v1/secrets/db//password"},
 			{"empty segment before the route", "/v1//secrets/db/password"},
+			{"parent segment up to the collection", "/v1/secrets/db/.."},
 		}
 
 		for _, tt := range tests {
@@ -139,6 +140,23 @@ func TestRouter(t *testing.T) {
 				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
 
 				rec := do(t, router, http.MethodPut, tt.target, devEntityJSON)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid entity ID")
+			})
+		}
+	})
+
+	t.Run("an unclean path that cleans to the entity collection is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment", "/v1/entities/" + entityID + "/.."},
+			{"empty segment before the route", "/v1//entities"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+
+				rec := do(t, router, http.MethodPost, tt.target, devEntityJSON)
 
 				assertError(t, rec, http.StatusBadRequest, "invalid entity ID")
 			})

@@ -281,6 +281,21 @@ func TestToken(t *testing.T) {
 		}
 	})
 
+	t.Run("a token that fails to store is cleared", func(t *testing.T) {
+		s, entities, tokens, random := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		tokens.err = identity.ErrSealed
+		want := make([]byte, 32)
+
+		if _, err := s.CreateToken(t.Context(), hexID); !errors.Is(err, identity.ErrSealed) {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		if !bytes.Equal(random.last, want) {
+			t.Errorf("got %x, want %x", random.last, want)
+		}
+	})
+
 	t.Run("a failed random source stores no token", func(t *testing.T) {
 		s, entities, tokens, random := newTokenService(t)
 		entities.entities[hexID] = identity.Entity{ID: hexID}

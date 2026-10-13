@@ -90,7 +90,8 @@ func (h *Handlers) refuseUncleanPaths(next http.Handler) http.Handler {
 		cleaned := path.Clean(r.URL.Path)
 		if cleaned != r.URL.Path {
 			for _, guarded := range uncleanPathErrors {
-				if strings.HasPrefix(cleaned, guarded.prefix) {
+				// The added slash also catches a path that cleans to the collection itself (/v1/entities/x/..).
+				if strings.HasPrefix(cleaned+"/", guarded.prefix) {
 					writeError(w, h.Logger, guarded.err)
 					return
 				}
