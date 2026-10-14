@@ -92,6 +92,29 @@ func TestRouter(t *testing.T) {
 		}
 	})
 
+	t.Run("an action path that is not in its clean form is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment under generate", "/v1/secrets/generate/db/../password"},
+			{"current segment under generate", "/v1/secrets/generate/db/./password"},
+			{"empty segment under generate", "/v1/secrets/generate/db//password"},
+			{"parent segment up to the generate route", "/v1/secrets/generate/.."},
+			{"parent segment under rotate", "/v1/secrets/rotate/db/../password"},
+			{"current segment under rotate", "/v1/secrets/rotate/db/./password"},
+			{"empty segment under rotate", "/v1/secrets/rotate/db//password"},
+			{"parent segment up to the rotate route", "/v1/secrets/rotate/.."},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
+
+				rec := do(t, router, http.MethodPost, tt.target, `{"length":32}`)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid secret path")
+			})
+		}
+	})
+
 	t.Run("a secret path that is not in its clean form is refused", func(t *testing.T) {
 		tests := []struct{ name, target string }{
 			{"parent segment", "/v1/secrets/db/../password"},

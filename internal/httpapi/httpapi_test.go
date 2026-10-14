@@ -138,12 +138,28 @@ type listBody struct {
 
 type fakeSecret struct {
 	principal  authorization.Principal // the last principal any method got
-	path       string                  // the last path Put, Get or Delete got
+	path       string                  // the last path any method but List got
 	putValue   []byte
 	getValue   []byte
 	listPrefix string
 	listPaths  []string
+	genLength  int
+	genValue   []byte
+	rotValue   []byte
 	err        error
+}
+
+func (f *fakeSecret) Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
+	f.principal = principal
+	f.path = path
+	return f.rotValue, f.err
+}
+
+func (f *fakeSecret) Generate(ctx context.Context, principal authorization.Principal, path string, length int) ([]byte, error) {
+	f.principal = principal
+	f.path = path
+	f.genLength = length
+	return f.genValue, f.err
 }
 
 func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal, path string, value []byte) error {
