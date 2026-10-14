@@ -361,9 +361,39 @@ func TestSecret(t *testing.T) {
 	t.Run("an invalid TTL from the service is a bad request", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: secret.ErrInvalidTTL}})
 
-		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":-1}`)
+		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI="}`)
 
 		assertError(t, rec, http.StatusBadRequest, "invalid TTL")
+	})
+
+	t.Run("a negative ttl is refused before the service", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			method string
+			target string
+			body   string
+		}{
+			{"put, minus one", http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":-1}`},
+			{"put, past the duration range", http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":-9223372037}`},
+			{"put, smallest int64", http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":-9223372036854775808}`},
+			{"generate, minus one", http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":-1}`},
+			{"generate, past the duration range", http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":-9223372037}`},
+			{"generate, smallest int64", http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":-9223372036854775808}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeSecret{genValue: make([]byte, 32)}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+				rec := do(t, router, tt.method, tt.target, tt.body)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid TTL")
+				if fake.path != "" {
+					t.Errorf("path: got %q, want the service not called", fake.path)
+				}
+			})
+		}
 	})
 
 	t.Run("a ttl too large to hold is refused before the service", func(t *testing.T) {

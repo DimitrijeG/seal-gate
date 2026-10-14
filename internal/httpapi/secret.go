@@ -12,9 +12,10 @@ import (
 // maxTTLSeconds is the longest ttl a time.Duration holds; past it, seconds times time.Second wraps.
 const maxTTLSeconds = math.MaxInt64 / int64(time.Second)
 
-// ttlFrom converts a request's ttl in seconds, refusing one too large to hold; a negative one is the service's to refuse.
+// ttlFrom converts a request's ttl in seconds, refusing it before multiplying when it is negative or too large to hold,
+// since either can wrap into a valid-looking duration.
 func ttlFrom(seconds int64) (time.Duration, error) {
-	if seconds > maxTTLSeconds {
+	if seconds < 0 || seconds > maxTTLSeconds {
 		return 0, errInvalidTTL
 	}
 	return time.Duration(seconds) * time.Second, nil
