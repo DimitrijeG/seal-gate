@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/dimitrijegasic/seal-gate/internal/audit"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/bolt"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
@@ -20,6 +22,7 @@ func TestApplication(t *testing.T) {
 			Storage: config.StorageConfig{Type: "bolt", Path: path},
 			Crypto:  config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
 			HTTP:    config.HTTPConfig{Address: "127.0.0.1:0", GracefulShutdown: time.Second},
+			Audit:   fileAudit(t),
 		}
 
 		application, err := Build(t.Context(), cfg)
@@ -49,6 +52,7 @@ func TestApplication(t *testing.T) {
 			Storage: config.StorageConfig{Type: "memory"},
 			Crypto:  config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
 			HTTP:    config.HTTPConfig{Address: "127.0.0.1:0", GracefulShutdown: time.Second},
+			Audit:   fileAudit(t),
 		}
 
 		application, err := Build(t.Context(), cfg)
@@ -125,6 +129,20 @@ func TestApplication(t *testing.T) {
 
 		if installed {
 			t.Errorf("got key installed %v, want false", installed)
+		}
+	})
+
+	t.Run("a build without audit sinks fails", func(t *testing.T) {
+		cfg := &config.Config{
+			Logger:  config.LoggerConfig{Level: "error", Format: "text"},
+			Storage: config.StorageConfig{Type: "memory"},
+			Crypto:  config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
+		}
+
+		_, err := Build(t.Context(), cfg)
+
+		if !errors.Is(err, audit.ErrNoSinks) {
+			t.Errorf("got %v, want %v", err, audit.ErrNoSinks)
 		}
 	})
 

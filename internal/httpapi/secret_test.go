@@ -18,7 +18,7 @@ import (
 func TestSecret(t *testing.T) {
 	t.Run("a written secret reaches the service decoded", func(t *testing.T) {
 		fake := &fakeSecret{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 
 		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI="}`)
 		if rec.Code != http.StatusNoContent {
@@ -32,7 +32,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("a read returns the value as base64", func(t *testing.T) {
 		fake := &fakeSecret{getValue: []byte{1, 2}}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 		want := "AQI="
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
@@ -47,7 +47,7 @@ func TestSecret(t *testing.T) {
 	})
 
 	t.Run("a read forbids caching", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{getValue: []byte{1, 2}}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{getValue: []byte{1, 2}}})
 		want := "no-store"
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
@@ -58,7 +58,7 @@ func TestSecret(t *testing.T) {
 	})
 
 	t.Run("a delete returns no content", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
 
 		rec := do(t, router, http.MethodDelete, "/v1/secrets/db/password", "")
 
@@ -85,7 +85,7 @@ func TestSecret(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeSecret{}
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 
 				do(t, router, tt.method, "/v1/secrets/"+want, tt.body)
 
@@ -109,11 +109,11 @@ func TestSecret(t *testing.T) {
 			{"list", http.MethodGet, "/v1/secrets?prefix=db/", ""},
 		}
 
-		want := authorization.NewPolicyPrincipal("dev")
+		want := authorization.NewEntityPrincipal(entityID, "dev")
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeSecret{}
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Secret: fake})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Secret: fake})
 
 				do(t, router, tt.method, tt.target, tt.body)
 
@@ -126,7 +126,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("a denied operation is forbidden", func(t *testing.T) {
 		denied := fmt.Errorf("secret: %w", authorization.ErrDenied)
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: denied}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: denied}})
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
 
@@ -148,7 +148,7 @@ func TestSecret(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: secret.ErrSealed}})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: secret.ErrSealed}})
 
 				rec := do(t, router, tt.method, tt.target, tt.body)
 
@@ -159,7 +159,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("a value of the maximum size is accepted", func(t *testing.T) {
 		fake := &fakeSecret{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 		value := base64.StdEncoding.EncodeToString(make([]byte, secret.MaxValueSize))
 
 		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"`+value+`"}`)
@@ -174,7 +174,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("an absent value stores an empty secret", func(t *testing.T) {
 		fake := &fakeSecret{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 
 		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{}`)
 		if rec.Code != http.StatusNoContent {
@@ -188,7 +188,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("an empty secret reads as an empty string", func(t *testing.T) {
 		fake := &fakeSecret{getValue: nil}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 		want := `{"value":""}`
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
@@ -205,7 +205,7 @@ func TestSecret(t *testing.T) {
 	t.Run("a listing returns the service's paths", func(t *testing.T) {
 		want := []string{"db/a", "db/b"}
 		fake := &fakeSecret{listPaths: want}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets?prefix=db/", "")
 		if rec.Code != http.StatusOK {
@@ -220,7 +220,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("a listing passes the prefix to the service", func(t *testing.T) {
 		fake := &fakeSecret{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 		want := "db/prod/"
 
 		do(t, router, http.MethodGet, "/v1/secrets?prefix="+want, "")
@@ -232,7 +232,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("a listing without a prefix lists everything", func(t *testing.T) {
 		fake := &fakeSecret{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets", "")
 		if rec.Code != http.StatusOK {
@@ -246,7 +246,7 @@ func TestSecret(t *testing.T) {
 
 	t.Run("an empty list is an empty array", func(t *testing.T) {
 		fake := &fakeSecret{listPaths: nil}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 		want := `{"paths":[]}`
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets", "")

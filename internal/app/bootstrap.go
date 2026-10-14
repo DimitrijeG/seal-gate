@@ -106,8 +106,10 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 	}
 }
 
-func buildRouter(services *services, logger *slog.Logger) http.Handler {
+func buildRouter(services *services, infra *infrastructure, auditor httpapi.Auditor) http.Handler {
 	return httpapi.NewRouter(&httpapi.Handlers{
+		Auditor:       auditor,
+		Clock:         infra.clock,
 		Authenticator: services.authenticator,
 		System:        services.system,
 		Secret:        services.secret,
@@ -115,10 +117,10 @@ func buildRouter(services *services, logger *slog.Logger) http.Handler {
 		Entity:        services.entity,
 		Token:         services.token,
 		Group:         services.group,
-		Logger:        logger,
+		Logger:        infra.logger,
 	})
 }
 
-func buildHTTP(cfg *config.Config, services *services, logger *slog.Logger) *httpapi.Server {
-	return httpapi.NewServer(cfg, buildRouter(services, logger), logger)
+func buildHTTP(cfg *config.Config, services *services, infra *infrastructure, auditor httpapi.Auditor) *httpapi.Server {
+	return httpapi.NewServer(cfg, buildRouter(services, infra, auditor), infra.logger)
 }

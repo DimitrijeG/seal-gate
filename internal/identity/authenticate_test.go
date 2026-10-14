@@ -60,8 +60,24 @@ func TestAuthenticate(t *testing.T) {
 			t.Fatalf("Authenticate: %v", err)
 		}
 
-		if want := authorization.NewPolicyPrincipal("dev", "ops"); !reflect.DeepEqual(got, want) {
+		if want := authorization.NewEntityPrincipal(hexID, "dev", "ops"); !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("an entity's token authenticates to a principal named by the entity", func(t *testing.T) {
+		a, entities, tokens, _ := newAuthenticator(t)
+		token := bytes.Repeat([]byte{1}, 32)
+		tokens.tokens[sha256.Sum256(token)] = hexID
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+
+		got, err := a.Authenticate(t.Context(), token)
+		if err != nil {
+			t.Fatalf("Authenticate: %v", err)
+		}
+
+		if got := got.Identity(); got != hexID {
+			t.Errorf("got %q, want %q", got, hexID)
 		}
 	})
 

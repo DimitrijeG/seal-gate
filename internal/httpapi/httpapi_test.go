@@ -9,8 +9,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/dimitrijegasic/seal-gate/internal/audit"
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
+	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -35,6 +38,36 @@ type statusBody struct {
 }
 
 // fakeAuthenticator accepts every token as principal unless err is set.
+type fakeAuditor struct {
+	events []audit.Event
+	errs   map[audit.Kind]error // what Record returns, per kind of event
+}
+
+func (f *fakeAuditor) Record(ctx context.Context, event audit.Event) error {
+	f.events = append(f.events, event)
+	return f.errs[event.Kind]
+}
+
+// fakeClock returns next, then moves it on a second, so two readings differ.
+type fakeClock struct{ next time.Time }
+
+func (c *fakeClock) Now() time.Time {
+	now := c.next
+	c.next = c.next.Add(time.Second)
+	return now
+}
+
+// newRouter fills in an auditor and a clock when a test does not care about them.
+func newRouter(h *httpapi.Handlers) http.Handler {
+	if h.Auditor == nil {
+		h.Auditor = &fakeAuditor{}
+	}
+	if h.Clock == nil {
+		h.Clock = &fakeClock{}
+	}
+	return httpapi.NewRouter(h)
+}
+
 type fakeAuthenticator struct {
 	token     []byte // a copy of the last token
 	given     []byte // the last token as given, to check it is cleared
@@ -66,6 +99,7 @@ type fakeSystem struct {
 	sealErr      error
 	statusResult system.Status
 	statusErr    error
+	statusCalls  int
 }
 
 func (f *fakeSystem) Init(ctx context.Context, cfg system.SealConfiguration) (system.InitResult, error) {
@@ -74,6 +108,7 @@ func (f *fakeSystem) Init(ctx context.Context, cfg system.SealConfiguration) (sy
 }
 
 func (f *fakeSystem) Status(ctx context.Context) (system.Status, error) {
+	f.statusCalls++
 	return f.statusResult, f.statusErr
 }
 
