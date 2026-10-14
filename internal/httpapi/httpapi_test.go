@@ -177,7 +177,8 @@ type createEntityBody struct {
 }
 
 type fakeEntity struct {
-	id        string // the last ID Get or Delete got
+	principal authorization.Principal // the last principal any method got
+	id        string                  // the last ID Get or Delete got
 	created   identity.Entity
 	createID  string
 	getEntity identity.Entity
@@ -185,33 +186,39 @@ type fakeEntity struct {
 	err       error
 }
 
-func (f *fakeEntity) CreateEntity(ctx context.Context, entity identity.Entity) (string, error) {
+func (f *fakeEntity) CreateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) (string, error) {
+	f.principal = principal
 	f.created = entity
 	return f.createID, f.err
 }
 
-func (f *fakeEntity) GetEntity(ctx context.Context, id string) (identity.Entity, error) {
+func (f *fakeEntity) GetEntity(ctx context.Context, principal authorization.Principal, id string) (identity.Entity, error) {
+	f.principal = principal
 	f.id = id
 	return f.getEntity, f.err
 }
 
-func (f *fakeEntity) UpdateEntity(ctx context.Context, entity identity.Entity) error {
+func (f *fakeEntity) UpdateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) error {
+	f.principal = principal
 	f.updated = entity
 	return f.err
 }
 
-func (f *fakeEntity) DeleteEntity(ctx context.Context, id string) error {
+func (f *fakeEntity) DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error {
+	f.principal = principal
 	f.id = id
 	return f.err
 }
 
 type fakeToken struct {
-	entityID string
-	token    []byte
-	err      error
+	principal authorization.Principal
+	entityID  string
+	token     []byte
+	err       error
 }
 
-func (f *fakeToken) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
+func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Principal, entityID string) ([]byte, error) {
+	f.principal = principal
 	f.entityID = entityID
 	return f.token, f.err
 }

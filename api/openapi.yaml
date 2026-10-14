@@ -399,7 +399,8 @@ paths:
       summary: Create an entity under a newly generated ID.
       description: >
         The server chooses the ID and never reuses one, so a deleted entity's
-        tokens can never authenticate again.
+        tokens can never authenticate again. Needs `create` on
+        `system/entities`.
       requestBody:
         required: true
         content:
@@ -417,6 +418,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -440,6 +443,8 @@ paths:
       operationId: getEntity
       tags: [entities]
       summary: Read an entity.
+      description: >
+        Needs `read` on `system/entities/<id>`.
       responses:
         "200":
           description: The entity's policies and groups.
@@ -451,6 +456,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -464,7 +471,7 @@ paths:
       summary: Replace an existing entity's policies and groups.
       description: >
         Never creates: an ID that does not exist is not found. The ID is taken
-        from the path only.
+        from the path only. Needs `update` on `system/entities/<id>`.
       requestBody:
         required: true
         content:
@@ -478,6 +485,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "413":
@@ -495,7 +504,8 @@ paths:
       tags: [entities]
       summary: Delete an entity, revoking its tokens.
       description: >
-        Idempotent: deleting a missing entity also succeeds.
+        Idempotent: deleting a missing entity also succeeds. Needs `delete`
+        on `system/entities/<id>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
@@ -503,6 +513,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -524,7 +536,8 @@ paths:
       description: >
         Takes no request body. The token in the response is the only copy: the
         server stores only its hash.
-        Deleting the entity revokes it.
+        Deleting the entity revokes it. Needs `create` on
+        `system/entities/<id>/tokens`.
       responses:
         "201":
           description: Issued.
@@ -536,6 +549,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":

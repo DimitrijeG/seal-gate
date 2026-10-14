@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
 )
@@ -150,6 +151,54 @@ func TestEntity(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("each operation passes the authenticated principal to the service", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			method string
+			path   string
+			body   string
+			got    func(e *fakeEntity, k *fakeToken) authorization.Principal
+		}{
+			{"get", http.MethodGet, "/v1/entities/" + entityID, "", func(e *fakeEntity, _ *fakeToken) authorization.Principal {
+				return e.principal
+			}},
+			{"create", http.MethodPost, "/v1/entities", devEntityJSON, func(e *fakeEntity, _ *fakeToken) authorization.Principal {
+				return e.principal
+			}},
+			{"update", http.MethodPut, "/v1/entities/" + entityID, devEntityJSON, func(e *fakeEntity, _ *fakeToken) authorization.Principal {
+				return e.principal
+			}},
+			{"delete", http.MethodDelete, "/v1/entities/" + entityID, "", func(e *fakeEntity, _ *fakeToken) authorization.Principal {
+				return e.principal
+			}},
+			{"issue token", http.MethodPost, "/v1/entities/" + entityID + "/tokens", "", func(_ *fakeEntity, k *fakeToken) authorization.Principal {
+				return k.principal
+			}},
+		}
+
+		want := authorization.NewPolicyPrincipal("dev")
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				entity, token := &fakeEntity{}, &fakeToken{token: make([]byte, 32)}
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Entity: entity, Token: token})
+
+				do(t, router, tt.method, tt.path, tt.body)
+
+				if got := tt.got(entity, token); !reflect.DeepEqual(got, want) {
+					t.Errorf("got %+v, want %+v", got, want)
+				}
+			})
+		}
+	})
+
+	t.Run("a denied operation is forbidden", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{err: authorization.ErrDenied}})
+
+		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
+
+		assertError(t, rec, http.StatusForbidden, "permission denied")
 	})
 
 	t.Run("each operation reports the service's error", func(t *testing.T) {

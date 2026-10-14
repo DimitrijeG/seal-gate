@@ -40,15 +40,15 @@ type PolicyService interface {
 
 // EntityService is entity storage as the handlers use it.
 type EntityService interface {
-	CreateEntity(ctx context.Context, entity identity.Entity) (string, error)
-	GetEntity(ctx context.Context, id string) (identity.Entity, error)
-	UpdateEntity(ctx context.Context, entity identity.Entity) error
-	DeleteEntity(ctx context.Context, id string) error
+	CreateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) (string, error)
+	GetEntity(ctx context.Context, principal authorization.Principal, id string) (identity.Entity, error)
+	UpdateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) error
+	DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error
 }
 
 // TokenService is token issuing as the handlers use it.
 type TokenService interface {
-	CreateToken(ctx context.Context, entityID string) ([]byte, error)
+	CreateToken(ctx context.Context, principal authorization.Principal, entityID string) ([]byte, error)
 }
 
 // GroupService is group storage as the handlers use it.
