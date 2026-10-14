@@ -12,7 +12,7 @@ import (
 
 func TestAuthentication(t *testing.T) {
 	t.Run("a request with no authorization header is unauthorized", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
 
 		rec := doWithAuthorization(t, router, "", http.MethodGet, "/v1/secrets/db/password", "")
 
@@ -32,7 +32,7 @@ func TestAuthentication(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{}})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{}})
 
 				rec := doWithAuthorization(t, router, "", tt.method, tt.path, tt.body)
 
@@ -52,7 +52,7 @@ func TestAuthentication(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
 
 				rec := doWithAuthorization(t, router, tt.authorization, http.MethodGet, "/v1/secrets/db/password", "")
 
@@ -62,7 +62,7 @@ func TestAuthentication(t *testing.T) {
 	})
 
 	t.Run("a token the authenticator rejects is unauthorized", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{
+		router := newRouter(&httpapi.Handlers{
 			Authenticator: &fakeAuthenticator{err: identity.ErrInvalidToken},
 			Secret:        &fakeSecret{},
 		})
@@ -74,7 +74,7 @@ func TestAuthentication(t *testing.T) {
 
 	t.Run("the authenticator gets the decoded token", func(t *testing.T) {
 		fake := &fakeAuthenticator{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: fake, Secret: &fakeSecret{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: fake, Secret: &fakeSecret{}})
 		want := []byte{1, 2, 3}
 
 		do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
@@ -86,7 +86,7 @@ func TestAuthentication(t *testing.T) {
 
 	t.Run("the token is cleared after authentication", func(t *testing.T) {
 		fake := &fakeAuthenticator{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: fake, Secret: &fakeSecret{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: fake, Secret: &fakeSecret{}})
 		want := make([]byte, 3)
 
 		do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
@@ -109,7 +109,7 @@ func TestAuthentication(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeSecret{}
-				router := httpapi.NewRouter(&httpapi.Handlers{
+				router := newRouter(&httpapi.Handlers{
 					Authenticator: &fakeAuthenticator{err: tt.err},
 					Secret:        fake,
 				})
@@ -136,7 +136,7 @@ func TestAuthentication(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{
+				router := newRouter(&httpapi.Handlers{
 					Authenticator: &fakeAuthenticator{err: tt.err},
 					Secret:        &fakeSecret{},
 				})
@@ -160,7 +160,7 @@ func TestAuthentication(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{
+				router := newRouter(&httpapi.Handlers{
 					Authenticator: &fakeAuthenticator{err: tt.err},
 					Secret:        &fakeSecret{},
 				})
@@ -176,7 +176,7 @@ func TestAuthentication(t *testing.T) {
 
 	t.Run("seal without a token is unauthorized", func(t *testing.T) {
 		fake := &fakeSystem{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: fake})
 
 		rec := doWithAuthorization(t, router, "", http.MethodPost, "/v1/sys/seal", "")
 
@@ -188,7 +188,7 @@ func TestAuthentication(t *testing.T) {
 
 	t.Run("the scheme is matched in any case", func(t *testing.T) {
 		fake := &fakeAuthenticator{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: fake, Secret: &fakeSecret{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: fake, Secret: &fakeSecret{}})
 		want := []byte{1, 2, 3}
 
 		doWithAuthorization(t, router, "bearer AQID", http.MethodGet, "/v1/secrets/db/password", "")

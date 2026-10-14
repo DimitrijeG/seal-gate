@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimitrijegasic/seal-gate/internal/audit"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
@@ -94,7 +95,20 @@ func routerOver(t *testing.T, backend storage.Backend) http.Handler {
 	}
 	infra.clock = fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
 	services := buildServices(infra, buildRepositories(backend, infra))
-	return buildRouter(services, infra.logger)
+
+	// A real file sink, so every cycle test is audited as production is.
+	a, dir := newAuditApplication(t)
+	destinations, err := a.auditDestinations(auditConfig(config.AuditSinkConfig{
+		Type: "file", Path: filepath.Join(dir, "audit.log"), Required: true, Timeout: time.Second,
+	}))
+	if err != nil {
+		t.Fatalf("auditDestinations: %v", err)
+	}
+	auditor, err := audit.New(infra.logger, destinations...)
+	if err != nil {
+		t.Fatalf("audit.New: %v", err)
+	}
+	return buildRouter(services, infra, auditor)
 }
 
 // The key is part of the stored format, so the test spells it out.

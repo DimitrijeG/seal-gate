@@ -16,7 +16,7 @@ import (
 func TestInit(t *testing.T) {
 	t.Run("init returns the shares as base64", func(t *testing.T) {
 		fake := &fakeSystem{initResult: system.InitResult{Shares: [][]byte{{1, 2}, {3, 4}}}}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 		want := []string{"AQI=", "AwQ="}
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":2,"threshold":2}`)
@@ -32,7 +32,7 @@ func TestInit(t *testing.T) {
 
 	t.Run("init returns the root token as base64", func(t *testing.T) {
 		fake := &fakeSystem{initResult: system.InitResult{RootToken: []byte{5, 6}}}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 		want := "BQY="
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":2,"threshold":2}`)
@@ -48,7 +48,7 @@ func TestInit(t *testing.T) {
 
 	t.Run("init passes the requested configuration to the service", func(t *testing.T) {
 		fake := &fakeSystem{}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 		want := system.SealConfiguration{Shares: 5, Threshold: 3}
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":5,"threshold":3}`)
@@ -75,7 +75,7 @@ func TestInit(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{initErr: tt.err}})
+				router := newRouter(&httpapi.Handlers{System: &fakeSystem{initErr: tt.err}})
 
 				rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":2,"threshold":2}`)
 
@@ -87,7 +87,7 @@ func TestInit(t *testing.T) {
 	t.Run("init clears the shares once they are written", func(t *testing.T) {
 		shares := [][]byte{{1, 2}, {3, 4}}
 		fake := &fakeSystem{initResult: system.InitResult{Shares: shares}}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":2,"threshold":2}`)
 		if rec.Code != http.StatusOK {
@@ -104,7 +104,7 @@ func TestInit(t *testing.T) {
 	t.Run("init clears the root token once it is written", func(t *testing.T) {
 		token := []byte{5, 6}
 		fake := &fakeSystem{initResult: system.InitResult{RootToken: token}}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/init", `{"shares":2,"threshold":2}`)
 		if rec.Code != http.StatusOK {
@@ -120,7 +120,7 @@ func TestInit(t *testing.T) {
 func TestUnseal(t *testing.T) {
 	t.Run("unseal passes the decoded share to the service", func(t *testing.T) {
 		fake := &fakeSystem{}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"share":"AQI="}`)
 		if rec.Code != http.StatusOK {
@@ -135,7 +135,7 @@ func TestUnseal(t *testing.T) {
 	t.Run("unseal returns the service's status", func(t *testing.T) {
 		status := system.Status{Initialized: true, Sealed: true, Config: system.SealConfiguration{Shares: 5, Threshold: 3}, Progress: 2}
 		fake := &fakeSystem{unsealResult: status}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 		want := statusBody{
 			Initialized: true,
 			Sealed:      true,
@@ -170,7 +170,7 @@ func TestUnseal(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{unsealErr: tt.err}})
+				router := newRouter(&httpapi.Handlers{System: &fakeSystem{unsealErr: tt.err}})
 
 				rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"share":"AQI="}`)
 
@@ -180,7 +180,7 @@ func TestUnseal(t *testing.T) {
 	})
 
 	t.Run("unseal rejects a share that is not base64", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{}})
+		router := newRouter(&httpapi.Handlers{System: &fakeSystem{}})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"share":"!!"}`)
 
@@ -200,7 +200,7 @@ func TestUnseal(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeSystem{unsealErr: tt.err}
-				router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+				router := newRouter(&httpapi.Handlers{System: fake})
 				// A fixed length, so a service never called (nil) cannot pass as cleared.
 				want := []byte{0, 0}
 
@@ -222,7 +222,7 @@ func TestUnseal(t *testing.T) {
 			unsealResult: system.Status{Initialized: true, Sealed: true, Progress: 2},
 			resetResult:  system.Status{Initialized: true, Sealed: true, Config: system.SealConfiguration{Shares: 5, Threshold: 3}},
 		}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 		want := statusBody{Initialized: true, Sealed: true, Shares: 5, Threshold: 3, Progress: 0}
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"reset":true}`)
@@ -250,7 +250,7 @@ func TestUnseal(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{resetErr: tt.err}})
+				router := newRouter(&httpapi.Handlers{System: &fakeSystem{resetErr: tt.err}})
 
 				rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"reset":true}`)
 
@@ -260,7 +260,7 @@ func TestUnseal(t *testing.T) {
 	})
 
 	t.Run("a share and a reset together are rejected", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{}})
+		router := newRouter(&httpapi.Handlers{System: &fakeSystem{}})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"share":"AQI=","reset":true}`)
 
@@ -269,7 +269,7 @@ func TestUnseal(t *testing.T) {
 
 	t.Run("a reset with an empty share is a reset", func(t *testing.T) {
 		fake := &fakeSystem{resetResult: system.Status{Initialized: true, Sealed: true}}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 		want := statusBody{Initialized: true, Sealed: true}
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/unseal", `{"share":"","reset":true}`)
@@ -286,7 +286,7 @@ func TestUnseal(t *testing.T) {
 
 func TestSeal(t *testing.T) {
 	t.Run("seal returns 204 with no body", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{}})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/seal", "")
 
@@ -303,7 +303,7 @@ func TestSeal(t *testing.T) {
 
 	t.Run("seal seals the service", func(t *testing.T) {
 		fake := &fakeSystem{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: fake})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/seal", "")
 		if rec.Code != http.StatusNoContent {
@@ -318,7 +318,7 @@ func TestSeal(t *testing.T) {
 	t.Run("seal passes the authenticated principal to the service", func(t *testing.T) {
 		fake := &fakeSystem{}
 		want := authorization.NewEntityPrincipal(entityID, "ops")
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, System: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, System: fake})
 
 		do(t, router, http.MethodPost, "/v1/sys/seal", "")
 
@@ -328,7 +328,7 @@ func TestSeal(t *testing.T) {
 	})
 
 	t.Run("a denied seal is forbidden", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{sealErr: authorization.ErrDenied}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{sealErr: authorization.ErrDenied}})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/seal", "")
 
@@ -339,7 +339,7 @@ func TestSeal(t *testing.T) {
 func TestStatus(t *testing.T) {
 	t.Run("status reports the service's state", func(t *testing.T) {
 		status := system.Status{Initialized: true, Sealed: true, Config: system.SealConfiguration{Shares: 5, Threshold: 3}, Progress: 2}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
+		router := newRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
 		want := statusBody{Initialized: true, Sealed: true, Shares: 5, Threshold: 3, Progress: 2}
 
 		rec := do(t, router, http.MethodGet, "/v1/sys/status", "")
@@ -355,7 +355,7 @@ func TestStatus(t *testing.T) {
 
 	t.Run("status before init omits shares and threshold", func(t *testing.T) {
 		status := system.Status{Sealed: true}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
+		router := newRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
 
 		rec := do(t, router, http.MethodGet, "/v1/sys/status", "")
 		if rec.Code != http.StatusOK {
@@ -373,7 +373,7 @@ func TestStatus(t *testing.T) {
 
 	t.Run("status hides a service failure behind a generic 500", func(t *testing.T) {
 		fake := &fakeSystem{statusErr: errors.New("bolt: data.db: permission denied")}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 
 		rec := do(t, router, http.MethodGet, "/v1/sys/status", "")
 
@@ -384,7 +384,7 @@ func TestStatus(t *testing.T) {
 func TestHealth(t *testing.T) {
 	t.Run("health is 204 when unsealed", func(t *testing.T) {
 		status := system.Status{Sealed: false}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
+		router := newRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: status}})
 
 		rec := do(t, router, http.MethodGet, "/v1/sys/health", "")
 		if rec.Code != http.StatusNoContent {
@@ -404,7 +404,7 @@ func TestHealth(t *testing.T) {
 		want := "the system is sealed"
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: tt.status}})
+				router := newRouter(&httpapi.Handlers{System: &fakeSystem{statusResult: tt.status}})
 
 				rec := do(t, router, http.MethodGet, "/v1/sys/health", "")
 
@@ -415,7 +415,7 @@ func TestHealth(t *testing.T) {
 
 	t.Run("health hides a service failure behind a generic 500", func(t *testing.T) {
 		fake := &fakeSystem{statusErr: errors.New("bolt: data.db: permission denied")}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := newRouter(&httpapi.Handlers{System: fake})
 
 		rec := do(t, router, http.MethodGet, "/v1/sys/health", "")
 

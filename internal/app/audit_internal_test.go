@@ -31,6 +31,14 @@ func auditConfig(sinks ...config.AuditSinkConfig) *config.Config {
 	return &config.Config{Audit: config.AuditConfig{Sinks: sinks}}
 }
 
+// fileAudit is one required file sink in a fresh directory, for a Build that must succeed.
+func fileAudit(t *testing.T) config.AuditConfig {
+	t.Helper()
+	return config.AuditConfig{Sinks: []config.AuditSinkConfig{
+		{Type: "file", Path: filepath.Join(t.TempDir(), "audit.log"), Required: true, Timeout: time.Second},
+	}}
+}
+
 func TestAuditDestinations(t *testing.T) {
 	t.Run("an opened sink closes with the application", func(t *testing.T) {
 		a, dir := newAuditApplication(t)

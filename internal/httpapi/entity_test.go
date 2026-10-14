@@ -22,7 +22,7 @@ const (
 func TestEntity(t *testing.T) {
 	t.Run("a created entity reaches the service with its policies and groups", func(t *testing.T) {
 		fake := &fakeEntity{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
 		want := identity.Entity{Policies: []string{"dev"}, Groups: []string{groupID}}
 
 		rec := do(t, router, http.MethodPost, "/v1/entities", devEntityJSON)
@@ -36,7 +36,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a create answers with the new ID", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{createID: entityID}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{createID: entityID}})
 
 		rec := do(t, router, http.MethodPost, "/v1/entities", devEntityJSON)
 		if rec.Code != http.StatusCreated {
@@ -50,7 +50,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a body naming the ID is refused", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{}})
 
 		rec := do(t, router, http.MethodPost, "/v1/entities", `{"id":"`+entityID+`","policies":[]}`)
 
@@ -59,7 +59,7 @@ func TestEntity(t *testing.T) {
 
 	t.Run("an empty object creates an entity without policies or groups", func(t *testing.T) {
 		fake := &fakeEntity{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
 
 		rec := do(t, router, http.MethodPost, "/v1/entities", `{}`)
 		if rec.Code != http.StatusCreated {
@@ -73,7 +73,7 @@ func TestEntity(t *testing.T) {
 
 	t.Run("a stored entity is returned with its policies and groups", func(t *testing.T) {
 		stored := identity.Entity{ID: entityID, Policies: []string{"dev"}, Groups: []string{groupID}}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{getEntity: stored}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{getEntity: stored}})
 		want := entityBody{Policies: []string{"dev"}, Groups: []string{groupID}}
 
 		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
@@ -88,7 +88,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an entity without policies or groups is returned with empty lists", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{getEntity: identity.Entity{ID: entityID}}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{getEntity: identity.Entity{ID: entityID}}})
 		want := `{"policies":[],"groups":[]}`
 
 		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
@@ -104,7 +104,7 @@ func TestEntity(t *testing.T) {
 
 	t.Run("an update reaches the service with the ID from the URL", func(t *testing.T) {
 		fake := &fakeEntity{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
 		want := identity.Entity{ID: entityID, Policies: []string{"dev"}, Groups: []string{groupID}}
 
 		rec := do(t, router, http.MethodPut, "/v1/entities/"+entityID, devEntityJSON)
@@ -118,7 +118,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a delete answers no content", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{}})
 
 		rec := do(t, router, http.MethodDelete, "/v1/entities/"+entityID, "")
 
@@ -142,7 +142,7 @@ func TestEntity(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeEntity{}
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
 
 				do(t, router, tt.method, "/v1/entities/"+entityID, "")
 
@@ -182,7 +182,7 @@ func TestEntity(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				entity, token := &fakeEntity{}, &fakeToken{token: make([]byte, 32)}
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Entity: entity, Token: token})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Entity: entity, Token: token})
 
 				do(t, router, tt.method, tt.path, tt.body)
 
@@ -194,7 +194,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a denied operation is forbidden", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{err: authorization.ErrDenied}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{err: authorization.ErrDenied}})
 
 		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
 
@@ -217,7 +217,7 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{
+				router := newRouter(&httpapi.Handlers{
 					Authenticator: &fakeAuthenticator{},
 					Entity:        &fakeEntity{err: identity.ErrSealed},
 					Token:         &fakeToken{err: identity.ErrSealed},
@@ -247,7 +247,7 @@ func TestEntity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{err: tt.err}})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{err: tt.err}})
 
 				rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
 
@@ -257,7 +257,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an issued token is returned in base64", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: bytes.Repeat([]byte{0xab}, 32)}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: bytes.Repeat([]byte{0xab}, 32)}})
 		// A copy: the handler clears the fake's slice once the response is written.
 		want := bytes.Repeat([]byte{0xab}, 32)
 
@@ -277,7 +277,7 @@ func TestEntity(t *testing.T) {
 
 	t.Run("a token is issued for the entity in the URL", func(t *testing.T) {
 		fake := &fakeToken{token: make([]byte, 32)}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
 
 		do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
 
@@ -288,7 +288,7 @@ func TestEntity(t *testing.T) {
 
 	t.Run("an issued token is cleared after the response is written", func(t *testing.T) {
 		fake := &fakeToken{token: bytes.Repeat([]byte{0xab}, 32)}
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
 		want := make([]byte, 32)
 
 		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
@@ -302,7 +302,7 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("an issued token forbids caching", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: make([]byte, 32)}})
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: make([]byte, 32)}})
 		want := "no-store"
 
 		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")

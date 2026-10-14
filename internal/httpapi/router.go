@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
+	"github.com/dimitrijegasic/seal-gate/internal/audit"
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
@@ -64,8 +66,20 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, token []byte) (authorization.Principal, error)
 }
 
+// Auditor records audit events; a failure to record a request event refuses that request.
+type Auditor interface {
+	Record(ctx context.Context, event audit.Event) error
+}
+
+// Clock is what audit events are stamped with.
+type Clock interface {
+	Now() time.Time
+}
+
 // Handlers holds what the HTTP handlers call.
 type Handlers struct {
+	Auditor       Auditor
+	Clock         Clock
 	Authenticator Authenticator
 	System        SystemService
 	Secret        SecretService
@@ -82,7 +96,7 @@ func NewRouter(h *Handlers) http.Handler {
 	// Open: they must work before any token exists, or while none can be checked.
 	mux.HandleFunc("POST /v1/sys/init", h.handleInit)
 	mux.HandleFunc("POST /v1/sys/unseal", h.handleUnseal)
-	mux.HandleFunc("GET /v1/sys/status", h.handleStatus)
+	mux.Handle("GET /v1/sys/status", h.audit(http.HandlerFunc(h.handleStatus)))
 	mux.HandleFunc("GET /v1/sys/health", h.handleHealth)
 
 	mux.Handle("POST /v1/sys/seal", h.authenticate(h.handleSeal))
