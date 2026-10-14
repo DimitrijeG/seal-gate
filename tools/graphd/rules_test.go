@@ -64,8 +64,8 @@ func TestLoadCatchesKnownViolations(t *testing.T) {
 	}
 
 	// storage/memory and cryptography import nothing, which once hid them.
-	if len(graph.Nodes) != 4 {
-		t.Errorf("got %d packages, want 4", len(graph.Nodes))
+	if len(graph.Nodes) != 5 {
+		t.Errorf("got %d packages, want 5", len(graph.Nodes))
 	}
 
 	type hit struct{ rule, from, to string }
@@ -77,6 +77,7 @@ func TestLoadCatchesKnownViolations(t *testing.T) {
 	want := []hit{
 		{"domain-no-infrastructure", "internal/system", "internal/cryptography"},
 		{"only-app-knows-backends", "internal/repository", "internal/storage/memory"},
+		{"only-app-knows-sinks", "internal/system", "internal/audit/file"},
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("violations:\n got  %v\n want %v", got, want)
@@ -114,8 +115,15 @@ func TestRulePredicates(t *testing.T) {
 		{"domain subpackage into repository subpackage", "internal/system/foo", "internal/repository/index", "domain-no-infrastructure"},
 		{"http into a barrier subpackage", "internal/httpapi", "internal/barrier/x", "httpapi-translates-only"},
 		{"crypto subpackage learning the domain", "internal/cryptography/codec", "internal/system", "leaves-stay-leaves"},
+		{"audit growing dependencies", "internal/audit", "internal/authorization", "leaves-stay-leaves"},
+		{"domain naming a sink", "internal/lifecycle", "internal/audit/file", "only-app-knows-sinks"},
+		{"http naming a sink", "internal/httpapi", "internal/audit/file", "only-app-knows-sinks"},
 
 		{"app naming a backend", "internal/app", "internal/storage/postgres", ""},
+		{"app naming a sink", "internal/app", "internal/audit/file", ""},
+		{"domain on audit", "internal/lifecycle", "internal/audit", ""},
+		{"http on audit", "internal/httpapi", "internal/audit", ""},
+		{"sink on audit", "internal/audit/file", "internal/audit", ""},
 		{"domain on domain", "internal/secret", "internal/authorization", ""},
 		{"repository on domain", "internal/repository", "internal/secret", ""},
 		{"barrier on the storage contract", "internal/barrier", "internal/storage", ""},
