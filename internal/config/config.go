@@ -3,6 +3,7 @@ package config
 
 import "time"
 
+// Config is the whole service configuration, as Load returns it.
 type Config struct {
 	Logger  LoggerConfig
 	Storage StorageConfig
@@ -11,20 +12,24 @@ type Config struct {
 	Audit   AuditConfig
 }
 
+// LoggerConfig sets the slog level ("debug", "info", "warn", "error") and the format ("text", else JSON).
 type LoggerConfig struct {
 	Level  string
 	Format string
 }
 
+// StorageConfig picks the backend ("memory" or "bolt") and, for bolt, its file.
 type StorageConfig struct {
 	Type string
 	Path string
 }
 
+// CryptoConfig names the AEAD that encrypts stored records and wraps the barrier key ("aes-256-gcm").
 type CryptoConfig struct {
 	AEADAlgorithm string
 }
 
+// HTTPConfig is the listen address, the http.Server timeouts, and the shutdown grace period.
 type HTTPConfig struct {
 	Address           string
 	ReadHeaderTimeout time.Duration
