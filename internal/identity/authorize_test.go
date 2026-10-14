@@ -170,6 +170,144 @@ func TestAuthorization(t *testing.T) {
 		}
 	})
 
+	t.Run("a denied group get never reaches the repository", func(t *testing.T) {
+		s, groups, _, authorizer := newAuthorizedGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID}
+		authorizer.err = authorization.ErrDenied
+
+		_, err := s.GetGroup(t.Context(), principal, hexID)
+
+		if !errors.Is(err, authorization.ErrDenied) {
+			t.Errorf("err: got %v, want %v", err, authorization.ErrDenied)
+		}
+		if groups.calls != 0 {
+			t.Errorf("calls: got %d, want 0", groups.calls)
+		}
+	})
+
+	t.Run("each group operation asks its capability on its resource", func(t *testing.T) {
+		tests := []struct {
+			name           string
+			call           func(ctx context.Context, s *identity.GroupService) error
+			wantResource   string
+			wantCapability authorization.Capability
+		}{
+			{"get", func(ctx context.Context, s *identity.GroupService) error {
+				_, err := s.GetGroup(ctx, principal, hexID)
+				return err
+			}, "system/groups/" + hexID, authorization.CapabilityRead},
+			{"create", func(ctx context.Context, s *identity.GroupService) error {
+				_, err := s.CreateGroup(ctx, principal, identity.Group{})
+				return err
+			}, "system/groups", authorization.CapabilityCreate},
+			{"delete", func(ctx context.Context, s *identity.GroupService) error {
+				return s.DeleteGroup(ctx, principal, hexID)
+			}, "system/groups/" + hexID, authorization.CapabilityDelete},
+			{"update", func(ctx context.Context, s *identity.GroupService) error {
+				return s.UpdateGroup(ctx, principal, identity.Group{ID: hexID})
+			}, "system/groups/" + hexID, authorization.CapabilityUpdate},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, groups, _, authorizer := newAuthorizedGroupService(t)
+				groups.groups[hexID] = identity.Group{ID: hexID}
+
+				_ = tt.call(t.Context(), s)
+
+				if authorizer.resource != tt.wantResource {
+					t.Errorf("resource: got %q, want %q", authorizer.resource, tt.wantResource)
+				}
+				if authorizer.capability != tt.wantCapability {
+					t.Errorf("capability: got %q, want %q", authorizer.capability, tt.wantCapability)
+				}
+			})
+		}
+	})
+
+	t.Run("the principal reaches the group authorizer", func(t *testing.T) {
+		for _, op := range groupOperations {
+			t.Run(op.name, func(t *testing.T) {
+				s, groups, _, authorizer := newAuthorizedGroupService(t)
+				groups.groups[hexID] = identity.Group{ID: hexID}
+
+				_ = op.call(t.Context(), s)
+
+				if !reflect.DeepEqual(authorizer.principal, principal) {
+					t.Errorf("got %+v, want %+v", authorizer.principal, principal)
+				}
+			})
+		}
+	})
+
+	t.Run("a denied group operation never reaches the repository", func(t *testing.T) {
+		for _, op := range groupOperations {
+			t.Run(op.name, func(t *testing.T) {
+				s, groups, _, authorizer := newAuthorizedGroupService(t)
+				groups.groups[hexID] = identity.Group{ID: hexID}
+				authorizer.err = authorization.ErrDenied
+
+				err := op.call(t.Context(), s)
+
+				if !errors.Is(err, authorization.ErrDenied) {
+					t.Errorf("err: got %v, want %v", err, authorization.ErrDenied)
+				}
+				if groups.calls != 0 {
+					t.Errorf("calls: got %d, want 0", groups.calls)
+				}
+			})
+		}
+	})
+
+	t.Run("effective policies read a group whatever the authorizer says", func(t *testing.T) {
+		s, groups, _, authorizer := newAuthorizedGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID, Policies: []string{"ops"}}
+		entity := identity.Entity{Groups: []string{hexID}}
+		want := []string{"ops"}
+		// EffectivePolicies runs during authentication, before any principal exists.
+		authorizer.err = authorization.ErrDenied
+
+		got, err := s.EffectivePolicies(t.Context(), entity)
+		if err != nil {
+			t.Fatalf("EffectivePolicies: %v", err)
+		}
+
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("an invalid group ID is refused before authorizing", func(t *testing.T) {
+		tests := []struct {
+			name string
+			call func(ctx context.Context, s *identity.GroupService) error
+		}{
+			{"get", func(ctx context.Context, s *identity.GroupService) error {
+				_, err := s.GetGroup(ctx, principal, "../dev")
+				return err
+			}},
+			{"update", func(ctx context.Context, s *identity.GroupService) error {
+				return s.UpdateGroup(ctx, principal, identity.Group{ID: "../dev"})
+			}},
+			{"delete", func(ctx context.Context, s *identity.GroupService) error {
+				return s.DeleteGroup(ctx, principal, "../dev")
+			}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, _, authorizer := newAuthorizedGroupService(t)
+				authorizer.err = authorization.ErrDenied
+
+				err := tt.call(t.Context(), s)
+
+				if !errors.Is(err, identity.ErrInvalidGroupID) {
+					t.Errorf("got %v, want %v", err, identity.ErrInvalidGroupID)
+				}
+			})
+		}
+	})
+
 	t.Run("an invalid ID is refused before authorizing", func(t *testing.T) {
 		tests := []struct {
 			name string

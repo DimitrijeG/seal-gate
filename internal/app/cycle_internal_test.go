@@ -475,6 +475,33 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a token is forbidden a group no rule grants", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/groups", `{}`)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+	})
+
+	t.Run("a token reads a group its policy grants", func(t *testing.T) {
+		router := unsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/groups", `{}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create group: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		groupID := decode[createGroupBody](t, rec).ID
+		token := entityToken(t, router, `[{"path":"system/groups/*","capabilities":["read"]}]`)
+
+		rec = send(t, withToken(router, token), http.MethodGet, "/v1/groups/"+groupID, "")
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+	})
+
 	t.Run("a secret written after unseal reads back", func(t *testing.T) {
 		router := unsealed(t)
 		want := "c2VjcmV0" // "secret"

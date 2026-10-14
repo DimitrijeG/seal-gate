@@ -566,7 +566,7 @@ paths:
       description: >
         The server chooses the ID and never reuses one, so a deleted group
         cannot come back and re-grant its policies to entities that still
-        name it.
+        name it. Needs `create` on `system/groups`.
       requestBody:
         required: true
         content:
@@ -584,6 +584,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -607,6 +609,8 @@ paths:
       operationId: getGroup
       tags: [groups]
       summary: Read a group.
+      description: >
+        Needs `read` on `system/groups/<id>`.
       responses:
         "200":
           description: The group's policies.
@@ -618,6 +622,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -631,7 +637,7 @@ paths:
       summary: Replace an existing group's policies.
       description: >
         Never creates: an ID that does not exist is not found. The ID is taken
-        from the path only.
+        from the path only. Needs `update` on `system/groups/<id>`.
       requestBody:
         required: true
         content:
@@ -645,6 +651,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "413":
@@ -663,7 +671,8 @@ paths:
       summary: Delete a group.
       description: >
         Idempotent: deleting a missing group also succeeds. Entities that name
-        it keep the ID, which grants nothing.
+        it keep the ID, which grants nothing. Needs `delete` on
+        `system/groups/<id>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
@@ -671,6 +680,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":

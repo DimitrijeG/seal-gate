@@ -53,10 +53,10 @@ type TokenService interface {
 
 // GroupService is group storage as the handlers use it.
 type GroupService interface {
-	CreateGroup(ctx context.Context, group identity.Group) (string, error)
-	GetGroup(ctx context.Context, id string) (identity.Group, error)
-	UpdateGroup(ctx context.Context, group identity.Group) error
-	DeleteGroup(ctx context.Context, id string) error
+	CreateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) (string, error)
+	GetGroup(ctx context.Context, principal authorization.Principal, id string) (identity.Group, error)
+	UpdateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) error
+	DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error
 }
 
 // Authenticator turns a request's token into the principal it acts as; an unknown token must be identity.ErrInvalidToken, as anything else is a 500.

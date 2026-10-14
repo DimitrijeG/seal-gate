@@ -236,30 +236,35 @@ type createGroupBody struct {
 }
 
 type fakeGroup struct {
-	id       string // the last ID Get or Delete got
-	created  identity.Group
-	createID string
-	getGroup identity.Group
-	updated  identity.Group
-	err      error
+	principal authorization.Principal // the last principal any method got
+	id        string                  // the last ID Get or Delete got
+	created   identity.Group
+	createID  string
+	getGroup  identity.Group
+	updated   identity.Group
+	err       error
 }
 
-func (f *fakeGroup) CreateGroup(ctx context.Context, group identity.Group) (string, error) {
+func (f *fakeGroup) CreateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) (string, error) {
+	f.principal = principal
 	f.created = group
 	return f.createID, f.err
 }
 
-func (f *fakeGroup) GetGroup(ctx context.Context, id string) (identity.Group, error) {
+func (f *fakeGroup) GetGroup(ctx context.Context, principal authorization.Principal, id string) (identity.Group, error) {
+	f.principal = principal
 	f.id = id
 	return f.getGroup, f.err
 }
 
-func (f *fakeGroup) UpdateGroup(ctx context.Context, group identity.Group) error {
+func (f *fakeGroup) UpdateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) error {
+	f.principal = principal
 	f.updated = group
 	return f.err
 }
 
-func (f *fakeGroup) DeleteGroup(ctx context.Context, id string) error {
+func (f *fakeGroup) DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error {
+	f.principal = principal
 	f.id = id
 	return f.err
 }

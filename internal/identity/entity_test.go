@@ -584,7 +584,7 @@ var validPolicyNames = []struct {
 	{"exactly 128 bytes", strings.Repeat("a", 128)},
 }
 
-// operations calls each service method with valid input, so only the repository can fail it.
+// operations calls each service method with valid input, so only the repository or the authorizer can fail it.
 var operations = []struct {
 	name string
 	call func(ctx context.Context, s *identity.EntityService) error
