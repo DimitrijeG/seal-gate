@@ -8,4 +8,6 @@ var (
 	ErrInvalidPath   = errors.New("secret: invalid path")
 	ErrValueTooLarge = errors.New("secret: value too large")
 	ErrSealed        = errors.New("secret: sealed")
+	ErrExists        = errors.New("secret: already exists")
+	ErrInvalidLength = errors.New("secret: invalid length")
 )

@@ -205,6 +205,58 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /secrets/generate/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: >
+          The new secret's path, under the same rules as `/secrets/{path}`.
+        schema:
+          type: string
+          maxLength: 256
+        example: db/password
+
+    post:
+      operationId: generateSecret
+      tags: [secrets]
+      summary: Create a secret of random bytes and return it once.
+      description: >
+        Refuses an existing path. Needs `create` on `secrets/<path>`. The
+        secret reads back like any other; a later `PUT` over it makes it an
+        ordinary stored secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+      responses:
+        "201":
+          description: Created; the value is not shown again by this call.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: A secret already exists at the path.
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 1024 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /secrets/{path}:
     parameters:
       - name: path
@@ -848,6 +900,17 @@ components:
           type: string
           contentEncoding: base64
           description: At most 65536 bytes once decoded. Absent stores an empty secret.
+      additionalProperties: false
+
+    GenerateRequest:
+      type: object
+      required: [length]
+      properties:
+        length:
+          type: integer
+          minimum: 16
+          maximum: 65536
+          description: How many random bytes to generate.
       additionalProperties: false
 
     SecretResponse:

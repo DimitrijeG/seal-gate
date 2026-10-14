@@ -118,6 +118,8 @@ var domainErrors = []struct {
 	{secret.ErrValueTooLarge, http.StatusRequestEntityTooLarge, "secret value is too large"},
 	{secret.ErrNotFound, http.StatusNotFound, "secret not found"},
 	{secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
+	{secret.ErrExists, http.StatusConflict, "secret already exists"},
+	{secret.ErrInvalidLength, http.StatusBadRequest, "invalid secret length"},
 
 	{authorization.ErrInvalidName, http.StatusBadRequest, "invalid policy name"},
 	{authorization.ErrInvalidRule, http.StatusBadRequest, "invalid policy rule"},

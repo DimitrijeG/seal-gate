@@ -63,6 +63,8 @@ func TestWriteError(t *testing.T) {
 			{"secret too large", secret.ErrValueTooLarge, http.StatusRequestEntityTooLarge, "secret value is too large"},
 			{"secret not found", secret.ErrNotFound, http.StatusNotFound, "secret not found"},
 			{"secret sealed", secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
+			{"secret exists", secret.ErrExists, http.StatusConflict, "secret already exists"},
+			{"invalid secret length", secret.ErrInvalidLength, http.StatusBadRequest, "invalid secret length"},
 		}
 
 		for _, tt := range tests {

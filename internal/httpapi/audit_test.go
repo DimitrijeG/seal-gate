@@ -204,6 +204,7 @@ func TestAudit(t *testing.T) {
 			{"PUT /v1/secrets/{path...}", "/v1/secrets/db/password"},
 			{"GET /v1/secrets/{path...}", "/v1/secrets/db/password"},
 			{"DELETE /v1/secrets/{path...}", "/v1/secrets/db/password"},
+			{"POST /v1/secrets/generate/{path...}", "/v1/secrets/generate/db/password"},
 			{"PUT /v1/policies/{name}", "/v1/policies/dev"},
 			{"GET /v1/policies/{name}", "/v1/policies/dev"},
 			{"DELETE /v1/policies/{name}", "/v1/policies/dev"},

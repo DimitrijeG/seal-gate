@@ -26,18 +26,20 @@ const (
 	secretPrefix = "secrets/"
 )
 
-// secretRecord is the stored layout; it changes only with its version.
+// secretRecord is the stored layout; an incompatible change bumps its version.
 type secretRecord struct {
 	Version int    `json:"version"`
 	Value   []byte `json:"value"`
+	// Optional, so records written before it decode unmarked.
+	Generated bool `json:"generated,omitempty"`
 }
 
 func secretKey(path string) string {
 	return secretPrefix + path
 }
 
-func (r *secretRepository) Put(ctx context.Context, path string, value []byte) error {
-	record := secretRecord{Version: secretRecordVersion, Value: value}
+func (r *secretRepository) Put(ctx context.Context, path string, entry secret.Entry) error {
+	record := secretRecord{Version: secretRecordVersion, Value: entry.Value, Generated: entry.Generated}
 	encoded, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("repository: %w", err)
@@ -53,22 +55,22 @@ func (r *secretRepository) Put(ctx context.Context, path string, value []byte) e
 	return nil
 }
 
-func (r *secretRepository) Get(ctx context.Context, path string) ([]byte, error) {
+func (r *secretRepository) Get(ctx context.Context, path string) (secret.Entry, error) {
 	encoded, err := r.encrypted.Get(ctx, secretKey(path))
 	switch {
 	case errors.Is(err, barrier.ErrSealed):
-		return nil, secret.ErrSealed
+		return secret.Entry{}, secret.ErrSealed
 	case errors.Is(err, storage.ErrNotFound):
-		return nil, secret.ErrNotFound
+		return secret.Entry{}, secret.ErrNotFound
 	case err != nil:
-		return nil, fmt.Errorf("repository: %w", err)
+		return secret.Entry{}, fmt.Errorf("repository: %w", err)
 	}
 
 	var record secretRecord
 	if err := json.Unmarshal(encoded, &record); err != nil {
-		return nil, fmt.Errorf("repository: %w", err)
+		return secret.Entry{}, fmt.Errorf("repository: %w", err)
 	}
-	return record.Value, nil
+	return secret.Entry{Value: record.Value, Generated: record.Generated}, nil
 }
 
 func (r *secretRepository) Delete(ctx context.Context, path string) error {

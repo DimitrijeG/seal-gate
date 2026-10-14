@@ -14,8 +14,9 @@ import (
 
 // storedSecret decodes the stored layout without the repository's own type.
 type storedSecret struct {
-	Version int    `json:"version"`
-	Value   []byte `json:"value"`
+	Version   int    `json:"version"`
+	Value     []byte `json:"value"`
+	Generated bool   `json:"generated"`
 }
 
 func TestSecretRepository(t *testing.T) {
@@ -25,7 +26,7 @@ func TestSecretRepository(t *testing.T) {
 		path := "db/password"
 		want := []byte("secret")
 
-		if err := repo.Put(t.Context(), path, want); err != nil {
+		if err := repo.Put(t.Context(), path, secret.Entry{Value: want}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		got, err := repo.Get(t.Context(), path)
@@ -33,8 +34,8 @@ func TestSecretRepository(t *testing.T) {
 			t.Fatalf("Get: %v", err)
 		}
 
-		if !bytes.Equal(got, want) {
-			t.Errorf("got %q, want %q", got, want)
+		if !bytes.Equal(got.Value, want) {
+			t.Errorf("got %q, want %q", got.Value, want)
 		}
 	})
 
@@ -43,7 +44,7 @@ func TestSecretRepository(t *testing.T) {
 		repo := f.set.Secret
 		plaintext := []byte("very secret value")
 
-		if err := repo.Put(t.Context(), "db/password", plaintext); err != nil {
+		if err := repo.Put(t.Context(), "db/password", secret.Entry{Value: plaintext}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		keys, err := f.backend.List(t.Context(), "")
@@ -81,7 +82,7 @@ func TestSecretRepository(t *testing.T) {
 				repo := f.set.Secret
 				value := []byte("secret")
 
-				if err := repo.Put(t.Context(), tt.path, value); err != nil {
+				if err := repo.Put(t.Context(), tt.path, secret.Entry{Value: value}); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
 				keys, err := f.backend.List(t.Context(), "")
@@ -101,7 +102,7 @@ func TestSecretRepository(t *testing.T) {
 		repo := f.set.Secret
 		value := []byte("very secret value")
 
-		if err := repo.Put(t.Context(), "db/password", value); err != nil {
+		if err := repo.Put(t.Context(), "db/password", secret.Entry{Value: value}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		data, err := f.encrypted.Get(t.Context(), "secrets/db/password")
@@ -121,6 +122,73 @@ func TestSecretRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("a generated secret reads back marked generated", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+		path := "db/password"
+
+		if err := repo.Put(t.Context(), path, secret.Entry{Value: []byte("secret"), Generated: true}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := repo.Get(t.Context(), path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.Generated {
+			t.Error("got unmarked, want generated")
+		}
+	})
+
+	t.Run("the stored record holds the mark as generated", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+
+		if err := repo.Put(t.Context(), "db/password", secret.Entry{Value: []byte("secret"), Generated: true}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		data, err := f.encrypted.Get(t.Context(), "secrets/db/password")
+		if err != nil {
+			t.Fatalf("barrier Get: %v", err)
+		}
+		var record storedSecret
+		if err := json.Unmarshal(data, &record); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+
+		if !record.Generated {
+			t.Error("got unmarked, want generated")
+		}
+	})
+
+	t.Run("a record written before the mark existed reads unmarked", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+		want := []byte("secret")
+		old, err := json.Marshal(struct {
+			Version int    `json:"version"`
+			Value   []byte `json:"value"`
+		}{1, want})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+
+		if err := f.encrypted.Put(t.Context(), "secrets/db/password", old); err != nil {
+			t.Fatalf("barrier Put: %v", err)
+		}
+		got, err := repo.Get(t.Context(), "db/password")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !bytes.Equal(got.Value, want) {
+			t.Errorf("Value: got %q, want %q", got.Value, want)
+		}
+		if got.Generated {
+			t.Error("Generated: got true, want false")
+		}
+	})
+
 	t.Run("a secret at a sys/ path leaves the system record intact", func(t *testing.T) {
 		f := newBarrierFixture(t)
 		want := newSystemState()
@@ -128,7 +196,7 @@ func TestSecretRepository(t *testing.T) {
 		value := []byte("overwrite")
 
 		mustSave(t, f.set.System, want)
-		if err := repo.Put(t.Context(), "sys/initialization", value); err != nil {
+		if err := repo.Put(t.Context(), "sys/initialization", secret.Entry{Value: value}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		got := mustLoad(t, f.set.System)
@@ -151,7 +219,7 @@ func TestSecretRepository(t *testing.T) {
 				f := newBarrierFixture(t)
 				repo := f.set.Secret
 
-				if err := repo.Put(t.Context(), path, tt.value); err != nil {
+				if err := repo.Put(t.Context(), path, secret.Entry{Value: tt.value}); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
 				got, err := repo.Get(t.Context(), path)
@@ -159,8 +227,8 @@ func TestSecretRepository(t *testing.T) {
 					t.Fatalf("Get: %v", err)
 				}
 
-				if len(got) != 0 {
-					t.Errorf("got %q, want empty", got)
+				if len(got.Value) != 0 {
+					t.Errorf("got %q, want empty", got.Value)
 				}
 			})
 		}
@@ -183,7 +251,7 @@ func TestSecretRepository(t *testing.T) {
 		path := "db/password"
 		value := []byte("secret")
 
-		if err := repo.Put(t.Context(), path, value); err != nil {
+		if err := repo.Put(t.Context(), path, secret.Entry{Value: value}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		if err := repo.Delete(t.Context(), path); err != nil {
@@ -203,7 +271,7 @@ func TestSecretRepository(t *testing.T) {
 		key := "secrets/db/password"
 		value := []byte("secret")
 
-		if err := repo.Put(t.Context(), path, value); err != nil {
+		if err := repo.Put(t.Context(), path, secret.Entry{Value: value}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		raw, err := f.backend.Get(t.Context(), key)
@@ -240,7 +308,7 @@ func TestSecretRepository(t *testing.T) {
 				// The system record must not show up as a secret.
 				mustSave(t, f.set.System, newSystemState())
 				for _, path := range []string{"api-key", "db/password", "db/user"} {
-					if err := repo.Put(t.Context(), path, value); err != nil {
+					if err := repo.Put(t.Context(), path, secret.Entry{Value: value}); err != nil {
 						t.Fatalf("Put: %v", err)
 					}
 				}
@@ -264,7 +332,7 @@ func TestSecretRepository(t *testing.T) {
 			fn   func(*testing.T, *repository.Set) error
 		}{
 			{"put", func(t *testing.T, set *repository.Set) error {
-				return set.Secret.Put(t.Context(), path, value)
+				return set.Secret.Put(t.Context(), path, secret.Entry{Value: value})
 			}},
 			{"get", func(t *testing.T, set *repository.Set) error {
 				_, err := set.Secret.Get(t.Context(), path)
@@ -282,7 +350,7 @@ func TestSecretRepository(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newBarrierFixture(t)
-				if err := f.set.Secret.Put(t.Context(), path, value); err != nil {
+				if err := f.set.Secret.Put(t.Context(), path, secret.Entry{Value: value}); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
 				f.keys.Clear()
