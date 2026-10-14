@@ -58,7 +58,7 @@ func TestAuthorization(t *testing.T) {
 				return s.Put(ctx, principal, "existing", []byte("secret"), 0)
 			}, "secrets/existing", authorization.CapabilityUpdate},
 			{"generate", func(ctx context.Context, s *secret.Service) error {
-				_, err := s.Generate(ctx, principal, "db/password", 32)
+				_, err := s.Generate(ctx, principal, "db/password", 32, 0)
 				return err
 			}, "secrets/db/password", authorization.CapabilityCreate},
 			{"rotate", func(ctx context.Context, s *secret.Service) error {
@@ -111,7 +111,7 @@ func TestAuthorization(t *testing.T) {
 				return err
 			}},
 			{"generate", func(ctx context.Context, s *secret.Service) error {
-				_, err := s.Generate(ctx, principal, "db/password", 32)
+				_, err := s.Generate(ctx, principal, "db/password", 32, 0)
 				return err
 			}},
 			{"rotate", func(ctx context.Context, s *secret.Service) error {
@@ -163,6 +163,22 @@ func TestAuthorization(t *testing.T) {
 		}
 		if authorizer.calls != 0 {
 			t.Errorf("calls: got %d, want 0", authorizer.calls)
+		}
+	})
+
+	t.Run("a put over an expired stored secret asks create", func(t *testing.T) {
+		f := newFixture(t)
+		if err := f.service.Put(t.Context(), principal, "db/password", []byte("old"), time.Hour); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		f.clock.now = f.clock.now.Add(time.Hour)
+
+		if err := f.service.Put(t.Context(), principal, "db/password", []byte("new"), 0); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+
+		if f.authorizer.capability != authorization.CapabilityCreate {
+			t.Errorf("got %q, want %q", f.authorizer.capability, authorization.CapabilityCreate)
 		}
 	})
 

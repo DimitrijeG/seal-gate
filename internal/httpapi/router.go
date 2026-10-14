@@ -31,7 +31,7 @@ type SecretService interface {
 	Get(ctx context.Context, principal authorization.Principal, path string) (secret.Entry, error)
 	Delete(ctx context.Context, principal authorization.Principal, path string) error
 	List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error)
-	Generate(ctx context.Context, principal authorization.Principal, path string, length int) ([]byte, error)
+	Generate(ctx context.Context, principal authorization.Principal, path string, length int, ttl time.Duration) ([]byte, error)
 	Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error)
 }
 

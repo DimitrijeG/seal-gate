@@ -82,7 +82,7 @@ func (h *Handlers) handleGenerateSecret(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	value, err := h.Secret.Generate(r.Context(), principalFrom(r), path, req.Length)
+	value, err := h.Secret.Generate(r.Context(), principalFrom(r), path, req.Length, 0)
 	// Deferred before the error check: cleared after the response is written, whatever Generate returned.
 	defer clear(value)
 	if err != nil {

@@ -156,7 +156,7 @@ func (f *fakeSecret) Rotate(ctx context.Context, principal authorization.Princip
 	return f.rotValue, f.err
 }
 
-func (f *fakeSecret) Generate(ctx context.Context, principal authorization.Principal, path string, length int) ([]byte, error) {
+func (f *fakeSecret) Generate(ctx context.Context, principal authorization.Principal, path string, length int, _ time.Duration) ([]byte, error) {
 	f.principal = principal
 	f.path = path
 	f.genLength = length

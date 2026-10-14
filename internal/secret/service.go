@@ -27,12 +27,13 @@ type Entry struct {
 	Generated bool
 	// TTL is kept so each rotation can set the next expiry; zero is none.
 	TTL time.Duration
-	// ExpiresAt is when a stored secret stops reading; zero is never.
+	// ExpiresAt is when a stored secret stops reading, or a generated one is due for rotation; zero is never.
 	ExpiresAt time.Time
 }
 
+// expired holds for a stored secret past its lifetime; a generated one past its expiry is due for rotation instead.
 func (e Entry) expired(now time.Time) bool {
-	return !e.ExpiresAt.IsZero() && !now.Before(e.ExpiresAt)
+	return !e.Generated && !e.ExpiresAt.IsZero() && !now.Before(e.ExpiresAt)
 }
 
 // Repository stores secrets by path. Get returns an entry the caller owns, or ErrNotFound for a missing path, and
@@ -86,7 +87,7 @@ func (s *Service) Put(ctx context.Context, principal authorization.Principal, pa
 	defer s.mu.Unlock()
 
 	capability := authorization.CapabilityUpdate
-	old, err := s.repo.Get(ctx, path)
+	old, err := s.current(ctx, path)
 	clear(old.Value)
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -101,11 +102,7 @@ func (s *Service) Put(ctx context.Context, principal authorization.Principal, pa
 		return fmt.Errorf("secret: %w", err)
 	}
 
-	var expiresAt time.Time
-	if ttl > 0 {
-		expiresAt = s.clock.Now().Add(ttl)
-	}
-	err = s.repo.Put(ctx, path, Entry{Value: value, TTL: ttl, ExpiresAt: expiresAt})
+	err = s.repo.Put(ctx, path, Entry{Value: value, TTL: ttl, ExpiresAt: s.expiry(ttl)})
 	if err != nil && !errors.Is(err, ErrSealed) {
 		return fmt.Errorf("secret: %w", err)
 	}
@@ -121,24 +118,24 @@ func (s *Service) Get(ctx context.Context, principal authorization.Principal, pa
 		return Entry{}, fmt.Errorf("secret: %w", err)
 	}
 
-	entry, err := s.repo.Get(ctx, path)
+	entry, err := s.current(ctx, path)
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrSealed) {
 		return Entry{}, fmt.Errorf("secret: %w", err)
-	}
-	if err == nil && entry.expired(s.clock.Now()) {
-		clear(entry.Value)
-		return Entry{}, ErrNotFound
 	}
 	return entry, err
 }
 
-// Generate creates a secret of length random bytes at path, marked generated, and returns its value; an existing path is ErrExists.
-func (s *Service) Generate(ctx context.Context, principal authorization.Principal, path string, length int) ([]byte, error) {
+// Generate creates a secret of length random bytes at path, marked generated and due for rotation every ttl (zero is
+// never), and returns its value; an existing path is ErrExists.
+func (s *Service) Generate(ctx context.Context, principal authorization.Principal, path string, length int, ttl time.Duration) ([]byte, error) {
 	if !validPath(path) {
 		return nil, ErrInvalidPath
 	}
 	if length < MinGeneratedLength || length > MaxValueSize {
 		return nil, ErrInvalidLength
+	}
+	if ttl < 0 {
+		return nil, ErrInvalidTTL
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,7 +145,7 @@ func (s *Service) Generate(ctx context.Context, principal authorization.Principa
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 
-	old, err := s.repo.Get(ctx, path)
+	old, err := s.current(ctx, path)
 	clear(old.Value)
 	switch {
 	case err == nil:
@@ -159,17 +156,17 @@ func (s *Service) Generate(ctx context.Context, principal authorization.Principa
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 
-	return s.storeGenerated(ctx, path, length)
+	return s.storeGenerated(ctx, path, length, ttl)
 }
 
-// storeGenerated draws length random bytes and stores them at path, marked generated; the caller holds mu.
-func (s *Service) storeGenerated(ctx context.Context, path string, length int) ([]byte, error) {
+// storeGenerated draws length random bytes and stores them at path, marked generated and due after ttl; the caller holds mu.
+func (s *Service) storeGenerated(ctx context.Context, path string, length int, ttl time.Duration) ([]byte, error) {
 	value, err := s.random.Bytes(length)
 	if err != nil {
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 
-	err = s.repo.Put(ctx, path, Entry{Value: value, Generated: true})
+	err = s.repo.Put(ctx, path, Entry{Value: value, Generated: true, TTL: ttl, ExpiresAt: s.expiry(ttl)})
 	switch {
 	case errors.Is(err, ErrSealed):
 		clear(value)
@@ -181,8 +178,8 @@ func (s *Service) storeGenerated(ctx context.Context, path string, length int) (
 	return value, nil
 }
 
-// Rotate replaces a generated secret with fresh random bytes of its length and returns them; a secret not generated is
-// ErrNotRotatable.
+// Rotate replaces a generated secret with fresh random bytes of its length, due again one TTL from now, and returns
+// them; a secret not generated is ErrNotRotatable.
 func (s *Service) Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
 	if !validPath(path) {
 		return nil, ErrInvalidPath
@@ -195,7 +192,7 @@ func (s *Service) Rotate(ctx context.Context, principal authorization.Principal,
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 
-	old, err := s.repo.Get(ctx, path)
+	old, err := s.current(ctx, path)
 	switch {
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrSealed):
 		return nil, err
@@ -208,7 +205,25 @@ func (s *Service) Rotate(ctx context.Context, principal authorization.Principal,
 		return nil, ErrNotRotatable
 	}
 
-	return s.storeGenerated(ctx, path, length)
+	return s.storeGenerated(ctx, path, length, old.TTL)
+}
+
+// current reads the secret at path as the repository does, except that an expired one is ErrNotFound.
+func (s *Service) current(ctx context.Context, path string) (Entry, error) {
+	entry, err := s.repo.Get(ctx, path)
+	if err == nil && entry.expired(s.clock.Now()) {
+		clear(entry.Value)
+		return Entry{}, ErrNotFound
+	}
+	return entry, err
+}
+
+// expiry is when a secret written now with ttl expires; zero for no ttl.
+func (s *Service) expiry(ttl time.Duration) time.Time {
+	if ttl <= 0 {
+		return time.Time{}
+	}
+	return s.clock.Now().Add(ttl)
 }
 
 // Delete removes the secret at path; a missing path is not an error.
@@ -247,10 +262,9 @@ func (s *Service) List(ctx context.Context, principal authorization.Principal, p
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 
-	now := s.clock.Now()
 	live := make([]string, 0, len(paths))
 	for _, path := range paths {
-		entry, err := s.repo.Get(ctx, path)
+		entry, err := s.current(ctx, path)
 		clear(entry.Value)
 		switch {
 		case errors.Is(err, ErrNotFound):
@@ -260,9 +274,7 @@ func (s *Service) List(ctx context.Context, principal authorization.Principal, p
 		case err != nil:
 			return nil, fmt.Errorf("secret: %w", err)
 		}
-		if !entry.expired(now) {
-			live = append(live, path)
-		}
+		live = append(live, path)
 	}
 	return live, nil
 }
