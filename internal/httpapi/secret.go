@@ -2,16 +2,31 @@ package httpapi
 
 import (
 	"encoding/base64"
+	"math"
 	"net/http"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 )
+
+// maxTTLSeconds is the longest ttl a time.Duration holds; past it, seconds times time.Second wraps.
+const maxTTLSeconds = math.MaxInt64 / int64(time.Second)
+
+// ttlFrom converts a request's ttl in seconds, refusing it before multiplying when it is negative or too large to hold,
+// since either can wrap into a valid-looking duration.
+func ttlFrom(seconds int64) (time.Duration, error) {
+	if seconds < 0 || seconds > maxTTLSeconds {
+		return 0, errInvalidTTL
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
 
 // secretBodyLimit leaves room for the largest value in base64 plus the JSON around it.
 var secretBodyLimit = int64(base64.StdEncoding.EncodedLen(secret.MaxValueSize) + 1<<10)
 
 type secretRequest struct {
 	Value []byte `json:"value"`
+	TTL   int64  `json:"ttl"`
 }
 
 func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +38,13 @@ func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Secret.Put(r.Context(), principalFrom(r), path, req.Value); err != nil {
+	ttl, err := ttlFrom(req.TTL)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	if err := h.Secret.Put(r.Context(), principalFrom(r), path, req.Value, ttl); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -32,18 +53,20 @@ func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 type secretResponse struct {
-	Value []byte `json:"value"`
+	Value     []byte    `json:"value"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
-	value, err := h.Secret.Get(r.Context(), principalFrom(r), path)
+	entry, err := h.Secret.Get(r.Context(), principalFrom(r), path)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
 
+	value := entry.Value
 	// A nil slice encodes as null; the spec's value is a string.
 	if value == nil {
 		value = []byte{}
@@ -51,6 +74,8 @@ func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, secretResponse{
 		Value: value,
+		// The real clock reads local time; the spec promises UTC.
+		ExpiresAt: entry.ExpiresAt.UTC(),
 	})
 }
 
@@ -69,7 +94,8 @@ func (h *Handlers) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 const generateBodyLimit = 1 << 10
 
 type generateRequest struct {
-	Length int `json:"length"`
+	Length int   `json:"length"`
+	TTL    int64 `json:"ttl"`
 }
 
 func (h *Handlers) handleGenerateSecret(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +107,13 @@ func (h *Handlers) handleGenerateSecret(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	value, err := h.Secret.Generate(r.Context(), principalFrom(r), path, req.Length)
+	ttl, err := ttlFrom(req.TTL)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	value, err := h.Secret.Generate(r.Context(), principalFrom(r), path, req.Length, ttl)
 	// Deferred before the error check: cleared after the response is written, whatever Generate returned.
 	defer clear(value)
 	if err != nil {

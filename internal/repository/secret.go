@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/barrier"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
@@ -30,8 +31,10 @@ const (
 type secretRecord struct {
 	Version int    `json:"version"`
 	Value   []byte `json:"value"`
-	// Optional, so records written before it decode unmarked.
-	Generated bool `json:"generated,omitempty"`
+	// Optional, so records written before them decode unmarked and with no TTL.
+	Generated bool          `json:"generated,omitempty"`
+	TTL       time.Duration `json:"ttl,omitzero"`
+	ExpiresAt time.Time     `json:"expires_at,omitzero"`
 }
 
 func secretKey(path string) string {
@@ -39,7 +42,13 @@ func secretKey(path string) string {
 }
 
 func (r *secretRepository) Put(ctx context.Context, path string, entry secret.Entry) error {
-	record := secretRecord{Version: secretRecordVersion, Value: entry.Value, Generated: entry.Generated}
+	record := secretRecord{
+		Version:   secretRecordVersion,
+		Value:     entry.Value,
+		Generated: entry.Generated,
+		TTL:       entry.TTL,
+		ExpiresAt: entry.ExpiresAt,
+	}
 	encoded, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("repository: %w", err)
@@ -70,7 +79,12 @@ func (r *secretRepository) Get(ctx context.Context, path string) (secret.Entry, 
 	if err := json.Unmarshal(encoded, &record); err != nil {
 		return secret.Entry{}, fmt.Errorf("repository: %w", err)
 	}
-	return secret.Entry{Value: record.Value, Generated: record.Generated}, nil
+	return secret.Entry{
+		Value:     record.Value,
+		Generated: record.Generated,
+		TTL:       record.TTL,
+		ExpiresAt: record.ExpiresAt,
+	}, nil
 }
 
 func (r *secretRepository) Delete(ctx context.Context, path string) error {
