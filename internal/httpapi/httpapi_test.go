@@ -15,6 +15,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
+	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
 
@@ -162,17 +163,17 @@ func (f *fakeSecret) Generate(ctx context.Context, principal authorization.Princ
 	return f.genValue, f.err
 }
 
-func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal, path string, value []byte) error {
+func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal, path string, value []byte, _ time.Duration) error {
 	f.principal = principal
 	f.path = path
 	f.putValue = bytes.Clone(value)
 	return f.err
 }
 
-func (f *fakeSecret) Get(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
+func (f *fakeSecret) Get(ctx context.Context, principal authorization.Principal, path string) (secret.Entry, error) {
 	f.principal = principal
 	f.path = path
-	return f.getValue, f.err
+	return secret.Entry{Value: f.getValue}, f.err
 }
 
 func (f *fakeSecret) Delete(ctx context.Context, principal authorization.Principal, path string) error {

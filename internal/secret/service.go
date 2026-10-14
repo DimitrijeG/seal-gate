@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 )
@@ -24,6 +25,14 @@ type Entry struct {
 	Value []byte
 	// Generated marks a value seal-gate drew itself, so it knows the shape to rotate it to.
 	Generated bool
+	// TTL is kept so each rotation can set the next expiry; zero is none.
+	TTL time.Duration
+	// ExpiresAt is when a stored secret stops reading; zero is never.
+	ExpiresAt time.Time
+}
+
+func (e Entry) expired(now time.Time) bool {
+	return !e.ExpiresAt.IsZero() && !now.Before(e.ExpiresAt)
 }
 
 // Repository stores secrets by path. Get returns an entry the caller owns, or ErrNotFound for a missing path, and
@@ -33,6 +42,11 @@ type Repository interface {
 	Get(ctx context.Context, path string) (Entry, error)
 	Delete(ctx context.Context, path string) error
 	List(ctx context.Context, prefix string) ([]string, error)
+}
+
+// Clock is the time expiry is computed and checked against, so tests can fix it.
+type Clock interface {
+	Now() time.Time
 }
 
 // Random is a source of cryptographically secure random bytes.
@@ -48,20 +62,25 @@ type Service struct {
 	repo       Repository
 	random     Random
 	authorizer authorization.Authorizer
+	clock      Clock
 }
 
 // New returns a Service over repo that draws generated values from random and asks authorizer before every operation.
-func New(repo Repository, random Random, authorizer authorization.Authorizer) *Service {
-	return &Service{repo: repo, random: random, authorizer: authorizer}
+func New(repo Repository, random Random, authorizer authorization.Authorizer, clock Clock) *Service {
+	return &Service{repo: repo, random: random, authorizer: authorizer, clock: clock}
 }
 
-// Put stores value at path, replacing any secret already there; it asks create when path is missing, update when it exists.
-func (s *Service) Put(ctx context.Context, principal authorization.Principal, path string, value []byte) error {
+// Put stores value at path for ttl, zero meaning no expiry, replacing any secret already there; it asks create when
+// path is missing, update when it exists.
+func (s *Service) Put(ctx context.Context, principal authorization.Principal, path string, value []byte, ttl time.Duration) error {
 	if !validPath(path) {
 		return ErrInvalidPath
 	}
 	if len(value) > MaxValueSize {
 		return ErrValueTooLarge
+	}
+	if ttl < 0 {
+		return ErrInvalidTTL
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -82,27 +101,35 @@ func (s *Service) Put(ctx context.Context, principal authorization.Principal, pa
 		return fmt.Errorf("secret: %w", err)
 	}
 
-	err = s.repo.Put(ctx, path, Entry{Value: value})
+	var expiresAt time.Time
+	if ttl > 0 {
+		expiresAt = s.clock.Now().Add(ttl)
+	}
+	err = s.repo.Put(ctx, path, Entry{Value: value, TTL: ttl, ExpiresAt: expiresAt})
 	if err != nil && !errors.Is(err, ErrSealed) {
 		return fmt.Errorf("secret: %w", err)
 	}
 	return err
 }
 
-// Get returns the value at path, or ErrNotFound if there is none.
-func (s *Service) Get(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
+// Get returns the secret at path; a missing or expired one is ErrNotFound.
+func (s *Service) Get(ctx context.Context, principal authorization.Principal, path string) (Entry, error) {
 	if !validPath(path) {
-		return nil, ErrInvalidPath
+		return Entry{}, ErrInvalidPath
 	}
 	if err := s.authorizer.Authorize(ctx, principal, resourcePrefix+path, authorization.CapabilityRead); err != nil {
-		return nil, fmt.Errorf("secret: %w", err)
+		return Entry{}, fmt.Errorf("secret: %w", err)
 	}
 
 	entry, err := s.repo.Get(ctx, path)
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrSealed) {
-		return nil, fmt.Errorf("secret: %w", err)
+		return Entry{}, fmt.Errorf("secret: %w", err)
 	}
-	return entry.Value, err
+	if err == nil && entry.expired(s.clock.Now()) {
+		clear(entry.Value)
+		return Entry{}, ErrNotFound
+	}
+	return entry, err
 }
 
 // Generate creates a secret of length random bytes at path, marked generated, and returns its value; an existing path is ErrExists.
@@ -203,7 +230,7 @@ func (s *Service) Delete(ctx context.Context, principal authorization.Principal,
 	return err
 }
 
-// List returns the full paths under prefix, sorted; prefix is "" or a valid path ending in '/'.
+// List returns the full paths under prefix that have not expired, sorted; prefix is "" or a valid path ending in '/'.
 func (s *Service) List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error) {
 	if !validPrefix(prefix) {
 		return nil, ErrInvalidPath
@@ -213,8 +240,29 @@ func (s *Service) List(ctx context.Context, principal authorization.Principal, p
 	}
 
 	paths, err := s.repo.List(ctx, prefix)
-	if err != nil && !errors.Is(err, ErrSealed) {
+	switch {
+	case errors.Is(err, ErrSealed):
+		return nil, err
+	case err != nil:
 		return nil, fmt.Errorf("secret: %w", err)
 	}
-	return paths, err
+
+	now := s.clock.Now()
+	live := make([]string, 0, len(paths))
+	for _, path := range paths {
+		entry, err := s.repo.Get(ctx, path)
+		clear(entry.Value)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			continue
+		case errors.Is(err, ErrSealed):
+			return nil, err
+		case err != nil:
+			return nil, fmt.Errorf("secret: %w", err)
+		}
+		if !entry.expired(now) {
+			live = append(live, path)
+		}
+	}
+	return live, nil
 }

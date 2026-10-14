@@ -52,10 +52,10 @@ func TestAuthorization(t *testing.T) {
 				return err
 			}, "secrets/", authorization.CapabilityList},
 			{"put on a missing path", func(ctx context.Context, s *secret.Service) error {
-				return s.Put(ctx, principal, "db/password", []byte("secret"))
+				return s.Put(ctx, principal, "db/password", []byte("secret"), 0)
 			}, "secrets/db/password", authorization.CapabilityCreate},
 			{"put on an existing path", func(ctx context.Context, s *secret.Service) error {
-				return s.Put(ctx, principal, "existing", []byte("secret"))
+				return s.Put(ctx, principal, "existing", []byte("secret"), 0)
 			}, "secrets/existing", authorization.CapabilityUpdate},
 			{"generate", func(ctx context.Context, s *secret.Service) error {
 				_, err := s.Generate(ctx, principal, "db/password", 32)
@@ -141,7 +141,7 @@ func TestAuthorization(t *testing.T) {
 		s, repo, authorizer := newAuthorizedService(t)
 		authorizer.err = authorization.ErrDenied
 
-		err := s.Put(t.Context(), principal, "db/password", []byte("secret"))
+		err := s.Put(t.Context(), principal, "db/password", []byte("secret"), 0)
 		if !errors.Is(err, authorization.ErrDenied) {
 			t.Fatalf("Put: got %v, want %v", err, authorization.ErrDenied)
 		}
@@ -156,7 +156,7 @@ func TestAuthorization(t *testing.T) {
 		repoErr := errors.New("disk failed")
 		repo.err = repoErr
 
-		err := s.Put(t.Context(), principal, "db/password", []byte("secret"))
+		err := s.Put(t.Context(), principal, "db/password", []byte("secret"), 0)
 
 		if !errors.Is(err, repoErr) {
 			t.Errorf("err: got %v, want %v", err, repoErr)
@@ -167,13 +167,13 @@ func TestAuthorization(t *testing.T) {
 	})
 
 	t.Run("a create racing another on the same path is asked update", func(t *testing.T) {
-		s := secret.New(newRacingRepository(), &fakeRandom{}, createOnlyAuthorizer{})
+		s := secret.New(newRacingRepository(), &fakeRandom{}, createOnlyAuthorizer{}, &fakeClock{})
 		ctx := t.Context()
 
 		var errs [2]error
 		var wg sync.WaitGroup
 		for i := range errs {
-			wg.Go(func() { errs[i] = s.Put(ctx, principal, "db/password", []byte{byte(i)}) })
+			wg.Go(func() { errs[i] = s.Put(ctx, principal, "db/password", []byte{byte(i)}, 0) })
 		}
 		wg.Wait()
 

@@ -23,7 +23,7 @@ func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Secret.Put(r.Context(), principalFrom(r), path, req.Value); err != nil {
+	if err := h.Secret.Put(r.Context(), principalFrom(r), path, req.Value, 0); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -38,12 +38,13 @@ type secretResponse struct {
 func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
-	value, err := h.Secret.Get(r.Context(), principalFrom(r), path)
+	entry, err := h.Secret.Get(r.Context(), principalFrom(r), path)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
 
+	value := entry.Value
 	// A nil slice encodes as null; the spec's value is a string.
 	if value == nil {
 		value = []byte{}

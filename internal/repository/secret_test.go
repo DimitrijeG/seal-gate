@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 	"github.com/dimitrijegasic/seal-gate/internal/repository"
@@ -14,9 +15,11 @@ import (
 
 // storedSecret decodes the stored layout without the repository's own type.
 type storedSecret struct {
-	Version   int    `json:"version"`
-	Value     []byte `json:"value"`
-	Generated bool   `json:"generated"`
+	Version   int           `json:"version"`
+	Value     []byte        `json:"value"`
+	Generated bool          `json:"generated"`
+	TTL       time.Duration `json:"ttl"`
+	ExpiresAt time.Time     `json:"expires_at"`
 }
 
 func TestSecretRepository(t *testing.T) {
@@ -140,6 +143,60 @@ func TestSecretRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("a secret's TTL and expiry read back", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+		want := secret.Entry{
+			Value:     []byte("secret"),
+			TTL:       time.Hour,
+			ExpiresAt: time.Date(2026, 10, 1, 13, 0, 0, 0, time.UTC),
+		}
+
+		if err := repo.Put(t.Context(), "db/password", want); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := repo.Get(t.Context(), "db/password")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if got.TTL != want.TTL {
+			t.Errorf("TTL: got %v, want %v", got.TTL, want.TTL)
+		}
+		if !got.ExpiresAt.Equal(want.ExpiresAt) {
+			t.Errorf("ExpiresAt: got %v, want %v", got.ExpiresAt, want.ExpiresAt)
+		}
+	})
+
+	t.Run("the stored record holds the TTL and expiry", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+		want := secret.Entry{
+			Value:     []byte("secret"),
+			TTL:       time.Hour,
+			ExpiresAt: time.Date(2026, 10, 1, 13, 0, 0, 0, time.UTC),
+		}
+
+		if err := repo.Put(t.Context(), "db/password", want); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		data, err := f.encrypted.Get(t.Context(), "secrets/db/password")
+		if err != nil {
+			t.Fatalf("barrier Get: %v", err)
+		}
+		var record storedSecret
+		if err := json.Unmarshal(data, &record); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+
+		if record.TTL != want.TTL {
+			t.Errorf("TTL: got %v, want %v", record.TTL, want.TTL)
+		}
+		if !record.ExpiresAt.Equal(want.ExpiresAt) {
+			t.Errorf("ExpiresAt: got %v, want %v", record.ExpiresAt, want.ExpiresAt)
+		}
+	})
+
 	t.Run("the stored record holds the mark as generated", func(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Secret
@@ -186,6 +243,34 @@ func TestSecretRepository(t *testing.T) {
 		}
 		if got.Generated {
 			t.Error("Generated: got true, want false")
+		}
+	})
+
+	t.Run("a record written before the TTL existed reads with none", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+		old, err := json.Marshal(struct {
+			Version   int    `json:"version"`
+			Value     []byte `json:"value"`
+			Generated bool   `json:"generated"`
+		}{1, []byte("secret"), true})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+
+		if err := f.encrypted.Put(t.Context(), "secrets/db/password", old); err != nil {
+			t.Fatalf("barrier Put: %v", err)
+		}
+		got, err := repo.Get(t.Context(), "db/password")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if got.TTL != 0 {
+			t.Errorf("TTL: got %v, want 0", got.TTL)
+		}
+		if !got.ExpiresAt.IsZero() {
+			t.Errorf("ExpiresAt: got %v, want none", got.ExpiresAt)
 		}
 	})
 
