@@ -86,14 +86,19 @@ func isBackend(rel string) bool {
 	return strings.HasPrefix(rel, "internal/storage/")
 }
 
+// isSink is true for concrete audit sinks, not audit itself.
+func isSink(rel string) bool {
+	return strings.HasPrefix(rel, "internal/audit/")
+}
+
 // isLeaf covers subpackages of config and cryptography, but only the storage
-// contract itself: backends have their own rule.
+// contract and audit themselves: backends and sinks have their own rules.
 func isLeaf(rel string) bool {
 	switch topLevel(rel) {
 	case "internal/config", "internal/cryptography":
 		return true
 	default:
-		return rel == "internal/storage"
+		return rel == "internal/storage" || rel == "internal/audit"
 	}
 }
 
@@ -125,6 +130,11 @@ var Rules = []Rule{
 		Bad: func(from, to string) bool { return isBackend(to) && from != "internal/app" },
 	},
 	{
+		ID:  "only-app-knows-sinks",
+		Why: "app is the composition root and the only package allowed to name an audit sink, so nothing writes around the recorder",
+		Bad: func(from, to string) bool { return isSink(to) && from != "internal/app" },
+	},
+	{
 		ID:  "httpapi-translates-only",
 		Why: "the HTTP layer performs protocol translation and must not query storage or encrypt",
 		Bad: func(from, to string) bool { return from == "internal/httpapi" && isPersistence(to) },
@@ -136,7 +146,7 @@ var Rules = []Rule{
 	},
 	{
 		ID:  "leaves-stay-leaves",
-		Why: "config, cryptography and the storage contract are shared by many packages and must not depend on any of them",
+		Why: "config, cryptography, the storage contract and audit are shared by many packages and must not depend on any of them",
 		Bad: func(from, to string) bool {
 			return isLeaf(from) && strings.HasPrefix(to, "internal/") && topLevel(to) != topLevel(from)
 		},
