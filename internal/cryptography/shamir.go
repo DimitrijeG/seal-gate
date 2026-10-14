@@ -63,7 +63,7 @@ func (s *Shamir) Split(secret []byte, n, k int) ([][]byte, error) {
 	return shares, nil
 }
 
-// Combine recovers the secret from shares; with fewer than the threshold it returns wrong bytes, not an error.
+// Combine recovers the secret from shares; given fewer than the threshold it may succeed with wrong bytes.
 func (s *Shamir) Combine(shares [][]byte) ([]byte, error) {
 	if len(shares) < 2 {
 		return nil, ErrInvalidShares
