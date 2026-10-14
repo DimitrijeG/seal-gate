@@ -12,8 +12,8 @@ type Repository interface {
 	Load(ctx context.Context) (InitializationState, error)
 }
 
-// SecretSharing splits the root key into shares; Combine below the threshold
-// returns wrong bytes, not an error, so the caller must verify the result.
+// SecretSharing splits the root key into shares; Combine given fewer than the
+// threshold may succeed with wrong bytes, so the caller must verify the result.
 type SecretSharing interface {
 	Split(secret []byte, shares, threshold int) ([][]byte, error)
 	Combine(shares [][]byte) ([]byte, error)

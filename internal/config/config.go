@@ -12,7 +12,7 @@ type Config struct {
 	Audit   AuditConfig
 }
 
-// LoggerConfig sets the slog level ("debug", "info", "warn", "error") and the format ("text", else JSON).
+// LoggerConfig sets the level, as slog.Level parses it ("info", "warn+2"), and the format ("text", else JSON).
 type LoggerConfig struct {
 	Level  string
 	Format string
