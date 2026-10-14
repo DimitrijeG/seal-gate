@@ -23,7 +23,7 @@ func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Secret.Put(r.Context(), path, req.Value); err != nil {
+	if err := h.Secret.Put(r.Context(), principalFrom(r), path, req.Value); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -38,7 +38,7 @@ type secretResponse struct {
 func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
-	value, err := h.Secret.Get(r.Context(), path)
+	value, err := h.Secret.Get(r.Context(), principalFrom(r), path)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -57,7 +57,7 @@ func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
-	if err := h.Secret.Delete(r.Context(), path); err != nil {
+	if err := h.Secret.Delete(r.Context(), principalFrom(r), path); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -72,7 +72,7 @@ type listResponse struct {
 func (h *Handlers) handleListSecrets(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
 
-	paths, err := h.Secret.List(r.Context(), prefix)
+	paths, err := h.Secret.List(r.Context(), principalFrom(r), prefix)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return

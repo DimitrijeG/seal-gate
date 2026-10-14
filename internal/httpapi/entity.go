@@ -30,7 +30,7 @@ func (h *Handlers) handleCreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.Entity.CreateEntity(r.Context(), req.entity(""))
+	id, err := h.Entity.CreateEntity(r.Context(), principalFrom(r), req.entity(""))
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -42,7 +42,7 @@ func (h *Handlers) handleCreateEntity(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	entity, err := h.Entity.GetEntity(r.Context(), id)
+	entity, err := h.Entity.GetEntity(r.Context(), principalFrom(r), id)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -60,7 +60,7 @@ func (h *Handlers) handleUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Entity.UpdateEntity(r.Context(), req.entity(id)); err != nil {
+	if err := h.Entity.UpdateEntity(r.Context(), principalFrom(r), req.entity(id)); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -71,7 +71,7 @@ func (h *Handlers) handleUpdateEntity(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleDeleteEntity(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	if err := h.Entity.DeleteEntity(r.Context(), id); err != nil {
+	if err := h.Entity.DeleteEntity(r.Context(), principalFrom(r), id); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -87,7 +87,7 @@ type createTokenResponse struct {
 func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	token, err := h.Token.CreateToken(r.Context(), id)
+	token, err := h.Token.CreateToken(r.Context(), principalFrom(r), id)
 	// Deferred before the error check: cleared after the response is written, whatever CreateToken returned.
 	defer clear(token)
 	if err != nil {

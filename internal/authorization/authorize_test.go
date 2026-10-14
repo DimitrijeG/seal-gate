@@ -17,10 +17,71 @@ func newAuthorizer(t *testing.T, policies ...authorization.Policy) (*authorizati
 }
 
 func TestAuthorize(t *testing.T) {
+	t.Run("the root is allowed whatever the resource and capability", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			resource   string
+			capability authorization.Capability
+		}{
+			{"secret read", "secrets/db/password", authorization.CapabilityRead},
+			{"system update", "system/seal", authorization.CapabilityUpdate},
+			{"a capability no rule can grant", "secrets/db", authorization.CapabilityDeny},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _ := newAuthorizer(t)
+
+				err := s.Authorize(t.Context(), authorization.NewRootPrincipal(), tt.resource, tt.capability)
+
+				if err != nil {
+					t.Errorf("got %v, want nil", err)
+				}
+			})
+		}
+	})
+
+	t.Run("the root is allowed without reading a policy", func(t *testing.T) {
+		s, repo := newAuthorizer(t)
+		repo.err = authorization.ErrSealed
+
+		err := s.Authorize(t.Context(), authorization.NewRootPrincipal(), "secrets/db", authorization.CapabilityRead)
+
+		if err != nil {
+			t.Errorf("err: got %v, want nil", err)
+		}
+		if repo.calls != 0 {
+			t.Errorf("calls: got %d, want 0", repo.calls)
+		}
+	})
+
+	t.Run("the zero principal is denied", func(t *testing.T) {
+		s, _ := newAuthorizer(t, policyWithRule("*", authorization.CapabilityRead))
+
+		err := s.Authorize(t.Context(), authorization.Principal{}, "secrets/db", authorization.CapabilityRead)
+
+		if !errors.Is(err, authorization.ErrDenied) {
+			t.Errorf("got %v, want %v", err, authorization.ErrDenied)
+		}
+	})
+
+	t.Run("the principal keeps its own copy of the names", func(t *testing.T) {
+		s, _ := newAuthorizer(t, policyWithRule("secrets/*", authorization.CapabilityRead))
+		names := []string{"dev"}
+		principal := authorization.NewPolicyPrincipal(names...)
+		names[0] = "missing"
+
+		err := s.Authorize(t.Context(), principal, "secrets/db", authorization.CapabilityRead)
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
 	t.Run("no policies is denied", func(t *testing.T) {
 		s, _ := newAuthorizer(t)
 
-		err := s.Authorize(t.Context(), nil, "secrets/db", authorization.CapabilityRead)
+		err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal(), "secrets/db", authorization.CapabilityRead)
 
 		if !errors.Is(err, authorization.ErrDenied) {
 			t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -30,7 +91,7 @@ func TestAuthorize(t *testing.T) {
 	t.Run("an exact pattern grants its capability on that resource", func(t *testing.T) {
 		s, _ := newAuthorizer(t, policyWithRule("secrets/db/password", authorization.CapabilityRead))
 
-		err := s.Authorize(t.Context(), []string{"dev"}, "secrets/db/password", authorization.CapabilityRead)
+		err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), "secrets/db/password", authorization.CapabilityRead)
 
 		if err != nil {
 			t.Errorf("got %v, want nil", err)
@@ -40,7 +101,7 @@ func TestAuthorize(t *testing.T) {
 	t.Run("an exact pattern does not grant another capability", func(t *testing.T) {
 		s, _ := newAuthorizer(t, policyWithRule("secrets/db/password", authorization.CapabilityRead))
 
-		err := s.Authorize(t.Context(), []string{"dev"}, "secrets/db/password", authorization.CapabilityUpdate)
+		err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), "secrets/db/password", authorization.CapabilityUpdate)
 
 		if !errors.Is(err, authorization.ErrDenied) {
 			t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -62,7 +123,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, policyWithRule("secrets/db/password", authorization.CapabilityRead))
 
-				err := s.Authorize(t.Context(), []string{"dev"}, tt.resource, authorization.CapabilityRead)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), tt.resource, authorization.CapabilityRead)
 
 				if !errors.Is(err, authorization.ErrDenied) {
 					t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -87,7 +148,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, policyWithRule(tt.pattern, authorization.CapabilityRead))
 
-				err := s.Authorize(t.Context(), []string{"dev"}, tt.resource, authorization.CapabilityRead)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), tt.resource, authorization.CapabilityRead)
 
 				if err != nil {
 					t.Errorf("got %v, want nil", err)
@@ -109,7 +170,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, policyWithRule("secrets/db/*", authorization.CapabilityRead))
 
-				err := s.Authorize(t.Context(), []string{"dev"}, tt.resource, authorization.CapabilityRead)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), tt.resource, authorization.CapabilityRead)
 
 				if !errors.Is(err, authorization.ErrDenied) {
 					t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -131,7 +192,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, policyWithRule("*", authorization.CapabilityRead))
 
-				err := s.Authorize(t.Context(), []string{"dev"}, tt.resource, authorization.CapabilityRead)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), tt.resource, authorization.CapabilityRead)
 
 				if err != nil {
 					t.Errorf("got %v, want nil", err)
@@ -165,7 +226,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, tt.policies...)
 
-				err := s.Authorize(t.Context(), tt.names, "secrets/db/x", authorization.CapabilityUpdate)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal(tt.names...), "secrets/db/x", authorization.CapabilityUpdate)
 
 				if err != nil {
 					t.Errorf("got %v, want nil", err)
@@ -195,7 +256,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, tt.policies...)
 
-				err := s.Authorize(t.Context(), tt.names, "secrets/db", authorization.CapabilityRead)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal(tt.names...), "secrets/db", authorization.CapabilityRead)
 
 				if !errors.Is(err, authorization.ErrDenied) {
 					t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -210,7 +271,7 @@ func TestAuthorize(t *testing.T) {
 			{Path: "secrets/other/*", Capabilities: []authorization.Capability{authorization.CapabilityDeny}},
 		}})
 
-		err := s.Authorize(t.Context(), []string{"dev"}, "secrets/db", authorization.CapabilityRead)
+		err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), "secrets/db", authorization.CapabilityRead)
 
 		if err != nil {
 			t.Errorf("got %v, want nil", err)
@@ -231,7 +292,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, policyWithRule("secrets/*", authorization.CapabilityRead, authorization.CapabilityDeny))
 
-				err := s.Authorize(t.Context(), []string{"dev"}, "secrets/db", tt.capability)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), "secrets/db", tt.capability)
 
 				if !errors.Is(err, authorization.ErrDenied) {
 					t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -254,7 +315,7 @@ func TestAuthorize(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, policyWithRule("secrets/*", authorization.CapabilityRead))
 
-				err := s.Authorize(t.Context(), tt.names, "secrets/db", authorization.CapabilityRead)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal(tt.names...), "secrets/db", authorization.CapabilityRead)
 
 				if !errors.Is(err, tt.want) {
 					t.Errorf("got %v, want %v", err, tt.want)
@@ -277,7 +338,7 @@ func TestAuthorize(t *testing.T) {
 				s, repo := newAuthorizer(t, policyWithRule("secrets/*", authorization.CapabilityRead))
 				repo.err = tt.err
 
-				err := s.Authorize(t.Context(), []string{"dev"}, "secrets/db", authorization.CapabilityRead)
+				err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev"), "secrets/db", authorization.CapabilityRead)
 
 				if !errors.Is(err, tt.err) {
 					t.Errorf("got %v, want %v", err, tt.err)
@@ -293,7 +354,7 @@ func TestAuthorize(t *testing.T) {
 		corrupt := policyWithRule("secrets/*")
 		s, _ := newAuthorizer(t, grant, corrupt)
 
-		err := s.Authorize(t.Context(), []string{"grant", "dev"}, "secrets/db", authorization.CapabilityRead)
+		err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("grant", "dev"), "secrets/db", authorization.CapabilityRead)
 
 		if !errors.Is(err, authorization.ErrUnreadablePolicy) {
 			t.Errorf("got %v, want %v", err, authorization.ErrUnreadablePolicy)
@@ -303,7 +364,7 @@ func TestAuthorize(t *testing.T) {
 	t.Run("an invalid policy name is refused before the repository", func(t *testing.T) {
 		s, repo := newAuthorizer(t)
 
-		err := s.Authorize(t.Context(), []string{"dev/ops"}, "secrets/db", authorization.CapabilityRead)
+		err := s.Authorize(t.Context(), authorization.NewPolicyPrincipal("dev/ops"), "secrets/db", authorization.CapabilityRead)
 
 		if !errors.Is(err, authorization.ErrInvalidName) {
 			t.Errorf("err: got %v, want %v", err, authorization.ErrInvalidName)

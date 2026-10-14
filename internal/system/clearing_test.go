@@ -35,7 +35,7 @@ func newRetainingService(t *testing.T) (*system.Service, *retainingPorts) {
 		active:  &fakeController{},
 	}
 	keyring := system.NewKeyring(p.repo, p.sharing, p.wrapper, p.random, p.active)
-	return system.NewService(keyring, fakeClock{now: initTime}), p
+	return system.NewService(keyring, fakeClock{now: initTime}, &fakeAuthorizer{}), p
 }
 
 // newInitializedRetainingService returns a service past init with the shares it

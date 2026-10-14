@@ -12,9 +12,14 @@ servers:
   - url: /v1
     description: Version prefix. It is part of every route, not a host.
 
+security:
+  - bearerAuth: []
+
 tags:
   - name: system
-    description: Initialization, sealing and health. Reachable while sealed.
+    description: >
+      Initialization, sealing and health. All but seal are open and reachable
+      while sealed.
   - name: secrets
     description: Secret values by path. Every operation needs the instance unsealed.
   - name: policies
@@ -70,11 +75,12 @@ paths:
     post:
       operationId: unseal
       tags: [system]
-      summary: Submit one unseal share.
+      summary: Submit one unseal share, or discard the buffered ones.
       description: >
         Open by design: a sealed instance cannot check a token. Shares are
         buffered until the threshold is reached, then combined; a failed
-        combination discards the buffer.
+        combination discards the buffer. A reset discards it on request, so
+        a partial unseal can start over.
       security: []
       requestBody:
         required: true
@@ -84,7 +90,9 @@ paths:
               $ref: "#/components/schemas/UnsealRequest"
       responses:
         "200":
-          description: Share accepted. The status shows the progress, or that the instance is unsealed.
+          description: >
+            Share accepted or buffer discarded. The status shows the progress,
+            or that the instance is unsealed.
           content:
             application/json:
               schema:
@@ -107,12 +115,21 @@ paths:
       tags: [system]
       summary: Seal the instance.
       description: >
-        Open until authentication exists. Discards the key and any buffered shares.
-        Idempotent: sealing a sealed or uninitialized instance also succeeds.
-      security: []
+        Discards the key and any buffered shares. On a sealed or uninitialized
+        instance no token can be checked, so a request with one is 503; to
+        discard a partial unseal, reset it through `/sys/unseal`. Needs
+        `update` on `system/seal`.
       responses:
         "204":
           description: Sealed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /sys/status:
     get:
@@ -156,9 +173,8 @@ paths:
       tags: [secrets]
       summary: List the paths of stored secrets, optionally under a prefix.
       description: >
-        Open until authentication exists. Returns every path under the prefix,
-        at any depth, never the values.
-      security: []
+        Returns every path under the prefix, at any depth, never the values.
+        Needs `list` on `secrets/<prefix>`.
       parameters:
         - name: prefix
           in: query
@@ -180,6 +196,10 @@ paths:
                 $ref: "#/components/schemas/ListResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -204,9 +224,9 @@ paths:
       tags: [secrets]
       summary: Store a secret, replacing any value already at the path.
       description: >
-        Open until authentication exists. Creates or replaces; the response is
-        the same either way.
-      security: []
+        Creates or replaces; the response is the same either way. Needs
+        `create` on `secrets/<path>` when the path is missing, `update` when
+        it exists.
       requestBody:
         required: true
         content:
@@ -218,6 +238,10 @@ paths:
           description: Stored.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: >
@@ -234,8 +258,8 @@ paths:
       operationId: getSecret
       tags: [secrets]
       summary: Read a secret.
-      description: Open until authentication exists.
-      security: []
+      description: >
+        Needs `read` on `secrets/<path>`.
       responses:
         "200":
           description: The secret's value.
@@ -245,6 +269,10 @@ paths:
                 $ref: "#/components/schemas/SecretResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -257,14 +285,17 @@ paths:
       tags: [secrets]
       summary: Delete a secret.
       description: >
-        Open until authentication exists. Idempotent: deleting a missing secret
-        also succeeds.
-      security: []
+        Idempotent: deleting a missing secret also succeeds. Needs `delete`
+        on `secrets/<path>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -289,9 +320,9 @@ paths:
       tags: [policies]
       summary: Store a policy, replacing any policy already under the name.
       description: >
-        Open until authentication exists. Creates or replaces; the response is
-        the same either way. The name is taken from the path only.
-      security: []
+        Creates or replaces; the response is the same either way. The name is
+        taken from the path only. Needs `update` on `system/policies/<name>`,
+        whether or not the policy exists.
       requestBody:
         required: true
         content:
@@ -303,6 +334,10 @@ paths:
           description: Stored.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -317,8 +352,8 @@ paths:
       operationId: getPolicy
       tags: [policies]
       summary: Read a policy.
-      description: Open until authentication exists.
-      security: []
+      description: >
+        Needs `read` on `system/policies/<name>`.
       responses:
         "200":
           description: The policy's rules.
@@ -328,6 +363,10 @@ paths:
                 $ref: "#/components/schemas/PolicyResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -340,14 +379,17 @@ paths:
       tags: [policies]
       summary: Delete a policy.
       description: >
-        Open until authentication exists. Idempotent: deleting a missing policy
-        also succeeds.
-      security: []
+        Idempotent: deleting a missing policy also succeeds. Needs `delete`
+        on `system/policies/<name>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -359,9 +401,9 @@ paths:
       tags: [entities]
       summary: Create an entity under a newly generated ID.
       description: >
-        Open until authentication exists. The server chooses the ID and never
-        reuses one, so a deleted entity's tokens can never authenticate again.
-      security: []
+        The server chooses the ID and never reuses one, so a deleted entity's
+        tokens can never authenticate again. Needs `create` on
+        `system/entities`.
       requestBody:
         required: true
         content:
@@ -377,6 +419,10 @@ paths:
                 $ref: "#/components/schemas/CreateEntityResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -400,8 +446,8 @@ paths:
       operationId: getEntity
       tags: [entities]
       summary: Read an entity.
-      description: Open until authentication exists.
-      security: []
+      description: >
+        Needs `read` on `system/entities/<id>`.
       responses:
         "200":
           description: The entity's policies and groups.
@@ -411,6 +457,10 @@ paths:
                 $ref: "#/components/schemas/EntityResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -423,9 +473,8 @@ paths:
       tags: [entities]
       summary: Replace an existing entity's policies and groups.
       description: >
-        Open until authentication exists. Never creates: an ID that does not
-        exist is not found. The ID is taken from the path only.
-      security: []
+        Never creates: an ID that does not exist is not found. The ID is taken
+        from the path only. Needs `update` on `system/entities/<id>`.
       requestBody:
         required: true
         content:
@@ -437,6 +486,10 @@ paths:
           description: Updated.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "413":
@@ -454,14 +507,17 @@ paths:
       tags: [entities]
       summary: Delete an entity, revoking its tokens.
       description: >
-        Open until authentication exists. Idempotent: deleting a missing entity
-        also succeeds.
-      security: []
+        Idempotent: deleting a missing entity also succeeds. Needs `delete`
+        on `system/entities/<id>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -481,10 +537,10 @@ paths:
       tags: [entities]
       summary: Issue a token for an entity.
       description: >
-        Open until authentication exists. Takes no request body. The token in
-        the response is the only copy: the server stores only its hash.
-        Deleting the entity revokes it.
-      security: []
+        Takes no request body. The token in the response is the only copy: the
+        server stores only its hash.
+        Deleting the entity revokes it. Needs `create` on
+        `system/entities/<id>/tokens`.
       responses:
         "201":
           description: Issued.
@@ -494,6 +550,10 @@ paths:
                 $ref: "#/components/schemas/CreateTokenResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -507,10 +567,9 @@ paths:
       tags: [groups]
       summary: Create a group under a newly generated ID.
       description: >
-        Open until authentication exists. The server chooses the ID and never
-        reuses one, so a deleted group cannot come back and re-grant its
-        policies to entities that still name it.
-      security: []
+        The server chooses the ID and never reuses one, so a deleted group
+        cannot come back and re-grant its policies to entities that still
+        name it. Needs `create` on `system/groups`.
       requestBody:
         required: true
         content:
@@ -526,6 +585,10 @@ paths:
                 $ref: "#/components/schemas/CreateGroupResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -549,8 +612,8 @@ paths:
       operationId: getGroup
       tags: [groups]
       summary: Read a group.
-      description: Open until authentication exists.
-      security: []
+      description: >
+        Needs `read` on `system/groups/<id>`.
       responses:
         "200":
           description: The group's policies.
@@ -560,6 +623,10 @@ paths:
                 $ref: "#/components/schemas/GroupResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -572,9 +639,8 @@ paths:
       tags: [groups]
       summary: Replace an existing group's policies.
       description: >
-        Open until authentication exists. Never creates: an ID that does not
-        exist is not found. The ID is taken from the path only.
-      security: []
+        Never creates: an ID that does not exist is not found. The ID is taken
+        from the path only. Needs `update` on `system/groups/<id>`.
       requestBody:
         required: true
         content:
@@ -586,6 +652,10 @@ paths:
           description: Updated.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "413":
@@ -603,21 +673,54 @@ paths:
       tags: [groups]
       summary: Delete a group.
       description: >
-        Open until authentication exists. Idempotent: deleting a missing group
-        also succeeds. Entities that name it keep the ID, which grants nothing.
-      security: []
+        Idempotent: deleting a missing group also succeeds. Entities that name
+        it keep the ID, which grants nothing. Needs `delete` on
+        `system/groups/<id>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
           $ref: "#/components/responses/InternalError"
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        A token as returned by init or token issuing, in standard base64.
+        Every operation needs one unless it says it is open.
+
   responses:
+    Unauthorized:
+      description: >
+        The token is missing, malformed or unknown. The message does not say
+        which.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: >
+        The token is valid, but none of its policies grants the capability
+        the operation needs, or one denies it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     BadRequest:
       description: The request path, body, or its values are invalid.
       content:
@@ -695,12 +798,28 @@ components:
 
     UnsealRequest:
       type: object
-      required: [share]
+      description: Exactly one of a share or `reset` set to true; both together is a 400.
       properties:
         share:
           type: string
           contentEncoding: base64
+        reset:
+          type: boolean
+          description: Discard the buffered shares instead of submitting one.
       additionalProperties: false
+      oneOf:
+        - required: [share]
+          properties:
+            share:
+              minLength: 1
+            reset:
+              const: false
+        - required: [reset]
+          properties:
+            share:
+              maxLength: 0
+            reset:
+              const: true
 
     StatusResponse:
       type: object

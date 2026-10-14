@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sync"
+
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 )
 
 // Entity is an identity with its own policies; its ID is generated and never reused, and Groups holds group IDs.
@@ -14,6 +16,9 @@ type Entity struct {
 	Groups   []string
 }
 
+// entitiesResource is the resource policies name the entity collection by; each entity is beneath it by ID.
+const entitiesResource = "system/entities"
+
 // EntityRepository stores entities by ID. Get returns ErrEntityNotFound for a missing ID and ErrUnreadableEntity
 // for a corrupt record; Delete does not fail on a missing ID; every method returns ErrSealed while sealed.
 type EntityRepository interface {
@@ -22,24 +27,28 @@ type EntityRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
-// EntityService manages entities, validating them before they reach the repository.
+// EntityService manages entities, validating each and authorizing its principal before the repository.
 type EntityService struct {
 	// Held by update and delete, so no delete lands between update's existence check and its write
 	// and brings a deleted entity back with its tokens. Process-local: it assumes one instance.
-	mu       sync.Mutex
-	entities EntityRepository
-	random   Random
+	mu         sync.Mutex
+	entities   EntityRepository
+	random     Random
+	authorizer authorization.Authorizer
 }
 
-// NewEntityService returns an EntityService over entities, taking IDs from random.
-func NewEntityService(entities EntityRepository, random Random) *EntityService {
-	return &EntityService{entities: entities, random: random}
+// NewEntityService returns an EntityService over entities, taking IDs from random and asking authorizer before every operation.
+func NewEntityService(entities EntityRepository, random Random, authorizer authorization.Authorizer) *EntityService {
+	return &EntityService{entities: entities, random: random, authorizer: authorizer}
 }
 
-// CreateEntity stores entity under a newly generated ID, replacing any ID it carries, and returns that ID.
-func (s *EntityService) CreateEntity(ctx context.Context, entity Entity) (string, error) {
+// CreateEntity stores entity under a newly generated ID if principal may create entities, replacing any ID it carries, and returns that ID.
+func (s *EntityService) CreateEntity(ctx context.Context, principal authorization.Principal, entity Entity) (string, error) {
 	if err := validateLists(entity); err != nil {
 		return "", err
+	}
+	if err := s.authorizer.Authorize(ctx, principal, entitiesResource, authorization.CapabilityCreate); err != nil {
+		return "", fmt.Errorf("identity: %w", err)
 	}
 
 	id, err := s.random.Bytes(idBytes)
@@ -58,8 +67,20 @@ func (s *EntityService) CreateEntity(ctx context.Context, entity Entity) (string
 	return entity.ID, nil
 }
 
-// GetEntity returns the entity with id; ErrEntityNotFound if there is none, ErrUnreadableEntity if its record is invalid.
-func (s *EntityService) GetEntity(ctx context.Context, id string) (Entity, error) {
+// GetEntity returns the entity with id if principal may read it; ErrEntityNotFound if there is none, ErrUnreadableEntity if its record is invalid.
+func (s *EntityService) GetEntity(ctx context.Context, principal authorization.Principal, id string) (Entity, error) {
+	if !validID(id) {
+		return Entity{}, ErrInvalidEntityID
+	}
+	if err := s.authorizer.Authorize(ctx, principal, entitiesResource+"/"+id, authorization.CapabilityRead); err != nil {
+		return Entity{}, fmt.Errorf("identity: %w", err)
+	}
+
+	return s.getEntity(ctx, id)
+}
+
+// getEntity reads without authorizing, for reads on the service's own behalf, such as resolving a token before any principal exists.
+func (s *EntityService) getEntity(ctx context.Context, id string) (Entity, error) {
 	if !validID(id) {
 		return Entity{}, ErrInvalidEntityID
 	}
@@ -78,13 +99,16 @@ func (s *EntityService) GetEntity(ctx context.Context, id string) (Entity, error
 	return entity, nil
 }
 
-// DeleteEntity removes the entity with id; a missing ID is not an error.
-func (s *EntityService) DeleteEntity(ctx context.Context, id string) error {
+// DeleteEntity removes the entity with id if principal may delete it; a missing ID is not an error.
+func (s *EntityService) DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !validID(id) {
 		return ErrInvalidEntityID
+	}
+	if err := s.authorizer.Authorize(ctx, principal, entitiesResource+"/"+id, authorization.CapabilityDelete); err != nil {
+		return fmt.Errorf("identity: %w", err)
 	}
 
 	err := s.entities.Delete(ctx, id)
@@ -94,8 +118,8 @@ func (s *EntityService) DeleteEntity(ctx context.Context, id string) error {
 	return err
 }
 
-// UpdateEntity replaces an existing entity's policies and groups; it never creates one, so a missing ID is ErrEntityNotFound.
-func (s *EntityService) UpdateEntity(ctx context.Context, entity Entity) error {
+// UpdateEntity replaces an existing entity's policies and groups if principal may update it; it never creates one, so a missing ID is ErrEntityNotFound.
+func (s *EntityService) UpdateEntity(ctx context.Context, principal authorization.Principal, entity Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -105,9 +129,12 @@ func (s *EntityService) UpdateEntity(ctx context.Context, entity Entity) error {
 	if err := validateLists(entity); err != nil {
 		return err
 	}
+	if err := s.authorizer.Authorize(ctx, principal, entitiesResource+"/"+entity.ID, authorization.CapabilityUpdate); err != nil {
+		return fmt.Errorf("identity: %w", err)
+	}
 
-	// GetEntity, not the repository: an entity that fails validation on read is not updated either.
-	if _, err := s.GetEntity(ctx, entity.ID); err != nil {
+	// getEntity, not the repository: an entity that fails validation on read is not updated either.
+	if _, err := s.getEntity(ctx, entity.ID); err != nil {
 		return err
 	}
 

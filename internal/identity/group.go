@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 )
 
 // Group assigns its policies to the entities that name it; its ID is generated and never reused, and it holds no member list.
@@ -13,6 +15,9 @@ type Group struct {
 	ID       string
 	Policies []string
 }
+
+// groupsResource is the resource policies name the group collection by; each group is beneath it by ID.
+const groupsResource = "system/groups"
 
 // GroupRepository stores groups by ID. Get returns ErrGroupNotFound for a missing ID and ErrUnreadableGroup
 // for a corrupt record; Delete does not fail on a missing ID; every method returns ErrSealed while sealed.
@@ -22,24 +27,28 @@ type GroupRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
-// GroupService manages groups and combines an entity's policies with its groups'.
+// GroupService manages groups, authorizing each operation's principal before the repository, and combines an entity's policies with its groups'.
 type GroupService struct {
 	// Held by update and delete, so no delete lands between update's existence check and its write and
 	// brings a deleted group back, re-granting its policies. Process-local: it assumes one instance.
-	mu     sync.Mutex
-	groups GroupRepository
-	random Random
+	mu         sync.Mutex
+	groups     GroupRepository
+	random     Random
+	authorizer authorization.Authorizer
 }
 
-// NewGroupService returns a GroupService over groups, taking IDs from random.
-func NewGroupService(groups GroupRepository, random Random) *GroupService {
-	return &GroupService{groups: groups, random: random}
+// NewGroupService returns a GroupService over groups, taking IDs from random and asking authorizer before every operation.
+func NewGroupService(groups GroupRepository, random Random, authorizer authorization.Authorizer) *GroupService {
+	return &GroupService{groups: groups, random: random, authorizer: authorizer}
 }
 
-// CreateGroup stores group under a newly generated ID, replacing any ID it carries, and returns that ID.
-func (s *GroupService) CreateGroup(ctx context.Context, group Group) (string, error) {
+// CreateGroup stores group under a newly generated ID if principal may create groups, replacing any ID it carries, and returns that ID.
+func (s *GroupService) CreateGroup(ctx context.Context, principal authorization.Principal, group Group) (string, error) {
 	if err := validateGroup(group); err != nil {
 		return "", err
+	}
+	if err := s.authorizer.Authorize(ctx, principal, groupsResource, authorization.CapabilityCreate); err != nil {
+		return "", fmt.Errorf("identity: %w", err)
 	}
 
 	id, err := s.random.Bytes(idBytes)
@@ -58,8 +67,20 @@ func (s *GroupService) CreateGroup(ctx context.Context, group Group) (string, er
 	return group.ID, nil
 }
 
-// GetGroup returns the group with id; ErrGroupNotFound if there is none, ErrUnreadableGroup if its record is invalid.
-func (s *GroupService) GetGroup(ctx context.Context, id string) (Group, error) {
+// GetGroup returns the group with id if principal may read it; ErrGroupNotFound if there is none, ErrUnreadableGroup if its record is invalid.
+func (s *GroupService) GetGroup(ctx context.Context, principal authorization.Principal, id string) (Group, error) {
+	if !validID(id) {
+		return Group{}, ErrInvalidGroupID
+	}
+	if err := s.authorizer.Authorize(ctx, principal, groupsResource+"/"+id, authorization.CapabilityRead); err != nil {
+		return Group{}, fmt.Errorf("identity: %w", err)
+	}
+
+	return s.getGroup(ctx, id)
+}
+
+// getGroup reads without authorizing, for reads on the service's own behalf, such as resolving a token's groups before any principal exists.
+func (s *GroupService) getGroup(ctx context.Context, id string) (Group, error) {
 	if !validID(id) {
 		return Group{}, ErrInvalidGroupID
 	}
@@ -78,13 +99,16 @@ func (s *GroupService) GetGroup(ctx context.Context, id string) (Group, error) {
 	return group, nil
 }
 
-// DeleteGroup removes the group with id; a missing ID is not an error.
-func (s *GroupService) DeleteGroup(ctx context.Context, id string) error {
+// DeleteGroup removes the group with id if principal may delete it; a missing ID is not an error.
+func (s *GroupService) DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !validID(id) {
 		return ErrInvalidGroupID
+	}
+	if err := s.authorizer.Authorize(ctx, principal, groupsResource+"/"+id, authorization.CapabilityDelete); err != nil {
+		return fmt.Errorf("identity: %w", err)
 	}
 
 	err := s.groups.Delete(ctx, id)
@@ -94,8 +118,8 @@ func (s *GroupService) DeleteGroup(ctx context.Context, id string) error {
 	return err
 }
 
-// UpdateGroup replaces an existing group's policies; it never creates one, so a missing ID is ErrGroupNotFound.
-func (s *GroupService) UpdateGroup(ctx context.Context, group Group) error {
+// UpdateGroup replaces an existing group's policies if principal may update it; it never creates one, so a missing ID is ErrGroupNotFound.
+func (s *GroupService) UpdateGroup(ctx context.Context, principal authorization.Principal, group Group) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -105,9 +129,12 @@ func (s *GroupService) UpdateGroup(ctx context.Context, group Group) error {
 	if err := validateGroup(group); err != nil {
 		return err
 	}
+	if err := s.authorizer.Authorize(ctx, principal, groupsResource+"/"+group.ID, authorization.CapabilityUpdate); err != nil {
+		return fmt.Errorf("identity: %w", err)
+	}
 
-	// GetGroup, not the repository: a group that fails validation on read is not updated either.
-	if _, err := s.GetGroup(ctx, group.ID); err != nil {
+	// getGroup, not the repository: a group that fails validation on read is not updated either.
+	if _, err := s.getGroup(ctx, group.ID); err != nil {
 		return err
 	}
 
@@ -134,7 +161,7 @@ func (s *GroupService) EffectivePolicies(ctx context.Context, entity Entity) ([]
 
 	add(entity.Policies)
 	for _, groupID := range entity.Groups {
-		group, err := s.GetGroup(ctx, groupID)
+		group, err := s.getGroup(ctx, groupID)
 		// Before the error return: a deleted group grants nothing, but any other failure could hide a deny.
 		if errors.Is(err, ErrGroupNotFound) {
 			continue

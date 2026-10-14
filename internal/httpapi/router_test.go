@@ -39,12 +39,14 @@ func TestRouter(t *testing.T) {
 				t.Run(route.name+" "+tt.name, func(t *testing.T) {
 					req := httptest.NewRequest(route.method, route.path, strings.NewReader(tt.body))
 					req.Header.Set("Content-Type", tt.contentType)
+					req.Header.Set("Authorization", bearer)
 					rec := httptest.NewRecorder()
 					router := httpapi.NewRouter(&httpapi.Handlers{
-						System: &fakeSystem{},
-						Secret: &fakeSecret{},
-						Policy: &fakePolicy{},
-						Entity: &fakeEntity{},
+						Authenticator: &fakeAuthenticator{},
+						System:        &fakeSystem{},
+						Secret:        &fakeSecret{},
+						Policy:        &fakePolicy{},
+						Entity:        &fakeEntity{},
 					})
 
 					router.ServeHTTP(rec, req)
@@ -75,11 +77,12 @@ func TestRouter(t *testing.T) {
 				body := `{}` + strings.Repeat(" ", route.limit)
 				want := fmt.Sprintf("request body exceeds %d bytes", route.limit)
 				router := httpapi.NewRouter(&httpapi.Handlers{
-					System: &fakeSystem{},
-					Secret: &fakeSecret{},
-					Policy: &fakePolicy{},
-					Entity: &fakeEntity{},
-					Group:  &fakeGroup{},
+					Authenticator: &fakeAuthenticator{},
+					System:        &fakeSystem{},
+					Secret:        &fakeSecret{},
+					Policy:        &fakePolicy{},
+					Entity:        &fakeEntity{},
+					Group:         &fakeGroup{},
 				})
 
 				rec := do(t, router, route.method, route.path, body)
@@ -100,7 +103,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Secret: &fakeSecret{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{}})
 
 				rec := do(t, router, http.MethodGet, tt.target, "")
 
@@ -121,7 +124,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{}})
 
 				rec := do(t, router, http.MethodPut, tt.target, devPolicyJSON)
 
@@ -142,7 +145,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{}})
 
 				rec := do(t, router, http.MethodPut, tt.target, devEntityJSON)
 
@@ -159,7 +162,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Entity: &fakeEntity{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{}})
 
 				rec := do(t, router, http.MethodPost, tt.target, devEntityJSON)
 
@@ -180,7 +183,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{}})
 
 				rec := do(t, router, http.MethodPut, tt.target, devGroupJSON)
 
@@ -197,7 +200,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{}})
 
 				rec := do(t, router, http.MethodPost, tt.target, devGroupJSON)
 
@@ -214,7 +217,7 @@ func TestRouter(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Token: &fakeToken{}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{}})
 
 				rec := do(t, router, http.MethodPost, tt.target, "")
 
