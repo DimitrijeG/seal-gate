@@ -130,7 +130,8 @@ func (f *fakeSystem) Seal(ctx context.Context, principal authorization.Principal
 }
 
 type secretBody struct {
-	Value string `json:"value"`
+	Value     string `json:"value"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type listBody struct {
@@ -138,16 +139,19 @@ type listBody struct {
 }
 
 type fakeSecret struct {
-	principal  authorization.Principal // the last principal any method got
-	path       string                  // the last path any method but List got
-	putValue   []byte
-	getValue   []byte
-	listPrefix string
-	listPaths  []string
-	genLength  int
-	genValue   []byte
-	rotValue   []byte
-	err        error
+	principal    authorization.Principal // the last principal any method got
+	path         string                  // the last path any method but List got
+	putValue     []byte
+	putTTL       time.Duration
+	getValue     []byte
+	getExpiresAt time.Time
+	listPrefix   string
+	listPaths    []string
+	genLength    int
+	genTTL       time.Duration
+	genValue     []byte
+	rotValue     []byte
+	err          error
 }
 
 func (f *fakeSecret) Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
@@ -156,24 +160,26 @@ func (f *fakeSecret) Rotate(ctx context.Context, principal authorization.Princip
 	return f.rotValue, f.err
 }
 
-func (f *fakeSecret) Generate(ctx context.Context, principal authorization.Principal, path string, length int, _ time.Duration) ([]byte, error) {
+func (f *fakeSecret) Generate(ctx context.Context, principal authorization.Principal, path string, length int, ttl time.Duration) ([]byte, error) {
 	f.principal = principal
 	f.path = path
 	f.genLength = length
+	f.genTTL = ttl
 	return f.genValue, f.err
 }
 
-func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal, path string, value []byte, _ time.Duration) error {
+func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal, path string, value []byte, ttl time.Duration) error {
 	f.principal = principal
 	f.path = path
 	f.putValue = bytes.Clone(value)
+	f.putTTL = ttl
 	return f.err
 }
 
 func (f *fakeSecret) Get(ctx context.Context, principal authorization.Principal, path string) (secret.Entry, error) {
 	f.principal = principal
 	f.path = path
-	return secret.Entry{Value: f.getValue}, f.err
+	return secret.Entry{Value: f.getValue, ExpiresAt: f.getExpiresAt}, f.err
 }
 
 func (f *fakeSecret) Delete(ctx context.Context, principal authorization.Principal, path string) error {

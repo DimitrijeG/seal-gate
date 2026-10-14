@@ -29,6 +29,7 @@ var (
 	errShareWithReset       = errors.New("share and reset cannot be sent together")
 	errSealed               = errors.New("the system is sealed")
 	errUnauthenticated      = errors.New("missing or invalid token")
+	errInvalidTTL           = errors.New("invalid TTL")
 )
 
 const mediaTypeJSON = "application/json"
@@ -77,7 +78,8 @@ func classify(err error) (int, string) {
 		return http.StatusBadRequest, fmt.Sprintf("field %q has the wrong type", typeErr.Field)
 	case errors.Is(err, errUnknownField),
 		errors.Is(err, errTrailingData),
-		errors.Is(err, errShareWithReset):
+		errors.Is(err, errShareWithReset),
+		errors.Is(err, errInvalidTTL):
 		return http.StatusBadRequest, err.Error()
 	case errors.As(err, &sizeErr):
 		return http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", sizeErr.Limit)
@@ -120,6 +122,7 @@ var domainErrors = []struct {
 	{secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 	{secret.ErrExists, http.StatusConflict, "secret already exists"},
 	{secret.ErrInvalidLength, http.StatusBadRequest, "invalid secret length"},
+	{secret.ErrInvalidTTL, http.StatusBadRequest, "invalid TTL"},
 	{secret.ErrNotRotatable, http.StatusConflict, "secret is not rotatable"},
 
 	{authorization.ErrInvalidName, http.StatusBadRequest, "invalid policy name"},

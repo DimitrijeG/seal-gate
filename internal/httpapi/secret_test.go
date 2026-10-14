@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
@@ -30,6 +31,20 @@ func TestSecret(t *testing.T) {
 		}
 	})
 
+	t.Run("a ttl on put reaches the service as a duration", func(t *testing.T) {
+		fake := &fakeSecret{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":3600}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if fake.putTTL != time.Hour {
+			t.Errorf("got %v, want %v", fake.putTTL, time.Hour)
+		}
+	})
+
 	t.Run("a read returns the value as base64", func(t *testing.T) {
 		fake := &fakeSecret{getValue: []byte{1, 2}}
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
@@ -43,6 +58,37 @@ func TestSecret(t *testing.T) {
 
 		if got.Value != want {
 			t.Errorf("got %q, want %q", got.Value, want)
+		}
+	})
+
+	t.Run("a read returns the expiry in UTC", func(t *testing.T) {
+		expiresAt := time.Date(2026, 10, 1, 13, 0, 0, 0, time.FixedZone("UTC+2", 2*60*60))
+		fake := &fakeSecret{getValue: []byte{1, 2}, getExpiresAt: expiresAt}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		want := "2026-10-01T11:00:00Z"
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[secretBody](t, rec)
+
+		if got.ExpiresAt != want {
+			t.Errorf("got %q, want %q", got.ExpiresAt, want)
+		}
+	})
+
+	t.Run("a read without an expiry omits it", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{getValue: []byte{1, 2}}})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[map[string]any](t, rec)
+
+		if expiresAt, ok := got["expires_at"]; ok {
+			t.Errorf("got %v, want no expires_at", expiresAt)
 		}
 	})
 
@@ -83,6 +129,20 @@ func TestSecret(t *testing.T) {
 		}
 		if fake.genLength != 32 {
 			t.Errorf("length: got %d, want 32", fake.genLength)
+		}
+	})
+
+	t.Run("a ttl on generate reaches the service as a duration", func(t *testing.T) {
+		fake := &fakeSecret{genValue: make([]byte, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+		rec := do(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if fake.genTTL != time.Hour {
+			t.Errorf("got %v, want %v", fake.genTTL, time.Hour)
 		}
 	})
 
@@ -294,6 +354,73 @@ func TestSecret(t *testing.T) {
 				rec := do(t, router, tt.method, tt.target, tt.body)
 
 				assertError(t, rec, http.StatusServiceUnavailable, "the system is sealed")
+			})
+		}
+	})
+
+	t.Run("an invalid TTL from the service is a bad request", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: secret.ErrInvalidTTL}})
+
+		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":-1}`)
+
+		assertError(t, rec, http.StatusBadRequest, "invalid TTL")
+	})
+
+	t.Run("a ttl too large to hold is refused before the service", func(t *testing.T) {
+		// One second past what a time.Duration can hold.
+		tests := []struct {
+			name   string
+			method string
+			target string
+			body   string
+		}{
+			{"put", http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":9223372037}`},
+			{"generate", http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":9223372037}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeSecret{genValue: make([]byte, 32)}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+				rec := do(t, router, tt.method, tt.target, tt.body)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid TTL")
+				if fake.path != "" {
+					t.Errorf("path: got %q, want the service not called", fake.path)
+				}
+			})
+		}
+	})
+
+	t.Run("the largest ttl that fits reaches the service", func(t *testing.T) {
+		want := 9223372036 * time.Second
+		tests := []struct {
+			name   string
+			method string
+			target string
+			body   string
+			got    func(f *fakeSecret) time.Duration
+		}{
+			{"put", http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI=","ttl":9223372036}`,
+				func(f *fakeSecret) time.Duration { return f.putTTL }},
+			{"generate", http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":9223372036}`,
+				func(f *fakeSecret) time.Duration { return f.genTTL }},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeSecret{genValue: make([]byte, 32)}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+				rec := do(t, router, tt.method, tt.target, tt.body)
+				if rec.Code >= http.StatusBadRequest {
+					t.Fatalf("status: got %d, want success: %s", rec.Code, rec.Body)
+				}
+
+				if got := tt.got(fake); got != want {
+					t.Errorf("got %v, want %v", got, want)
+				}
 			})
 		}
 	})
