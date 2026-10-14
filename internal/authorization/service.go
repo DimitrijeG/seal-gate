@@ -17,6 +17,13 @@ type Repository interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// Authorizer decides whether principal may use capability on resource: nil allows, ErrDenied refuses, any other error means no decision.
+type Authorizer interface {
+	Authorize(ctx context.Context, principal Principal, resource string, capability Capability) error
+}
+
+var _ Authorizer = (*Service)(nil)
+
 // Service manages policies, validating them before they reach the repository, and decides access from them.
 type Service struct {
 	repo Repository

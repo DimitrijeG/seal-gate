@@ -203,6 +203,33 @@ func createEntity(t *testing.T, h http.Handler) string {
 	return decode[createEntityBody](t, rec).ID
 }
 
+// entityToken has root write policy dev with rules, a group holding it, an entity in the group,
+// and returns a token for that entity.
+func entityToken(t *testing.T, h http.Handler, rules string) string {
+	t.Helper()
+	if rec := send(t, h, http.MethodPut, "/v1/policies/dev", `{"rules":`+rules+`}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("put policy: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+	}
+
+	rec := send(t, h, http.MethodPost, "/v1/groups", `{"policies":["dev"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create group: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	groupID := decode[createGroupBody](t, rec).ID
+
+	rec = send(t, h, http.MethodPost, "/v1/entities", `{"groups":["`+groupID+`"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create entity: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	entityID := decode[createEntityBody](t, rec).ID
+
+	rec = send(t, h, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("issue token: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	return decode[tokenBody](t, rec).Token
+}
+
 func boltConfig(t *testing.T) *config.Config {
 	t.Helper()
 	return &config.Config{Storage: config.StorageConfig{
@@ -388,6 +415,29 @@ func TestSealLifecycle(t *testing.T) {
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a token reads a secret its group's policy grants", func(t *testing.T) {
+		router := unsealed(t)
+		want := "c2VjcmV0" // "secret"
+		putSecret(t, router, "dev/a", want)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a token is forbidden a secret no policy grants", func(t *testing.T) {
+		router := unsealed(t)
+		putSecret(t, router, "prod/a", "c2VjcmV0")
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/prod/a", "")
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
 		}
 	})
 

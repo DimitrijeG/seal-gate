@@ -34,11 +34,12 @@ type statusBody struct {
 	Progress    int  `json:"progress"`
 }
 
-// fakeAuthenticator accepts every token as the root unless err is set.
+// fakeAuthenticator accepts every token as principal unless err is set.
 type fakeAuthenticator struct {
-	token []byte // a copy of the last token
-	given []byte // the last token as given, to check it is cleared
-	err   error
+	token     []byte // a copy of the last token
+	given     []byte // the last token as given, to check it is cleared
+	principal authorization.Principal
+	err       error
 }
 
 func (f *fakeAuthenticator) Authenticate(ctx context.Context, token []byte) (authorization.Principal, error) {
@@ -47,7 +48,7 @@ func (f *fakeAuthenticator) Authenticate(ctx context.Context, token []byte) (aut
 	if f.err != nil {
 		return authorization.Principal{}, f.err
 	}
-	return authorization.NewRootPrincipal(), nil
+	return f.principal, nil
 }
 
 type fakeSystem struct {
@@ -97,7 +98,8 @@ type listBody struct {
 }
 
 type fakeSecret struct {
-	path       string // the last path Put, Get or Delete got
+	principal  authorization.Principal // the last principal any method got
+	path       string                  // the last path Put, Get or Delete got
 	putValue   []byte
 	getValue   []byte
 	listPrefix string
@@ -105,23 +107,27 @@ type fakeSecret struct {
 	err        error
 }
 
-func (f *fakeSecret) Put(ctx context.Context, path string, value []byte) error {
+func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal, path string, value []byte) error {
+	f.principal = principal
 	f.path = path
 	f.putValue = bytes.Clone(value)
 	return f.err
 }
 
-func (f *fakeSecret) Get(ctx context.Context, path string) ([]byte, error) {
+func (f *fakeSecret) Get(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
+	f.principal = principal
 	f.path = path
 	return f.getValue, f.err
 }
 
-func (f *fakeSecret) Delete(ctx context.Context, path string) error {
+func (f *fakeSecret) Delete(ctx context.Context, principal authorization.Principal, path string) error {
+	f.principal = principal
 	f.path = path
 	return f.err
 }
 
-func (f *fakeSecret) List(ctx context.Context, prefix string) ([]string, error) {
+func (f *fakeSecret) List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error) {
+	f.principal = principal
 	f.listPrefix = prefix
 	return f.listPaths, f.err
 }

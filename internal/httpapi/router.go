@@ -25,10 +25,10 @@ type SystemService interface {
 
 // SecretService is secret storage as the handlers use it.
 type SecretService interface {
-	Put(ctx context.Context, path string, value []byte) error
-	Get(ctx context.Context, path string) ([]byte, error)
-	Delete(ctx context.Context, path string) error
-	List(ctx context.Context, prefix string) ([]string, error)
+	Put(ctx context.Context, principal authorization.Principal, path string, value []byte) error
+	Get(ctx context.Context, principal authorization.Principal, path string) ([]byte, error)
+	Delete(ctx context.Context, principal authorization.Principal, path string) error
+	List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error)
 }
 
 // PolicyService is policy storage as the handlers use it.
@@ -126,12 +126,21 @@ func (h *Handlers) authenticate(next http.HandlerFunc) http.Handler {
 			writeError(w, h.Logger, errUnauthenticated)
 			return
 		}
-		if _, err := h.Authenticator.Authenticate(r.Context(), token); err != nil {
+		principal, err := h.Authenticator.Authenticate(r.Context(), token)
+		if err != nil {
 			writeError(w, h.Logger, err)
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal)))
 	})
+}
+
+type principalKey struct{}
+
+// principalFrom returns the principal authenticate stored, or the zero principal, which grants nothing.
+func principalFrom(r *http.Request) authorization.Principal {
+	principal, _ := r.Context().Value(principalKey{}).(authorization.Principal)
+	return principal
 }
 
 // refuseUncleanPaths runs before the mux, which would otherwise redirect an

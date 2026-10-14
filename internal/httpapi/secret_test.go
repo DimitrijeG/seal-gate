@@ -3,11 +3,14 @@ package httpapi_test
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 )
@@ -91,6 +94,43 @@ func TestSecret(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("each operation passes the authenticated principal to the service", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			method string
+			target string
+			body   string
+		}{
+			{"get", http.MethodGet, "/v1/secrets/db/password", ""},
+			{"put", http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI="}`},
+			{"delete", http.MethodDelete, "/v1/secrets/db/password", ""},
+			{"list", http.MethodGet, "/v1/secrets?prefix=db/", ""},
+		}
+
+		want := authorization.NewPolicyPrincipal("dev")
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeSecret{}
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Secret: fake})
+
+				do(t, router, tt.method, tt.target, tt.body)
+
+				if !reflect.DeepEqual(fake.principal, want) {
+					t.Errorf("got %+v, want %+v", fake.principal, want)
+				}
+			})
+		}
+	})
+
+	t.Run("a denied operation is forbidden", func(t *testing.T) {
+		denied := fmt.Errorf("secret: %w", authorization.ErrDenied)
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: denied}})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+
+		assertError(t, rec, http.StatusForbidden, "permission denied")
 	})
 
 	t.Run("each operation reports the service's error", func(t *testing.T) {

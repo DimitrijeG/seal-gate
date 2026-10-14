@@ -123,6 +123,7 @@ var domainErrors = []struct {
 	{authorization.ErrInvalidRule, http.StatusBadRequest, "invalid policy rule"},
 	{authorization.ErrNotFound, http.StatusNotFound, "policy not found"},
 	{authorization.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
+	{authorization.ErrDenied, http.StatusForbidden, "permission denied"},
 
 	{identity.ErrInvalidEntityID, http.StatusBadRequest, "invalid entity ID"},
 	{identity.ErrInvalidPolicyName, http.StatusBadRequest, "invalid policy name"},

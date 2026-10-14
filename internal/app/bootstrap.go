@@ -93,12 +93,13 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 	entity := identity.NewEntityService(repositories.set.Entity, infra.random)
 	token := identity.NewTokenService(repositories.set.Token, entity, infra.random)
 	group := identity.NewGroupService(repositories.set.Group, infra.random)
+	policy := authorization.New(repositories.set.Policy)
 
 	return &services{
 		authenticator: identity.NewAuthenticator(sys, token, group),
 		system:        sys,
-		secret:        secret.New(repositories.set.Secret),
-		policy:        authorization.New(repositories.set.Policy),
+		secret:        secret.New(repositories.set.Secret, policy),
+		policy:        policy,
 		entity:        entity,
 		token:         token,
 		group:         group,

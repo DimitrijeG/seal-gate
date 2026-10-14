@@ -171,6 +171,7 @@ paths:
       summary: List the paths of stored secrets, optionally under a prefix.
       description: >
         Returns every path under the prefix, at any depth, never the values.
+        Needs `list` on `secrets/<prefix>`.
       parameters:
         - name: prefix
           in: query
@@ -194,6 +195,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -218,7 +221,9 @@ paths:
       tags: [secrets]
       summary: Store a secret, replacing any value already at the path.
       description: >
-        Creates or replaces; the response is the same either way.
+        Creates or replaces; the response is the same either way. Needs
+        `create` on `secrets/<path>` when the path is missing, `update` when
+        it exists.
       requestBody:
         required: true
         content:
@@ -232,6 +237,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: >
@@ -248,6 +255,8 @@ paths:
       operationId: getSecret
       tags: [secrets]
       summary: Read a secret.
+      description: >
+        Needs `read` on `secrets/<path>`.
       responses:
         "200":
           description: The secret's value.
@@ -259,6 +268,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -271,7 +282,8 @@ paths:
       tags: [secrets]
       summary: Delete a secret.
       description: >
-        Idempotent: deleting a missing secret also succeeds.
+        Idempotent: deleting a missing secret also succeeds. Needs `delete`
+        on `secrets/<path>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
@@ -279,6 +291,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -656,6 +670,14 @@ components:
           schema:
             type: string
           example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: >
+        The token is valid, but none of its policies grants the capability
+        the operation needs, or one denies it.
       content:
         application/json:
           schema:
