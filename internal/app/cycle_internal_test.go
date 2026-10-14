@@ -157,12 +157,23 @@ func unsealAll(t *testing.T, h http.Handler, shares []string) {
 	}
 }
 
-// unsealed returns a router over an initialized, unsealed instance.
+// withToken sends token as a bearer token on every request that does not carry one.
+func withToken(h http.Handler, token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// unsealed returns a router over an initialized, unsealed instance, sending its root token.
 func unsealed(t *testing.T) http.Handler {
 	t.Helper()
 	router := newRouter(t)
-	unsealAll(t, router, initialize(t, router).Shares)
-	return router
+	body := initialize(t, router)
+	unsealAll(t, router, body.Shares)
+	return withToken(router, body.RootToken)
 }
 
 func putSecret(t *testing.T, h http.Handler, path, value string) {
@@ -190,6 +201,33 @@ func createEntity(t *testing.T, h http.Handler) string {
 		t.Fatalf("create: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
 	}
 	return decode[createEntityBody](t, rec).ID
+}
+
+// entityToken has root write policy dev with rules, a group holding it, an entity in the group,
+// and returns a token for that entity.
+func entityToken(t *testing.T, h http.Handler, rules string) string {
+	t.Helper()
+	if rec := send(t, h, http.MethodPut, "/v1/policies/dev", `{"rules":`+rules+`}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("put policy: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+	}
+
+	rec := send(t, h, http.MethodPost, "/v1/groups", `{"policies":["dev"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create group: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	groupID := decode[createGroupBody](t, rec).ID
+
+	rec = send(t, h, http.MethodPost, "/v1/entities", `{"groups":["`+groupID+`"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create entity: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	entityID := decode[createEntityBody](t, rec).ID
+
+	rec = send(t, h, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("issue token: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	return decode[tokenBody](t, rec).Token
 }
 
 func boltConfig(t *testing.T) *config.Config {
@@ -226,7 +264,7 @@ func writeOnBolt(t *testing.T, cfg *config.Config, value string) initBody {
 	router := routerOver(t, backend)
 	body := initialize(t, router)
 	unsealAll(t, router, body.Shares)
-	putSecret(t, router, "db/password", value)
+	putSecret(t, withToken(router, body.RootToken), "db/password", value)
 
 	// Close releases the file lock; reopening before it would return ErrLocked.
 	if err := backend.Close(); err != nil {
@@ -332,17 +370,20 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("seal discards a partial unseal", func(t *testing.T) {
+	t.Run("reset discards a partial unseal", func(t *testing.T) {
 		router := newRouter(t)
 		shares := initialize(t, router).Shares
 		unseal(t, router, shares[0])
 
-		rec := send(t, router, http.MethodPost, "/v1/sys/seal", "")
-		if rec.Code != http.StatusNoContent {
-			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		rec := send(t, router, http.MethodPost, "/v1/sys/unseal", `{"reset":true}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("reset: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		if got := decode[statusBody](t, rec); got.Progress != 0 {
+			t.Fatalf("reset: got progress %d, want 0", got.Progress)
 		}
 
-		// Without the discard, the second share after the seal would reach the threshold.
+		// Without the discard, the second share after the reset would reach the threshold.
 		if got := unseal(t, router, shares[2]); got.Progress != 1 {
 			t.Fatalf("share 3: got progress %d, want 1", got.Progress)
 		}
@@ -351,6 +392,141 @@ func TestSealLifecycle(t *testing.T) {
 		}
 		if got := unseal(t, router, shares[4]); got.Sealed {
 			t.Errorf("share 5: got %+v, want unsealed", got)
+		}
+	})
+
+	t.Run("a request without a token is unauthorized", func(t *testing.T) {
+		router := newRouter(t)
+		unsealAll(t, router, initialize(t, router).Shares)
+
+		rec := send(t, router, http.MethodGet, "/v1/secrets?prefix=", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a token never issued is unauthorized", func(t *testing.T) {
+		router := newRouter(t)
+		unsealAll(t, router, initialize(t, router).Shares)
+		token := base64.StdEncoding.EncodeToString(make([]byte, 32))
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets?prefix=", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a token reads a secret its group's policy grants", func(t *testing.T) {
+		router := unsealed(t)
+		want := "c2VjcmV0" // "secret"
+		putSecret(t, router, "dev/a", want)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a token is forbidden a secret no policy grants", func(t *testing.T) {
+		router := unsealed(t)
+		putSecret(t, router, "prod/a", "c2VjcmV0")
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/prod/a", "")
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+	})
+
+	t.Run("a token is forbidden a policy no rule grants", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/policies/dev", "")
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+	})
+
+	t.Run("a token is forbidden an entity no rule grants", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/entities", `{}`)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+	})
+
+	t.Run("a token issues tokens where its policy grants create", func(t *testing.T) {
+		router := unsealed(t)
+		entityID := createEntity(t, router)
+		token := entityToken(t, router, `[{"path":"system/entities/*","capabilities":["create"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+
+		if rec.Code != http.StatusCreated {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+	})
+
+	t.Run("a token is forbidden a group no rule grants", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/groups", `{}`)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+	})
+
+	t.Run("a token reads a group its policy grants", func(t *testing.T) {
+		router := unsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/groups", `{}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create group: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		groupID := decode[createGroupBody](t, rec).ID
+		token := entityToken(t, router, `[{"path":"system/groups/*","capabilities":["read"]}]`)
+
+		rec = send(t, withToken(router, token), http.MethodGet, "/v1/groups/"+groupID, "")
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+	})
+
+	t.Run("a token is forbidden the seal no rule grants", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/sys/seal", "")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+
+		if rec := send(t, router, http.MethodGet, "/v1/sys/health", ""); rec.Code != http.StatusNoContent {
+			t.Errorf("health: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+	})
+
+	t.Run("a token seals where its policy grants update", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"system/seal","capabilities":["update"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/sys/seal", "")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if rec := send(t, router, http.MethodGet, "/v1/sys/health", ""); rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("health: got %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body)
 		}
 	})
 
@@ -367,12 +543,12 @@ func TestSealLifecycle(t *testing.T) {
 	t.Run("a secret written before a restart reads back after unsealing", func(t *testing.T) {
 		cfg := boltConfig(t)
 		want := "c2VjcmV0" // "secret"
-		shares := writeOnBolt(t, cfg, want).Shares
+		body := writeOnBolt(t, cfg, want)
 
 		router := routerOver(t, reopenBolt(t, cfg))
-		unsealAll(t, router, shares)
+		unsealAll(t, router, body.Shares)
 
-		if got := getSecret(t, router, "db/password"); got != want {
+		if got := getSecret(t, withToken(router, body.RootToken), "db/password"); got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
@@ -439,9 +615,9 @@ func TestSealLifecycle(t *testing.T) {
 
 	t.Run("writing a secret while sealed is service unavailable", func(t *testing.T) {
 		router := newRouter(t)
-		initialize(t, router)
+		token := initialize(t, router).RootToken
 
-		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0"}`)
+		rec := send(t, withToken(router, token), http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0"}`)
 
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body)

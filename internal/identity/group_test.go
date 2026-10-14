@@ -100,9 +100,16 @@ func (r *racingGroups) Delete(ctx context.Context, id string) error {
 
 func newGroupService(t *testing.T) (*identity.GroupService, *fakeGroups, *fakeRandom) {
 	t.Helper()
+	s, groups, random, _ := newAuthorizedGroupService(t)
+	return s, groups, random
+}
+
+func newAuthorizedGroupService(t *testing.T) (*identity.GroupService, *fakeGroups, *fakeRandom, *fakeAuthorizer) {
+	t.Helper()
 	groups := &fakeGroups{groups: make(map[string]identity.Group)}
 	random := &fakeRandom{}
-	return identity.NewGroupService(groups, random), groups, random
+	authorizer := &fakeAuthorizer{}
+	return identity.NewGroupService(groups, random, authorizer), groups, random, authorizer
 }
 
 func TestGroup(t *testing.T) {
@@ -110,11 +117,11 @@ func TestGroup(t *testing.T) {
 		s, _, _ := newGroupService(t)
 		group := identity.Group{Policies: []string{"dev"}}
 
-		id, err := s.CreateGroup(t.Context(), group)
+		id, err := s.CreateGroup(t.Context(), principal, group)
 		if err != nil {
 			t.Fatalf("CreateGroup: %v", err)
 		}
-		got, err := s.GetGroup(t.Context(), id)
+		got, err := s.GetGroup(t.Context(), principal, id)
 		if err != nil {
 			t.Fatalf("GetGroup: %v", err)
 		}
@@ -128,7 +135,7 @@ func TestGroup(t *testing.T) {
 	t.Run("a created group's ID is 16 random bytes in hex", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 
-		id, err := s.CreateGroup(t.Context(), identity.Group{})
+		id, err := s.CreateGroup(t.Context(), principal, identity.Group{})
 		if err != nil {
 			t.Fatalf("CreateGroup: %v", err)
 		}
@@ -142,7 +149,7 @@ func TestGroup(t *testing.T) {
 	t.Run("an ID given to create is replaced", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 
-		id, err := s.CreateGroup(t.Context(), identity.Group{ID: hexID})
+		id, err := s.CreateGroup(t.Context(), principal, identity.Group{ID: hexID})
 		if err != nil {
 			t.Fatalf("CreateGroup: %v", err)
 		}
@@ -157,7 +164,7 @@ func TestGroup(t *testing.T) {
 		randomErr := errors.New("entropy exhausted")
 		random.err = randomErr
 
-		_, err := s.CreateGroup(t.Context(), identity.Group{})
+		_, err := s.CreateGroup(t.Context(), principal, identity.Group{})
 
 		if !errors.Is(err, randomErr) {
 			t.Errorf("err: got %v, want %v", err, randomErr)
@@ -170,7 +177,7 @@ func TestGroup(t *testing.T) {
 	t.Run("reading a missing group is not found", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 
-		_, err := s.GetGroup(t.Context(), hexID)
+		_, err := s.GetGroup(t.Context(), principal, hexID)
 
 		if !errors.Is(err, identity.ErrGroupNotFound) {
 			t.Errorf("got %v, want %v", err, identity.ErrGroupNotFound)
@@ -179,16 +186,16 @@ func TestGroup(t *testing.T) {
 
 	t.Run("a deleted group is not found", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
-		id, err := s.CreateGroup(t.Context(), identity.Group{})
+		id, err := s.CreateGroup(t.Context(), principal, identity.Group{})
 		if err != nil {
 			t.Fatalf("CreateGroup: %v", err)
 		}
 
-		if err := s.DeleteGroup(t.Context(), id); err != nil {
+		if err := s.DeleteGroup(t.Context(), principal, id); err != nil {
 			t.Fatalf("DeleteGroup: %v", err)
 		}
 
-		_, err = s.GetGroup(t.Context(), id)
+		_, err = s.GetGroup(t.Context(), principal, id)
 		if !errors.Is(err, identity.ErrGroupNotFound) {
 			t.Errorf("got %v, want %v", err, identity.ErrGroupNotFound)
 		}
@@ -197,24 +204,24 @@ func TestGroup(t *testing.T) {
 	t.Run("deleting a missing group is not an error", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 
-		if err := s.DeleteGroup(t.Context(), hexID); err != nil {
+		if err := s.DeleteGroup(t.Context(), principal, hexID); err != nil {
 			t.Errorf("got %v, want nil", err)
 		}
 	})
 
 	t.Run("an update replaces the policies", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
-		id, err := s.CreateGroup(t.Context(), identity.Group{Policies: []string{"dev"}})
+		id, err := s.CreateGroup(t.Context(), principal, identity.Group{Policies: []string{"dev"}})
 		if err != nil {
 			t.Fatalf("CreateGroup: %v", err)
 		}
 		updated := identity.Group{ID: id, Policies: []string{"ops"}}
 
-		if err := s.UpdateGroup(t.Context(), updated); err != nil {
+		if err := s.UpdateGroup(t.Context(), principal, updated); err != nil {
 			t.Fatalf("UpdateGroup: %v", err)
 		}
 
-		got, err := s.GetGroup(t.Context(), id)
+		got, err := s.GetGroup(t.Context(), principal, id)
 		if err != nil {
 			t.Fatalf("GetGroup: %v", err)
 		}
@@ -226,7 +233,7 @@ func TestGroup(t *testing.T) {
 	t.Run("updating a missing group is not found", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 
-		err := s.UpdateGroup(t.Context(), identity.Group{ID: hexID})
+		err := s.UpdateGroup(t.Context(), principal, identity.Group{ID: hexID})
 
 		if !errors.Is(err, identity.ErrGroupNotFound) {
 			t.Errorf("got %v, want %v", err, identity.ErrGroupNotFound)
@@ -235,9 +242,9 @@ func TestGroup(t *testing.T) {
 
 	t.Run("updating a missing group does not create it", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
-		_ = s.UpdateGroup(t.Context(), identity.Group{ID: hexID}) // its error is the previous test's
+		_ = s.UpdateGroup(t.Context(), principal, identity.Group{ID: hexID}) // its error is the previous test's
 
-		_, err := s.GetGroup(t.Context(), hexID)
+		_, err := s.GetGroup(t.Context(), principal, hexID)
 
 		if !errors.Is(err, identity.ErrGroupNotFound) {
 			t.Errorf("got %v, want %v", err, identity.ErrGroupNotFound)
@@ -261,7 +268,7 @@ func TestGroup(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _, _ := newGroupService(t)
 
-				_, err := s.GetGroup(t.Context(), tt.id)
+				_, err := s.GetGroup(t.Context(), principal, tt.id)
 
 				if !errors.Is(err, identity.ErrInvalidGroupID) {
 					t.Errorf("got %v, want %v", err, identity.ErrInvalidGroupID)
@@ -284,7 +291,7 @@ func TestGroup(t *testing.T) {
 				s, groups, _ := newGroupService(t)
 				groups.groups[tt.id] = identity.Group{ID: tt.id}
 
-				if _, err := s.GetGroup(t.Context(), tt.id); err != nil {
+				if _, err := s.GetGroup(t.Context(), principal, tt.id); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -297,14 +304,14 @@ func TestGroup(t *testing.T) {
 			call func(ctx context.Context, s *identity.GroupService) error
 		}{
 			{"get", func(ctx context.Context, s *identity.GroupService) error {
-				_, err := s.GetGroup(ctx, "../dev")
+				_, err := s.GetGroup(ctx, principal, "../dev")
 				return err
 			}},
 			{"update", func(ctx context.Context, s *identity.GroupService) error {
-				return s.UpdateGroup(ctx, identity.Group{ID: "../dev"})
+				return s.UpdateGroup(ctx, principal, identity.Group{ID: "../dev"})
 			}},
 			{"delete", func(ctx context.Context, s *identity.GroupService) error {
-				return s.DeleteGroup(ctx, "../dev")
+				return s.DeleteGroup(ctx, principal, "../dev")
 			}},
 		}
 
@@ -327,7 +334,7 @@ func TestGroup(t *testing.T) {
 	t.Run("an update with an invalid ID and policy name reports the ID", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 
-		err := s.UpdateGroup(t.Context(), identity.Group{ID: "../dev", Policies: []string{"dev/ops"}})
+		err := s.UpdateGroup(t.Context(), principal, identity.Group{ID: "../dev", Policies: []string{"dev/ops"}})
 
 		if !errors.Is(err, identity.ErrInvalidGroupID) {
 			t.Errorf("got %v, want %v", err, identity.ErrInvalidGroupID)
@@ -339,7 +346,7 @@ func TestGroup(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _, _ := newGroupService(t)
 
-				_, err := s.CreateGroup(t.Context(), identity.Group{Policies: []string{tt.policy}})
+				_, err := s.CreateGroup(t.Context(), principal, identity.Group{Policies: []string{tt.policy}})
 
 				if !errors.Is(err, identity.ErrInvalidPolicyName) {
 					t.Errorf("got %v, want %v", err, identity.ErrInvalidPolicyName)
@@ -353,7 +360,7 @@ func TestGroup(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _, _ := newGroupService(t)
 
-				if _, err := s.CreateGroup(t.Context(), identity.Group{Policies: []string{tt.policy}}); err != nil {
+				if _, err := s.CreateGroup(t.Context(), principal, identity.Group{Policies: []string{tt.policy}}); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -368,11 +375,11 @@ func TestGroup(t *testing.T) {
 			call func(ctx context.Context, s *identity.GroupService) error
 		}{
 			{"create", func(ctx context.Context, s *identity.GroupService) error {
-				_, err := s.CreateGroup(ctx, bad)
+				_, err := s.CreateGroup(ctx, principal, bad)
 				return err
 			}},
 			{"update", func(ctx context.Context, s *identity.GroupService) error {
-				return s.UpdateGroup(ctx, bad)
+				return s.UpdateGroup(ctx, principal, bad)
 			}},
 		}
 
@@ -405,7 +412,7 @@ func TestGroup(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _, _ := newGroupService(t)
 
-				if _, err := s.CreateGroup(t.Context(), tt.group); err != nil {
+				if _, err := s.CreateGroup(t.Context(), principal, tt.group); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -417,7 +424,7 @@ func TestGroup(t *testing.T) {
 		// Seeded past create, as a record from a faulty encoder would arrive.
 		groups.groups[hexID] = identity.Group{ID: hexID, Policies: []string{"dev/ops"}}
 
-		_, err := s.GetGroup(t.Context(), hexID)
+		_, err := s.GetGroup(t.Context(), principal, hexID)
 
 		if !errors.Is(err, identity.ErrUnreadableGroup) {
 			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
@@ -428,7 +435,7 @@ func TestGroup(t *testing.T) {
 		s, groups, _ := newGroupService(t)
 		groups.groups[hexID] = identity.Group{ID: hexID, Policies: []string{"dev/ops"}}
 
-		err := s.UpdateGroup(t.Context(), identity.Group{ID: hexID, Policies: []string{"ops"}})
+		err := s.UpdateGroup(t.Context(), principal, identity.Group{ID: hexID, Policies: []string{"ops"}})
 
 		if !errors.Is(err, identity.ErrUnreadableGroup) {
 			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
@@ -438,15 +445,17 @@ func TestGroup(t *testing.T) {
 	t.Run("an update racing a delete cannot bring the group back", func(t *testing.T) {
 		groups := newRacingGroups()
 		groups.groups[hexID] = identity.Group{ID: hexID}
-		s := identity.NewGroupService(groups, &fakeRandom{})
+		s := identity.NewGroupService(groups, &fakeRandom{}, &fakeAuthorizer{})
 		ctx := t.Context()
 
 		var updateErr, deleteErr error
 		var wg sync.WaitGroup
-		wg.Go(func() { updateErr = s.UpdateGroup(ctx, identity.Group{ID: hexID, Policies: []string{"ops"}}) })
+		wg.Go(func() {
+			updateErr = s.UpdateGroup(ctx, principal, identity.Group{ID: hexID, Policies: []string{"ops"}})
+		})
 		// The delete starts only once the update has seen the group exist.
 		<-groups.read
-		wg.Go(func() { deleteErr = s.DeleteGroup(ctx, hexID) })
+		wg.Go(func() { deleteErr = s.DeleteGroup(ctx, principal, hexID) })
 		wg.Wait()
 
 		if updateErr != nil {
@@ -455,7 +464,7 @@ func TestGroup(t *testing.T) {
 		if deleteErr != nil {
 			t.Fatalf("DeleteGroup: %v", deleteErr)
 		}
-		_, err := s.GetGroup(ctx, hexID)
+		_, err := s.GetGroup(ctx, principal, hexID)
 		if !errors.Is(err, identity.ErrGroupNotFound) {
 			t.Errorf("got %v, want %v", err, identity.ErrGroupNotFound)
 		}
@@ -493,23 +502,23 @@ func TestGroup(t *testing.T) {
 	})
 }
 
-// groupOperations calls each group method with valid input, so only the repository can fail it.
+// groupOperations calls each group method with valid input, so only the repository or the authorizer can fail it.
 var groupOperations = []struct {
 	name string
 	call func(ctx context.Context, s *identity.GroupService) error
 }{
 	{"create", func(ctx context.Context, s *identity.GroupService) error {
-		_, err := s.CreateGroup(ctx, identity.Group{})
+		_, err := s.CreateGroup(ctx, principal, identity.Group{})
 		return err
 	}},
 	{"get", func(ctx context.Context, s *identity.GroupService) error {
-		_, err := s.GetGroup(ctx, hexID)
+		_, err := s.GetGroup(ctx, principal, hexID)
 		return err
 	}},
 	{"update", func(ctx context.Context, s *identity.GroupService) error {
-		return s.UpdateGroup(ctx, identity.Group{ID: hexID})
+		return s.UpdateGroup(ctx, principal, identity.Group{ID: hexID})
 	}},
 	{"delete", func(ctx context.Context, s *identity.GroupService) error {
-		return s.DeleteGroup(ctx, hexID)
+		return s.DeleteGroup(ctx, principal, hexID)
 	}},
 }

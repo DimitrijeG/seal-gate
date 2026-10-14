@@ -34,6 +34,23 @@ type statusBody struct {
 	Progress    int  `json:"progress"`
 }
 
+// fakeAuthenticator accepts every token as principal unless err is set.
+type fakeAuthenticator struct {
+	token     []byte // a copy of the last token
+	given     []byte // the last token as given, to check it is cleared
+	principal authorization.Principal
+	err       error
+}
+
+func (f *fakeAuthenticator) Authenticate(ctx context.Context, token []byte) (authorization.Principal, error) {
+	f.token = bytes.Clone(token)
+	f.given = token
+	if f.err != nil {
+		return authorization.Principal{}, f.err
+	}
+	return f.principal, nil
+}
+
 type fakeSystem struct {
 	initConfig   system.SealConfiguration
 	initResult   system.InitResult
@@ -42,7 +59,11 @@ type fakeSystem struct {
 	unsealGiven  []byte
 	unsealResult system.Status
 	unsealErr    error
+	resetResult  system.Status
+	resetErr     error
 	sealed       bool
+	principal    authorization.Principal // the principal Seal got
+	sealErr      error
 	statusResult system.Status
 	statusErr    error
 }
@@ -62,8 +83,14 @@ func (f *fakeSystem) Unseal(ctx context.Context, share []byte) (system.Status, e
 	return f.unsealResult, f.unsealErr
 }
 
-func (f *fakeSystem) Seal(ctx context.Context) {
+func (f *fakeSystem) ResetUnseal(ctx context.Context) (system.Status, error) {
+	return f.resetResult, f.resetErr
+}
+
+func (f *fakeSystem) Seal(ctx context.Context, principal authorization.Principal) error {
+	f.principal = principal
 	f.sealed = true
+	return f.sealErr
 }
 
 type secretBody struct {
@@ -75,7 +102,8 @@ type listBody struct {
 }
 
 type fakeSecret struct {
-	path       string // the last path Put, Get or Delete got
+	principal  authorization.Principal // the last principal any method got
+	path       string                  // the last path Put, Get or Delete got
 	putValue   []byte
 	getValue   []byte
 	listPrefix string
@@ -83,23 +111,27 @@ type fakeSecret struct {
 	err        error
 }
 
-func (f *fakeSecret) Put(ctx context.Context, path string, value []byte) error {
+func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal, path string, value []byte) error {
+	f.principal = principal
 	f.path = path
 	f.putValue = bytes.Clone(value)
 	return f.err
 }
 
-func (f *fakeSecret) Get(ctx context.Context, path string) ([]byte, error) {
+func (f *fakeSecret) Get(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
+	f.principal = principal
 	f.path = path
 	return f.getValue, f.err
 }
 
-func (f *fakeSecret) Delete(ctx context.Context, path string) error {
+func (f *fakeSecret) Delete(ctx context.Context, principal authorization.Principal, path string) error {
+	f.principal = principal
 	f.path = path
 	return f.err
 }
 
-func (f *fakeSecret) List(ctx context.Context, prefix string) ([]string, error) {
+func (f *fakeSecret) List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error) {
+	f.principal = principal
 	f.listPrefix = prefix
 	return f.listPaths, f.err
 }
@@ -114,23 +146,27 @@ type ruleBody struct {
 }
 
 type fakePolicy struct {
-	name      string // the last name Get or Delete got
+	principal authorization.Principal // the last principal any method got
+	name      string                  // the last name Get or Delete got
 	putPolicy authorization.Policy
 	getPolicy authorization.Policy
 	err       error
 }
 
-func (f *fakePolicy) Put(ctx context.Context, policy authorization.Policy) error {
+func (f *fakePolicy) Put(ctx context.Context, principal authorization.Principal, policy authorization.Policy) error {
+	f.principal = principal
 	f.putPolicy = policy
 	return f.err
 }
 
-func (f *fakePolicy) Get(ctx context.Context, name string) (authorization.Policy, error) {
+func (f *fakePolicy) Get(ctx context.Context, principal authorization.Principal, name string) (authorization.Policy, error) {
+	f.principal = principal
 	f.name = name
 	return f.getPolicy, f.err
 }
 
-func (f *fakePolicy) Delete(ctx context.Context, name string) error {
+func (f *fakePolicy) Delete(ctx context.Context, principal authorization.Principal, name string) error {
+	f.principal = principal
 	f.name = name
 	return f.err
 }
@@ -145,7 +181,8 @@ type createEntityBody struct {
 }
 
 type fakeEntity struct {
-	id        string // the last ID Get or Delete got
+	principal authorization.Principal // the last principal any method got
+	id        string                  // the last ID Get or Delete got
 	created   identity.Entity
 	createID  string
 	getEntity identity.Entity
@@ -153,33 +190,39 @@ type fakeEntity struct {
 	err       error
 }
 
-func (f *fakeEntity) CreateEntity(ctx context.Context, entity identity.Entity) (string, error) {
+func (f *fakeEntity) CreateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) (string, error) {
+	f.principal = principal
 	f.created = entity
 	return f.createID, f.err
 }
 
-func (f *fakeEntity) GetEntity(ctx context.Context, id string) (identity.Entity, error) {
+func (f *fakeEntity) GetEntity(ctx context.Context, principal authorization.Principal, id string) (identity.Entity, error) {
+	f.principal = principal
 	f.id = id
 	return f.getEntity, f.err
 }
 
-func (f *fakeEntity) UpdateEntity(ctx context.Context, entity identity.Entity) error {
+func (f *fakeEntity) UpdateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) error {
+	f.principal = principal
 	f.updated = entity
 	return f.err
 }
 
-func (f *fakeEntity) DeleteEntity(ctx context.Context, id string) error {
+func (f *fakeEntity) DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error {
+	f.principal = principal
 	f.id = id
 	return f.err
 }
 
 type fakeToken struct {
-	entityID string
-	token    []byte
-	err      error
+	principal authorization.Principal
+	entityID  string
+	token     []byte
+	err       error
 }
 
-func (f *fakeToken) CreateToken(ctx context.Context, entityID string) ([]byte, error) {
+func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Principal, entityID string) ([]byte, error) {
+	f.principal = principal
 	f.entityID = entityID
 	return f.token, f.err
 }
@@ -197,38 +240,55 @@ type createGroupBody struct {
 }
 
 type fakeGroup struct {
-	id       string // the last ID Get or Delete got
-	created  identity.Group
-	createID string
-	getGroup identity.Group
-	updated  identity.Group
-	err      error
+	principal authorization.Principal // the last principal any method got
+	id        string                  // the last ID Get or Delete got
+	created   identity.Group
+	createID  string
+	getGroup  identity.Group
+	updated   identity.Group
+	err       error
 }
 
-func (f *fakeGroup) CreateGroup(ctx context.Context, group identity.Group) (string, error) {
+func (f *fakeGroup) CreateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) (string, error) {
+	f.principal = principal
 	f.created = group
 	return f.createID, f.err
 }
 
-func (f *fakeGroup) GetGroup(ctx context.Context, id string) (identity.Group, error) {
+func (f *fakeGroup) GetGroup(ctx context.Context, principal authorization.Principal, id string) (identity.Group, error) {
+	f.principal = principal
 	f.id = id
 	return f.getGroup, f.err
 }
 
-func (f *fakeGroup) UpdateGroup(ctx context.Context, group identity.Group) error {
+func (f *fakeGroup) UpdateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) error {
+	f.principal = principal
 	f.updated = group
 	return f.err
 }
 
-func (f *fakeGroup) DeleteGroup(ctx context.Context, id string) error {
+func (f *fakeGroup) DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error {
+	f.principal = principal
 	f.id = id
 	return f.err
 }
 
+// bearer authenticates as whatever the router's authenticator decides; AQID is {1, 2, 3}.
+const bearer = "Bearer AQID"
+
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doWithAuthorization(t, h, bearer, method, path, body)
+}
+
+// doWithAuthorization sends authorization as the Authorization header, or none if it is empty.
+func doWithAuthorization(t *testing.T, h http.Handler, authorization, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", contentTypeJSON)
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)

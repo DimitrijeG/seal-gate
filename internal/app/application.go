@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"slices"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
@@ -66,13 +67,15 @@ func (a *Application) Run(ctx context.Context) error {
 // close seals first, so no key outlives the backend, then runs every
 // closer in reverse order, even after one fails.
 func (a *Application) close() error {
+	var errs []error
 	// Build's cleanup closes an application whose services may not exist yet.
-	// Run's context is already cancelled here; sealing must not depend on it.
 	if a.system != nil {
-		a.system.Seal(context.Background())
+		// Root, on a fresh context: Run's is cancelled by now, and no decision may stop the seal.
+		if err := a.system.Seal(context.Background(), authorization.NewRootPrincipal()); err != nil {
+			errs = append(errs, fmt.Errorf("app: seal: %w", err))
+		}
 	}
 
-	var errs []error
 	for _, closer := range slices.Backward(a.closers) {
 		if err := closer(); err != nil {
 			errs = append(errs, fmt.Errorf("app: close: %w", err))

@@ -28,7 +28,7 @@ func (h *Handlers) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.Group.CreateGroup(r.Context(), req.group(""))
+	id, err := h.Group.CreateGroup(r.Context(), principalFrom(r), req.group(""))
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -40,7 +40,7 @@ func (h *Handlers) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleGetGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	group, err := h.Group.GetGroup(r.Context(), id)
+	group, err := h.Group.GetGroup(r.Context(), principalFrom(r), id)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -58,7 +58,7 @@ func (h *Handlers) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Group.UpdateGroup(r.Context(), req.group(id)); err != nil {
+	if err := h.Group.UpdateGroup(r.Context(), principalFrom(r), req.group(id)); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -69,7 +69,7 @@ func (h *Handlers) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	if err := h.Group.DeleteGroup(r.Context(), id); err != nil {
+	if err := h.Group.DeleteGroup(r.Context(), principalFrom(r), id); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}

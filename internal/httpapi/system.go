@@ -46,6 +46,7 @@ func (h *Handlers) handleInit(w http.ResponseWriter, r *http.Request) {
 
 type unsealRequest struct {
 	Share []byte `json:"share"`
+	Reset bool   `json:"reset"`
 }
 
 type statusResponse struct {
@@ -72,10 +73,20 @@ func (h *Handlers) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.Logger, err)
 		return
 	}
-
-	result, err := h.System.Unseal(r.Context(), req.Share)
-	// Deferred before the error check: a rejected share is still key material.
+	// Deferred before any call: a rejected share is still key material.
 	defer clear(req.Share)
+	if req.Reset && len(req.Share) > 0 {
+		writeError(w, h.Logger, errShareWithReset)
+		return
+	}
+
+	var result system.Status
+	var err error
+	if req.Reset {
+		result, err = h.System.ResetUnseal(r.Context())
+	} else {
+		result, err = h.System.Unseal(r.Context(), req.Share)
+	}
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -85,7 +96,10 @@ func (h *Handlers) handleUnseal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleSeal(w http.ResponseWriter, r *http.Request) {
-	h.System.Seal(r.Context())
+	if err := h.System.Seal(r.Context(), principalFrom(r)); err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

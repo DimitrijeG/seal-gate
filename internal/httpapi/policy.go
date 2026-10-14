@@ -27,7 +27,7 @@ func (h *Handlers) handlePutPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Policy.Put(r.Context(), req.policy(name)); err != nil {
+	if err := h.Policy.Put(r.Context(), principalFrom(r), req.policy(name)); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
@@ -42,7 +42,7 @@ type policyResponse struct {
 func (h *Handlers) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
-	policy, err := h.Policy.Get(r.Context(), name)
+	policy, err := h.Policy.Get(r.Context(), principalFrom(r), name)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -54,7 +54,7 @@ func (h *Handlers) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
-	if err := h.Policy.Delete(r.Context(), name); err != nil {
+	if err := h.Policy.Delete(r.Context(), principalFrom(r), name); err != nil {
 		writeError(w, h.Logger, err)
 		return
 	}
