@@ -12,6 +12,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 )
 
+// Server serves HTTP until its context ends, then shuts down within the configured grace period.
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
