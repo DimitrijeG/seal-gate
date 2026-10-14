@@ -18,13 +18,16 @@ type Service struct {
 	keyring    *Keyring
 	clock      Clock
 	authorizer authorization.Authorizer
+	resource   UnsealedResource
 }
 
-func NewService(keyring *Keyring, clock Clock, authorizer authorization.Authorizer) *Service {
+// NewService returns a Service that activates resource after each unseal and deactivates it before each seal.
+func NewService(keyring *Keyring, clock Clock, authorizer authorization.Authorizer, resource UnsealedResource) *Service {
 	return &Service{
 		keyring:    keyring,
 		clock:      clock,
 		authorizer: authorizer,
+		resource:   resource,
 	}
 }
 
@@ -91,8 +94,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	return s.status(state), nil
 }
 
-// Unseal buffers one share and unseals at the threshold; a failed attempt
-// discards the buffer and returns ErrInvalidShare.
+// Unseal buffers one share and unseals at the threshold, then activates the resource; a bad share discards the
+// buffer and returns ErrInvalidShare, and a failed activation seals again and returns its error.
 func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -113,6 +116,11 @@ func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	if s.keyring.progress() >= state.Config.Threshold {
 		if err := s.keyring.unlock(state); err != nil {
 			return Status{}, err
+		}
+		// After unlock: what activates reads through the barrier. On failure, lock, so nothing half-unsealed serves.
+		if err := s.resource.Activate(ctx); err != nil {
+			s.keyring.lock()
+			return Status{}, fmt.Errorf("system: %w", err)
 		}
 	}
 	return s.status(state), nil
@@ -138,8 +146,8 @@ func (s *Service) ResetUnseal(ctx context.Context) (Status, error) {
 
 const sealResource = "system/seal"
 
-// Seal discards buffered shares and clears the key and the root token hash, once principal
-// may update system/seal; sealing a sealed instance changes nothing.
+// Seal deactivates the resource, then discards buffered shares and clears the key and the root token hash, once
+// principal may update system/seal; sealing a sealed instance changes nothing.
 func (s *Service) Seal(ctx context.Context, principal authorization.Principal) error {
 	// Before the lock: IsRoot takes it on every request, and this may read policies.
 	if err := s.authorizer.Authorize(ctx, principal, sealResource, authorization.CapabilityUpdate); err != nil {
@@ -149,6 +157,10 @@ func (s *Service) Seal(ctx context.Context, principal authorization.Principal) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Before lock: the key is cleared last, so nothing still running can believe it reads storage.
+	if s.keyring.unlocked() {
+		s.resource.Deactivate()
+	}
 	s.keyring.lock()
 	return nil
 }
