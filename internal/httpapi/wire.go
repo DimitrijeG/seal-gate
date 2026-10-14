@@ -120,6 +120,7 @@ var domainErrors = []struct {
 	{secret.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 	{secret.ErrExists, http.StatusConflict, "secret already exists"},
 	{secret.ErrInvalidLength, http.StatusBadRequest, "invalid secret length"},
+	{secret.ErrNotRotatable, http.StatusConflict, "secret is not rotatable"},
 
 	{authorization.ErrInvalidName, http.StatusBadRequest, "invalid policy name"},
 	{authorization.ErrInvalidRule, http.StatusBadRequest, "invalid policy rule"},

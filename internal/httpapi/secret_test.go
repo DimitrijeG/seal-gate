@@ -112,29 +112,85 @@ func TestSecret(t *testing.T) {
 		}
 	})
 
-	t.Run("a path under generate/ is still a secret's path", func(t *testing.T) {
+	t.Run("a path under an action prefix is still a secret's path", func(t *testing.T) {
 		tests := []struct {
 			name   string
 			method string
+			path   string
 			body   string
 		}{
-			{"put", http.MethodPut, `{"value":"AQI="}`},
-			{"get", http.MethodGet, ""},
-			{"delete", http.MethodDelete, ""},
+			{"put under generate", http.MethodPut, "generate/db/password", `{"value":"AQI="}`},
+			{"get under generate", http.MethodGet, "generate/db/password", ""},
+			{"delete under generate", http.MethodDelete, "generate/db/password", ""},
+			{"put under rotate", http.MethodPut, "rotate/db/password", `{"value":"AQI="}`},
+			{"get under rotate", http.MethodGet, "rotate/db/password", ""},
+			{"delete under rotate", http.MethodDelete, "rotate/db/password", ""},
 		}
 
-		want := "generate/db/password"
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeSecret{}
 				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
 
-				do(t, router, tt.method, "/v1/secrets/"+want, tt.body)
+				do(t, router, tt.method, "/v1/secrets/"+tt.path, tt.body)
 
-				if fake.path != want {
-					t.Errorf("got %q, want %q", fake.path, want)
+				if fake.path != tt.path {
+					t.Errorf("got %q, want %q", fake.path, tt.path)
 				}
 			})
+		}
+	})
+
+	t.Run("a rotated secret is returned in base64 with 200", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{rotValue: []byte{1, 2}}})
+		want := "AQI="
+
+		rec := do(t, router, http.MethodPost, "/v1/secrets/rotate/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[secretBody](t, rec)
+
+		if got.Value != want {
+			t.Errorf("got %q, want %q", got.Value, want)
+		}
+	})
+
+	t.Run("a rotate passes the path to the service", func(t *testing.T) {
+		fake := &fakeSecret{rotValue: make([]byte, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		want := "db/password"
+
+		do(t, router, http.MethodPost, "/v1/secrets/rotate/"+want, "")
+
+		if fake.path != want {
+			t.Errorf("got %q, want %q", fake.path, want)
+		}
+	})
+
+	t.Run("a rotated secret is cleared after the response is written", func(t *testing.T) {
+		fake := &fakeSecret{rotValue: bytes.Repeat([]byte{0xab}, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		want := make([]byte, 32)
+
+		rec := do(t, router, http.MethodPost, "/v1/secrets/rotate/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if !bytes.Equal(fake.rotValue, want) {
+			t.Errorf("got %x, want %x", fake.rotValue, want)
+		}
+	})
+
+	t.Run("a rotated secret forbids caching", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{rotValue: make([]byte, 32)}})
+		want := "no-store"
+
+		rec := do(t, router, http.MethodPost, "/v1/secrets/rotate/db/password", "")
+
+		if got := rec.Header().Get("Cache-Control"); got != want {
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 
@@ -189,6 +245,7 @@ func TestSecret(t *testing.T) {
 			{"delete", http.MethodDelete, "/v1/secrets/db/password", ""},
 			{"list", http.MethodGet, "/v1/secrets?prefix=db/", ""},
 			{"generate", http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32}`},
+			{"rotate", http.MethodPost, "/v1/secrets/rotate/db/password", ""},
 		}
 
 		want := authorization.NewEntityPrincipal(entityID, "dev")
@@ -227,6 +284,7 @@ func TestSecret(t *testing.T) {
 			{"delete", http.MethodDelete, "/v1/secrets/db/password", ""},
 			{"list", http.MethodGet, "/v1/secrets", ""},
 			{"generate", http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32}`},
+			{"rotate", http.MethodPost, "/v1/secrets/rotate/db/password", ""},
 		}
 
 		for _, tt := range tests {

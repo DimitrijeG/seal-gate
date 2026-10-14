@@ -61,6 +61,10 @@ func TestAuthorization(t *testing.T) {
 				_, err := s.Generate(ctx, principal, "db/password", 32)
 				return err
 			}, "secrets/db/password", authorization.CapabilityCreate},
+			{"rotate", func(ctx context.Context, s *secret.Service) error {
+				_, err := s.Rotate(ctx, principal, "db/password")
+				return err
+			}, "secrets/db/password", authorization.CapabilityRotate},
 		}
 
 		for _, tt := range tests {
@@ -108,6 +112,10 @@ func TestAuthorization(t *testing.T) {
 			}},
 			{"generate", func(ctx context.Context, s *secret.Service) error {
 				_, err := s.Generate(ctx, principal, "db/password", 32)
+				return err
+			}},
+			{"rotate", func(ctx context.Context, s *secret.Service) error {
+				_, err := s.Rotate(ctx, principal, "db/password")
 				return err
 			}},
 		}
@@ -192,6 +200,49 @@ func (createOnlyAuthorizer) Authorize(_ context.Context, _ authorization.Princip
 		return nil
 	}
 	return authorization.ErrDenied
+}
+
+// putFirstRepository holds the first Get, after it has read, until a Put has
+// stored or 100 ms pass, so an unguarded rotation writes over that Put.
+type putFirstRepository struct {
+	fakeRepository
+	mu      sync.Mutex
+	gets    atomic.Int32
+	read    chan struct{}
+	put     chan struct{}
+	putOnce sync.Once
+}
+
+func newPutFirstRepository() *putFirstRepository {
+	return &putFirstRepository{
+		fakeRepository: fakeRepository{secrets: make(map[string]secret.Entry)},
+		read:           make(chan struct{}),
+		put:            make(chan struct{}),
+	}
+}
+
+func (r *putFirstRepository) Put(ctx context.Context, path string, entry secret.Entry) error {
+	r.mu.Lock()
+	err := r.fakeRepository.Put(ctx, path, entry)
+	r.mu.Unlock()
+
+	r.putOnce.Do(func() { close(r.put) })
+	return err
+}
+
+func (r *putFirstRepository) Get(ctx context.Context, path string) (secret.Entry, error) {
+	r.mu.Lock()
+	entry, err := r.fakeRepository.Get(ctx, path)
+	r.mu.Unlock()
+
+	if r.gets.Add(1) == 1 {
+		close(r.read)
+		select {
+		case <-r.put:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return entry, err
 }
 
 // racingRepository holds the first Get, after it has read, until a second Get

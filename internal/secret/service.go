@@ -42,12 +42,12 @@ type Random interface {
 
 // Service validates paths and sizes and authorizes each operation for its principal before the repository serves it.
 type Service struct {
+	// Every write holds mu, so the read that decides it (existence, the generated mark) sees the state it replaces:
+	// a create-only principal cannot overwrite a secret written in between, nor a rotation a value just PUT.
+	mu         sync.Mutex
 	repo       Repository
 	random     Random
 	authorizer authorization.Authorizer
-	// Every write holds mu, so the existence read and the write see the same state:
-	// a create-only principal cannot overwrite a secret written in between.
-	mu sync.Mutex
 }
 
 // New returns a Service over repo that draws generated values from random and asks authorizer before every operation.
@@ -132,6 +132,11 @@ func (s *Service) Generate(ctx context.Context, principal authorization.Principa
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 
+	return s.storeGenerated(ctx, path, length)
+}
+
+// storeGenerated draws length random bytes and stores them at path, marked generated; the caller holds mu.
+func (s *Service) storeGenerated(ctx context.Context, path string, length int) ([]byte, error) {
 	value, err := s.random.Bytes(length)
 	if err != nil {
 		return nil, fmt.Errorf("secret: %w", err)
@@ -147,6 +152,36 @@ func (s *Service) Generate(ctx context.Context, principal authorization.Principa
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 	return value, nil
+}
+
+// Rotate replaces a generated secret with fresh random bytes of its length and returns them; a secret not generated is
+// ErrNotRotatable.
+func (s *Service) Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error) {
+	if !validPath(path) {
+		return nil, ErrInvalidPath
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Before the read, so a caller without rotate never learns whether path exists.
+	if err := s.authorizer.Authorize(ctx, principal, resourcePrefix+path, authorization.CapabilityRotate); err != nil {
+		return nil, fmt.Errorf("secret: %w", err)
+	}
+
+	old, err := s.repo.Get(ctx, path)
+	switch {
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrSealed):
+		return nil, err
+	case err != nil:
+		return nil, fmt.Errorf("secret: %w", err)
+	}
+	length := len(old.Value)
+	clear(old.Value)
+	if !old.Generated {
+		return nil, ErrNotRotatable
+	}
+
+	return s.storeGenerated(ctx, path, length)
 }
 
 // Delete removes the secret at path; a missing path is not an error.

@@ -92,12 +92,16 @@ func TestRouter(t *testing.T) {
 		}
 	})
 
-	t.Run("a generate path that is not in its clean form is refused", func(t *testing.T) {
+	t.Run("an action path that is not in its clean form is refused", func(t *testing.T) {
 		tests := []struct{ name, target string }{
-			{"parent segment", "/v1/secrets/generate/db/../password"},
-			{"current segment", "/v1/secrets/generate/db/./password"},
-			{"empty segment", "/v1/secrets/generate/db//password"},
-			{"parent segment up to the route", "/v1/secrets/generate/.."},
+			{"parent segment under generate", "/v1/secrets/generate/db/../password"},
+			{"current segment under generate", "/v1/secrets/generate/db/./password"},
+			{"empty segment under generate", "/v1/secrets/generate/db//password"},
+			{"parent segment up to the generate route", "/v1/secrets/generate/.."},
+			{"parent segment under rotate", "/v1/secrets/rotate/db/../password"},
+			{"current segment under rotate", "/v1/secrets/rotate/db/./password"},
+			{"empty segment under rotate", "/v1/secrets/rotate/db//password"},
+			{"parent segment up to the rotate route", "/v1/secrets/rotate/.."},
 		}
 
 		for _, tt := range tests {

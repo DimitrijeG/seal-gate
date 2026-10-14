@@ -267,6 +267,24 @@ func getSecret(t *testing.T, h http.Handler, path string) string {
 	return decode[secretBody](t, rec).Value
 }
 
+func generateSecret(t *testing.T, h http.Handler, path string, length int) string {
+	t.Helper()
+	rec := send(t, h, http.MethodPost, "/v1/secrets/generate/"+path, fmt.Sprintf(`{"length":%d}`, length))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("generate %s: got %d, want %d: %s", path, rec.Code, http.StatusCreated, rec.Body)
+	}
+	return decode[secretBody](t, rec).Value
+}
+
+func rotateSecret(t *testing.T, h http.Handler, path string) string {
+	t.Helper()
+	rec := send(t, h, http.MethodPost, "/v1/secrets/rotate/"+path, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate %s: got %d, want %d: %s", path, rec.Code, http.StatusOK, rec.Body)
+	}
+	return decode[secretBody](t, rec).Value
+}
+
 // createEntity creates an entity with no policies or groups and returns its ID.
 func createEntity(t *testing.T, h http.Handler) string {
 	t.Helper()
@@ -695,6 +713,41 @@ func TestSealLifecycle(t *testing.T) {
 
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body)
+		}
+	})
+
+	t.Run("a generated secret rotates to a new value of the same length", func(t *testing.T) {
+		router := unsealed(t)
+		generated := generateSecret(t, router, "db/password", 32)
+
+		rotated := rotateSecret(t, router, "db/password")
+
+		if rotated == generated {
+			t.Errorf("value: got %q, want a value other than %q", rotated, generated)
+		}
+		if len(rotated) != len(generated) {
+			t.Errorf("length: got %d base64 bytes, want %d", len(rotated), len(generated))
+		}
+	})
+
+	t.Run("a rotated secret reads back as its new value", func(t *testing.T) {
+		router := unsealed(t)
+		generateSecret(t, router, "db/password", 32)
+		want := rotateSecret(t, router, "db/password")
+
+		if got := getSecret(t, router, "db/password"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("rotating a stored secret is a conflict", func(t *testing.T) {
+		router := unsealed(t)
+		putSecret(t, router, "db/password", "c2VjcmV0")
+
+		rec := send(t, router, http.MethodPost, "/v1/secrets/rotate/db/password", "")
+
+		if rec.Code != http.StatusConflict {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body)
 		}
 	})
 

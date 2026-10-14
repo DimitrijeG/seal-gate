@@ -92,6 +92,20 @@ func (h *Handlers) handleGenerateSecret(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, secretResponse{Value: value})
 }
 
+func (h *Handlers) handleRotateSecret(w http.ResponseWriter, r *http.Request) {
+	path := r.PathValue("path")
+
+	value, err := h.Secret.Rotate(r.Context(), principalFrom(r), path)
+	// Deferred before the error check: cleared after the response is written, whatever Rotate returned.
+	defer clear(value)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, secretResponse{Value: value})
+}
+
 type listResponse struct {
 	Paths []string `json:"paths"`
 }

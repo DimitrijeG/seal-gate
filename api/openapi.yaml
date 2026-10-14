@@ -257,6 +257,51 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /secrets/rotate/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: >
+          The secret's path, under the same rules as `/secrets/{path}`.
+        schema:
+          type: string
+          maxLength: 256
+        example: db/password
+
+    post:
+      operationId: rotateSecret
+      tags: [secrets]
+      summary: Replace a generated secret with fresh random bytes and return them once.
+      description: >
+        Only a secret made by `generate` rotates: the new value has the old
+        one's length. Rotation replaces the value; the old one is gone. Needs
+        `rotate` on `secrets/<path>`. Takes no request body.
+      responses:
+        "200":
+          description: Rotated; the value is not shown again by this call.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: >
+            The secret was not generated (it was written by `PUT`), so it is
+            left as it is.
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /secrets/{path}:
     parameters:
       - name: path
