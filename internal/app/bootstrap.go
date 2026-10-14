@@ -89,8 +89,8 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 		infra.keys,
 	)
 
-	sys := system.NewService(keyring, infra.clock)
 	policy := authorization.New(repositories.set.Policy)
+	sys := system.NewService(keyring, infra.clock, policy)
 	entity := identity.NewEntityService(repositories.set.Entity, infra.random, policy)
 	token := identity.NewTokenService(repositories.set.Token, entity, infra.random, policy)
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)

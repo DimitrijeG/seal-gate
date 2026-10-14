@@ -4,20 +4,25 @@ package system
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 )
 
 // Service runs the seal lifecycle: it decides when keys move, and Keyring moves them.
 type Service struct {
-	mu      sync.Mutex
-	keyring *Keyring
-	clock   Clock
+	mu         sync.Mutex
+	keyring    *Keyring
+	clock      Clock
+	authorizer authorization.Authorizer
 }
 
-func NewService(keyring *Keyring, clock Clock) *Service {
+func NewService(keyring *Keyring, clock Clock, authorizer authorization.Authorizer) *Service {
 	return &Service{
-		keyring: keyring,
-		clock:   clock,
+		keyring:    keyring,
+		clock:      clock,
+		authorizer: authorizer,
 	}
 }
 
@@ -131,13 +136,21 @@ func (s *Service) ResetUnseal(ctx context.Context) (Status, error) {
 	return s.status(state), nil
 }
 
-// Seal discards buffered shares and clears the key and the root token hash;
-// sealing a sealed instance changes nothing.
-func (s *Service) Seal(ctx context.Context) {
+const sealResource = "system/seal"
+
+// Seal discards buffered shares and clears the key and the root token hash, once principal
+// may update system/seal; sealing a sealed instance changes nothing.
+func (s *Service) Seal(ctx context.Context, principal authorization.Principal) error {
+	// Before the lock: IsRoot takes it on every request, and this may read policies.
+	if err := s.authorizer.Authorize(ctx, principal, sealResource, authorization.CapabilityUpdate); err != nil {
+		return fmt.Errorf("system: %w", err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.keyring.lock()
+	return nil
 }
 
 // IsRoot reports whether token is the root token verified at the last unseal;

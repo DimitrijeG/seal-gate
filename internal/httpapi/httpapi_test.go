@@ -62,6 +62,8 @@ type fakeSystem struct {
 	resetResult  system.Status
 	resetErr     error
 	sealed       bool
+	principal    authorization.Principal // the principal Seal got
+	sealErr      error
 	statusResult system.Status
 	statusErr    error
 }
@@ -85,8 +87,10 @@ func (f *fakeSystem) ResetUnseal(ctx context.Context) (system.Status, error) {
 	return f.resetResult, f.resetErr
 }
 
-func (f *fakeSystem) Seal(ctx context.Context) {
+func (f *fakeSystem) Seal(ctx context.Context, principal authorization.Principal) error {
+	f.principal = principal
 	f.sealed = true
+	return f.sealErr
 }
 
 type secretBody struct {

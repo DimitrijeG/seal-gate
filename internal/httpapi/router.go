@@ -19,7 +19,7 @@ type SystemService interface {
 	Init(ctx context.Context, cfg system.SealConfiguration) (system.InitResult, error)
 	Unseal(ctx context.Context, share []byte) (system.Status, error)
 	ResetUnseal(ctx context.Context) (system.Status, error)
-	Seal(ctx context.Context)
+	Seal(ctx context.Context, principal authorization.Principal) error
 	Status(ctx context.Context) (system.Status, error)
 }
 

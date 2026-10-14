@@ -96,7 +96,10 @@ func (h *Handlers) handleUnseal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleSeal(w http.ResponseWriter, r *http.Request) {
-	h.System.Seal(r.Context())
+	if err := h.System.Seal(r.Context(), principalFrom(r)); err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

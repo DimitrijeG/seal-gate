@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"testing"
 
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
 )
@@ -311,6 +313,26 @@ func TestSeal(t *testing.T) {
 		if !fake.sealed {
 			t.Error("service is not sealed")
 		}
+	})
+
+	t.Run("seal passes the authenticated principal to the service", func(t *testing.T) {
+		fake := &fakeSystem{}
+		want := authorization.NewPolicyPrincipal("ops")
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, System: fake})
+
+		do(t, router, http.MethodPost, "/v1/sys/seal", "")
+
+		if !reflect.DeepEqual(fake.principal, want) {
+			t.Errorf("got %+v, want %+v", fake.principal, want)
+		}
+	})
+
+	t.Run("a denied seal is forbidden", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{sealErr: authorization.ErrDenied}})
+
+		rec := do(t, router, http.MethodPost, "/v1/sys/seal", "")
+
+		assertError(t, rec, http.StatusForbidden, "permission denied")
 	})
 }
 

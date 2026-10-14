@@ -502,6 +502,34 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a token is forbidden the seal no rule grants", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/sys/seal", "")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+
+		if rec := send(t, router, http.MethodGet, "/v1/sys/health", ""); rec.Code != http.StatusNoContent {
+			t.Errorf("health: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+	})
+
+	t.Run("a token seals where its policy grants update", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"system/seal","capabilities":["update"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodPost, "/v1/sys/seal", "")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if rec := send(t, router, http.MethodGet, "/v1/sys/health", ""); rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("health: got %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body)
+		}
+	})
+
 	t.Run("a secret written after unseal reads back", func(t *testing.T) {
 		router := unsealed(t)
 		want := "c2VjcmV0" // "secret"

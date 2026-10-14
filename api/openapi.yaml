@@ -117,12 +117,15 @@ paths:
       description: >
         Discards the key and any buffered shares. On a sealed or uninitialized
         instance no token can be checked, so a request with one is 503; to
-        discard a partial unseal, reset it through `/sys/unseal`.
+        discard a partial unseal, reset it through `/sys/unseal`. Needs
+        `update` on `system/seal`.
       responses:
         "204":
           description: Sealed.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
