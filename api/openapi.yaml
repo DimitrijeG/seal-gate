@@ -807,6 +807,19 @@ components:
           type: boolean
           description: Discard the buffered shares instead of submitting one.
       additionalProperties: false
+      oneOf:
+        - required: [share]
+          properties:
+            share:
+              minLength: 1
+            reset:
+              const: false
+        - required: [reset]
+          properties:
+            share:
+              maxLength: 0
+            reset:
+              const: true
 
     StatusResponse:
       type: object

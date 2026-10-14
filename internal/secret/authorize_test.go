@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
@@ -146,4 +149,78 @@ func TestAuthorization(t *testing.T) {
 			t.Errorf("calls: got %d, want 0", authorizer.calls)
 		}
 	})
+
+	t.Run("a create racing another on the same path is asked update", func(t *testing.T) {
+		s := secret.New(newRacingRepository(), createOnlyAuthorizer{})
+		ctx := t.Context()
+
+		var errs [2]error
+		var wg sync.WaitGroup
+		for i := range errs {
+			wg.Go(func() { errs[i] = s.Put(ctx, principal, "db/password", []byte{byte(i)}) })
+		}
+		wg.Wait()
+
+		var denied int
+		for _, err := range errs {
+			switch {
+			case errors.Is(err, authorization.ErrDenied):
+				denied++
+			case err != nil:
+				t.Errorf("Put: got %v, want nil or %v", err, authorization.ErrDenied)
+			}
+		}
+		if denied != 1 {
+			t.Errorf("got %d denied, want 1", denied)
+		}
+	})
+}
+
+// createOnlyAuthorizer allows create and denies the rest, as a policy granting only create would.
+type createOnlyAuthorizer struct{}
+
+func (createOnlyAuthorizer) Authorize(_ context.Context, _ authorization.Principal, _ string, capability authorization.Capability) error {
+	if capability == authorization.CapabilityCreate {
+		return nil
+	}
+	return authorization.ErrDenied
+}
+
+// racingRepository holds the first Get, after it has read, until a second Get
+// or 100 ms pass, so two unguarded writes both see the path missing.
+type racingRepository struct {
+	fakeRepository
+	mu      sync.Mutex
+	gets    atomic.Int32
+	arrived chan struct{}
+}
+
+func newRacingRepository() *racingRepository {
+	return &racingRepository{
+		fakeRepository: fakeRepository{secrets: make(map[string][]byte)},
+		arrived:        make(chan struct{}),
+	}
+}
+
+func (r *racingRepository) Put(ctx context.Context, path string, value []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakeRepository.Put(ctx, path, value)
+}
+
+func (r *racingRepository) Get(ctx context.Context, path string) ([]byte, error) {
+	r.mu.Lock()
+	value, err := r.fakeRepository.Get(ctx, path)
+	r.mu.Unlock()
+
+	switch r.gets.Add(1) {
+	case 1:
+		select {
+		case <-r.arrived:
+		case <-time.After(100 * time.Millisecond):
+		}
+	case 2:
+		close(r.arrived)
+	}
+	return value, err
 }
