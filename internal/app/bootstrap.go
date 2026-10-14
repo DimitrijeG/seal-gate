@@ -98,7 +98,7 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 	return &services{
 		authenticator: identity.NewAuthenticator(sys, token, group),
 		system:        sys,
-		secret:        secret.New(repositories.set.Secret, policy),
+		secret:        secret.New(repositories.set.Secret, infra.random, policy),
 		policy:        policy,
 		entity:        entity,
 		token:         token,

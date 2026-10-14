@@ -65,6 +65,47 @@ func (h *Handlers) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// generateBodyLimit fits {"length": n} with room to spare; the body never carries a value.
+const generateBodyLimit = 1 << 10
+
+type generateRequest struct {
+	Length int `json:"length"`
+}
+
+func (h *Handlers) handleGenerateSecret(w http.ResponseWriter, r *http.Request) {
+	path := r.PathValue("path")
+
+	var req generateRequest
+	if err := decodeJSON(w, r, &req, generateBodyLimit); err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	value, err := h.Secret.Generate(r.Context(), principalFrom(r), path, req.Length)
+	// Deferred before the error check: cleared after the response is written, whatever Generate returned.
+	defer clear(value)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, secretResponse{Value: value})
+}
+
+func (h *Handlers) handleRotateSecret(w http.ResponseWriter, r *http.Request) {
+	path := r.PathValue("path")
+
+	value, err := h.Secret.Rotate(r.Context(), principalFrom(r), path)
+	// Deferred before the error check: cleared after the response is written, whatever Rotate returned.
+	defer clear(value)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, secretResponse{Value: value})
+}
+
 type listResponse struct {
 	Paths []string `json:"paths"`
 }

@@ -20,9 +20,9 @@ func TestRepositories(t *testing.T) {
 			t.Fatalf("buildInfrastructure: %v", err)
 		}
 		repo := buildRepositories(memory.New(), infra).set.Secret
-		value := []byte("secret")
+		entry := secret.Entry{Value: []byte("secret")}
 
-		if err := repo.Put(t.Context(), "db/password", value); !errors.Is(err, secret.ErrSealed) {
+		if err := repo.Put(t.Context(), "db/password", entry); !errors.Is(err, secret.ErrSealed) {
 			t.Fatalf("Put before Install: got %v, want %v", err, secret.ErrSealed)
 		}
 		key, err := cryptography.CryptoRandom{}.Bytes(32)
@@ -33,7 +33,7 @@ func TestRepositories(t *testing.T) {
 			t.Fatalf("Install: %v", err)
 		}
 
-		if err := repo.Put(t.Context(), "db/password", value); err != nil {
+		if err := repo.Put(t.Context(), "db/password", entry); err != nil {
 			t.Errorf("Put after Install: %v", err)
 		}
 	})

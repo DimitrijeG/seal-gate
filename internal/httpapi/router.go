@@ -31,6 +31,8 @@ type SecretService interface {
 	Get(ctx context.Context, principal authorization.Principal, path string) ([]byte, error)
 	Delete(ctx context.Context, principal authorization.Principal, path string) error
 	List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error)
+	Generate(ctx context.Context, principal authorization.Principal, path string, length int) ([]byte, error)
+	Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error)
 }
 
 // PolicyService is policy storage as the handlers use it.
@@ -105,6 +107,8 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.Handle("PUT /v1/secrets/{path...}", h.authenticated(h.handlePutSecret))
 	mux.Handle("GET /v1/secrets/{path...}", h.authenticated(h.handleGetSecret))
 	mux.Handle("DELETE /v1/secrets/{path...}", h.authenticated(h.handleDeleteSecret))
+	mux.Handle("POST /v1/secrets/generate/{path...}", h.authenticated(h.handleGenerateSecret))
+	mux.Handle("POST /v1/secrets/rotate/{path...}", h.authenticated(h.handleRotateSecret))
 
 	mux.Handle("PUT /v1/policies/{name}", h.authenticated(h.handlePutPolicy))
 	mux.Handle("GET /v1/policies/{name}", h.authenticated(h.handleGetPolicy))

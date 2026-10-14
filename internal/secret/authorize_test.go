@@ -16,7 +16,7 @@ import (
 func TestAuthorization(t *testing.T) {
 	t.Run("a denied read never reaches the repository", func(t *testing.T) {
 		s, repo, authorizer := newAuthorizedService(t)
-		repo.secrets["db/password"] = []byte("secret")
+		repo.secrets["db/password"] = secret.Entry{Value: []byte("secret")}
 		authorizer.err = authorization.ErrDenied
 
 		_, err := s.Get(t.Context(), principal, "db/password")
@@ -57,12 +57,20 @@ func TestAuthorization(t *testing.T) {
 			{"put on an existing path", func(ctx context.Context, s *secret.Service) error {
 				return s.Put(ctx, principal, "existing", []byte("secret"))
 			}, "secrets/existing", authorization.CapabilityUpdate},
+			{"generate", func(ctx context.Context, s *secret.Service) error {
+				_, err := s.Generate(ctx, principal, "db/password", 32)
+				return err
+			}, "secrets/db/password", authorization.CapabilityCreate},
+			{"rotate", func(ctx context.Context, s *secret.Service) error {
+				_, err := s.Rotate(ctx, principal, "db/password")
+				return err
+			}, "secrets/db/password", authorization.CapabilityRotate},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				s, repo, authorizer := newAuthorizedService(t)
-				repo.secrets["existing"] = []byte("old")
+				repo.secrets["existing"] = secret.Entry{Value: []byte("old")}
 
 				_ = tt.call(t.Context(), s)
 
@@ -100,6 +108,14 @@ func TestAuthorization(t *testing.T) {
 			}},
 			{"list", func(ctx context.Context, s *secret.Service) error {
 				_, err := s.List(ctx, principal, "db/")
+				return err
+			}},
+			{"generate", func(ctx context.Context, s *secret.Service) error {
+				_, err := s.Generate(ctx, principal, "db/password", 32)
+				return err
+			}},
+			{"rotate", func(ctx context.Context, s *secret.Service) error {
+				_, err := s.Rotate(ctx, principal, "db/password")
 				return err
 			}},
 		}
@@ -151,7 +167,7 @@ func TestAuthorization(t *testing.T) {
 	})
 
 	t.Run("a create racing another on the same path is asked update", func(t *testing.T) {
-		s := secret.New(newRacingRepository(), createOnlyAuthorizer{})
+		s := secret.New(newRacingRepository(), &fakeRandom{}, createOnlyAuthorizer{})
 		ctx := t.Context()
 
 		var errs [2]error
@@ -186,6 +202,49 @@ func (createOnlyAuthorizer) Authorize(_ context.Context, _ authorization.Princip
 	return authorization.ErrDenied
 }
 
+// putFirstRepository holds the first Get, after it has read, until a Put has
+// stored or 100 ms pass, so an unguarded rotation writes over that Put.
+type putFirstRepository struct {
+	fakeRepository
+	mu      sync.Mutex
+	gets    atomic.Int32
+	read    chan struct{}
+	put     chan struct{}
+	putOnce sync.Once
+}
+
+func newPutFirstRepository() *putFirstRepository {
+	return &putFirstRepository{
+		fakeRepository: fakeRepository{secrets: make(map[string]secret.Entry)},
+		read:           make(chan struct{}),
+		put:            make(chan struct{}),
+	}
+}
+
+func (r *putFirstRepository) Put(ctx context.Context, path string, entry secret.Entry) error {
+	r.mu.Lock()
+	err := r.fakeRepository.Put(ctx, path, entry)
+	r.mu.Unlock()
+
+	r.putOnce.Do(func() { close(r.put) })
+	return err
+}
+
+func (r *putFirstRepository) Get(ctx context.Context, path string) (secret.Entry, error) {
+	r.mu.Lock()
+	entry, err := r.fakeRepository.Get(ctx, path)
+	r.mu.Unlock()
+
+	if r.gets.Add(1) == 1 {
+		close(r.read)
+		select {
+		case <-r.put:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return entry, err
+}
+
 // racingRepository holds the first Get, after it has read, until a second Get
 // or 100 ms pass, so two unguarded writes both see the path missing.
 type racingRepository struct {
@@ -197,20 +256,20 @@ type racingRepository struct {
 
 func newRacingRepository() *racingRepository {
 	return &racingRepository{
-		fakeRepository: fakeRepository{secrets: make(map[string][]byte)},
+		fakeRepository: fakeRepository{secrets: make(map[string]secret.Entry)},
 		arrived:        make(chan struct{}),
 	}
 }
 
-func (r *racingRepository) Put(ctx context.Context, path string, value []byte) error {
+func (r *racingRepository) Put(ctx context.Context, path string, entry secret.Entry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.fakeRepository.Put(ctx, path, value)
+	return r.fakeRepository.Put(ctx, path, entry)
 }
 
-func (r *racingRepository) Get(ctx context.Context, path string) ([]byte, error) {
+func (r *racingRepository) Get(ctx context.Context, path string) (secret.Entry, error) {
 	r.mu.Lock()
-	value, err := r.fakeRepository.Get(ctx, path)
+	entry, err := r.fakeRepository.Get(ctx, path)
 	r.mu.Unlock()
 
 	switch r.gets.Add(1) {
@@ -222,5 +281,5 @@ func (r *racingRepository) Get(ctx context.Context, path string) ([]byte, error)
 	case 2:
 		close(r.arrived)
 	}
-	return value, err
+	return entry, err
 }

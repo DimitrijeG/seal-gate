@@ -8,4 +8,8 @@ var (
 	ErrInvalidPath   = errors.New("secret: invalid path")
 	ErrValueTooLarge = errors.New("secret: value too large")
 	ErrSealed        = errors.New("secret: sealed")
+	ErrExists        = errors.New("secret: already exists")
+	ErrInvalidLength = errors.New("secret: invalid length")
+	// ErrNotRotatable reports a secret seal-gate did not generate, so it does not know the shape to rotate it to.
+	ErrNotRotatable = errors.New("secret: not rotatable")
 )
