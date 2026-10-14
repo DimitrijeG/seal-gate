@@ -160,7 +160,7 @@ func TestGroup(t *testing.T) {
 			{"delete", http.MethodDelete, "/v1/groups/" + groupID, ""},
 		}
 
-		want := authorization.NewPolicyPrincipal("dev")
+		want := authorization.NewEntityPrincipal(entityID, "dev")
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeGroup{}

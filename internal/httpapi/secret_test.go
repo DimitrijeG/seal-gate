@@ -109,7 +109,7 @@ func TestSecret(t *testing.T) {
 			{"list", http.MethodGet, "/v1/secrets?prefix=db/", ""},
 		}
 
-		want := authorization.NewPolicyPrincipal("dev")
+		want := authorization.NewEntityPrincipal(entityID, "dev")
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeSecret{}

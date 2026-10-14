@@ -40,5 +40,5 @@ func (a *Authenticator) Authenticate(ctx context.Context, token []byte) (authori
 		return authorization.Principal{}, err
 	}
 
-	return authorization.NewPolicyPrincipal(policies...), nil
+	return authorization.NewEntityPrincipal(entity.ID, policies...), nil
 }

@@ -146,7 +146,7 @@ func TestPolicy(t *testing.T) {
 			{"delete", http.MethodDelete, ""},
 		}
 
-		want := authorization.NewPolicyPrincipal("dev")
+		want := authorization.NewEntityPrincipal(entityID, "dev")
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakePolicy{}

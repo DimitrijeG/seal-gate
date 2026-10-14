@@ -317,7 +317,7 @@ func TestSeal(t *testing.T) {
 
 	t.Run("seal passes the authenticated principal to the service", func(t *testing.T) {
 		fake := &fakeSystem{}
-		want := authorization.NewPolicyPrincipal("ops")
+		want := authorization.NewEntityPrincipal(entityID, "ops")
 		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, System: fake})
 
 		do(t, router, http.MethodPost, "/v1/sys/seal", "")

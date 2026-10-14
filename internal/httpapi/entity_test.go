@@ -178,7 +178,7 @@ func TestEntity(t *testing.T) {
 			}},
 		}
 
-		want := authorization.NewPolicyPrincipal("dev")
+		want := authorization.NewEntityPrincipal(entityID, "dev")
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				entity, token := &fakeEntity{}, &fakeToken{token: make([]byte, 32)}

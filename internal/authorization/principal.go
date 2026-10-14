@@ -2,9 +2,10 @@ package authorization
 
 import "slices"
 
-// Principal is who an access decision is made for: the root, or a set of policy names. The zero value grants nothing.
+// Principal is who an access decision is made for: the root, or an entity and its policy names. The zero value grants nothing.
 type Principal struct {
 	root     bool
+	id       string
 	policies []string
 }
 
@@ -13,7 +14,17 @@ func NewRootPrincipal() Principal {
 	return Principal{root: true}
 }
 
-// NewPolicyPrincipal returns a principal granted what the named policies grant; it keeps its own copy of names.
-func NewPolicyPrincipal(names ...string) Principal {
-	return Principal{policies: slices.Clone(names)}
+// NewEntityPrincipal returns the principal of entity id, granted what the named policies grant; it keeps its own copy of policies.
+func NewEntityPrincipal(id string, policies ...string) Principal {
+	return Principal{id: id, policies: slices.Clone(policies)}
+}
+
+const rootIdentity = "root"
+
+// Identity names who p is, for audit: "root", the entity ID, or "" for the zero value. It is never a token.
+func (p Principal) Identity() string {
+	if p.root {
+		return rootIdentity
+	}
+	return p.id
 }
