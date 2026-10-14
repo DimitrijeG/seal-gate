@@ -47,6 +47,9 @@ func (r *fakeRepository) Delete(_ context.Context, name string) error {
 	return nil
 }
 
+// root passes every check, so tests about storing policies are not about access.
+var root = authorization.NewRootPrincipal()
+
 func newService(t *testing.T) (*authorization.Service, *fakeRepository) {
 	t.Helper()
 	repo := &fakeRepository{policies: make(map[string]authorization.Policy)}
@@ -64,10 +67,10 @@ func TestService(t *testing.T) {
 			}},
 		}
 
-		if err := s.Put(t.Context(), policy); err != nil {
+		if err := s.Put(t.Context(), root, policy); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		got, err := s.Get(t.Context(), "dev")
+		got, err := s.Get(t.Context(), root, "dev")
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -80,7 +83,7 @@ func TestService(t *testing.T) {
 	t.Run("reading a missing policy is not found", func(t *testing.T) {
 		s, _ := newService(t)
 
-		_, err := s.Get(t.Context(), "missing")
+		_, err := s.Get(t.Context(), root, "missing")
 
 		if !errors.Is(err, authorization.ErrNotFound) {
 			t.Errorf("got %v, want %v", err, authorization.ErrNotFound)
@@ -90,14 +93,14 @@ func TestService(t *testing.T) {
 	t.Run("a deleted policy is not found", func(t *testing.T) {
 		s, _ := newService(t)
 
-		if err := s.Put(t.Context(), authorization.Policy{Name: "dev"}); err != nil {
+		if err := s.Put(t.Context(), root, authorization.Policy{Name: "dev"}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		if err := s.Delete(t.Context(), "dev"); err != nil {
+		if err := s.Delete(t.Context(), root, "dev"); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
 
-		_, err := s.Get(t.Context(), "dev")
+		_, err := s.Get(t.Context(), root, "dev")
 		if !errors.Is(err, authorization.ErrNotFound) {
 			t.Errorf("got %v, want %v", err, authorization.ErrNotFound)
 		}
@@ -122,7 +125,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				err := s.Put(t.Context(), authorization.Policy{Name: tt.policyName})
+				err := s.Put(t.Context(), root, authorization.Policy{Name: tt.policyName})
 
 				if !errors.Is(err, authorization.ErrInvalidName) {
 					t.Errorf("got %v, want %v", err, authorization.ErrInvalidName)
@@ -146,7 +149,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				if err := s.Put(t.Context(), authorization.Policy{Name: tt.policyName}); err != nil {
+				if err := s.Put(t.Context(), root, authorization.Policy{Name: tt.policyName}); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -159,14 +162,14 @@ func TestService(t *testing.T) {
 			call func(ctx context.Context, s *authorization.Service) error
 		}{
 			{"put", func(ctx context.Context, s *authorization.Service) error {
-				return s.Put(ctx, authorization.Policy{Name: "dev/ops"})
+				return s.Put(ctx, root, authorization.Policy{Name: "dev/ops"})
 			}},
 			{"get", func(ctx context.Context, s *authorization.Service) error {
-				_, err := s.Get(ctx, "dev/ops")
+				_, err := s.Get(ctx, root, "dev/ops")
 				return err
 			}},
 			{"delete", func(ctx context.Context, s *authorization.Service) error {
-				return s.Delete(ctx, "dev/ops")
+				return s.Delete(ctx, root, "dev/ops")
 			}},
 		}
 
@@ -207,7 +210,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				err := s.Put(t.Context(), policyWithRule(tt.pattern, authorization.CapabilityRead))
+				err := s.Put(t.Context(), root, policyWithRule(tt.pattern, authorization.CapabilityRead))
 
 				if !errors.Is(err, authorization.ErrInvalidRule) {
 					t.Errorf("got %v, want %v", err, authorization.ErrInvalidRule)
@@ -232,7 +235,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				if err := s.Put(t.Context(), policyWithRule(tt.pattern, authorization.CapabilityRead)); err != nil {
+				if err := s.Put(t.Context(), root, policyWithRule(tt.pattern, authorization.CapabilityRead)); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -253,7 +256,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				err := s.Put(t.Context(), policyWithRule("secrets/*", tt.capability))
+				err := s.Put(t.Context(), root, policyWithRule("secrets/*", tt.capability))
 
 				if !errors.Is(err, authorization.ErrInvalidRule) {
 					t.Errorf("got %v, want %v", err, authorization.ErrInvalidRule)
@@ -275,7 +278,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				err := s.Put(t.Context(), policyWithRule("secrets/*", tt.capabilities...))
+				err := s.Put(t.Context(), root, policyWithRule("secrets/*", tt.capabilities...))
 
 				if !errors.Is(err, authorization.ErrInvalidRule) {
 					t.Errorf("got %v, want %v", err, authorization.ErrInvalidRule)
@@ -291,7 +294,7 @@ func TestService(t *testing.T) {
 			authorization.CapabilityDelete, authorization.CapabilityList, authorization.CapabilityRotate,
 			authorization.CapabilityManage, authorization.CapabilityDeny)
 
-		if err := s.Put(t.Context(), policy); err != nil {
+		if err := s.Put(t.Context(), root, policy); err != nil {
 			t.Errorf("got %v, want nil", err)
 		}
 	})
@@ -309,7 +312,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				if err := s.Put(t.Context(), authorization.Policy{Name: "dev", Rules: tt.rules}); err != nil {
+				if err := s.Put(t.Context(), root, authorization.Policy{Name: "dev", Rules: tt.rules}); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -319,7 +322,7 @@ func TestService(t *testing.T) {
 	t.Run("an invalid rule never reaches the repository", func(t *testing.T) {
 		s, repo := newService(t)
 
-		err := s.Put(t.Context(), policyWithRule("secrets/", authorization.CapabilityRead))
+		err := s.Put(t.Context(), root, policyWithRule("secrets/", authorization.CapabilityRead))
 
 		if !errors.Is(err, authorization.ErrInvalidRule) {
 			t.Errorf("err: got %v, want %v", err, authorization.ErrInvalidRule)
@@ -345,7 +348,7 @@ func TestService(t *testing.T) {
 				// Seeded past Put, as a record from a faulty encoder would arrive.
 				repo.policies[tt.policy.Name] = tt.policy
 
-				_, err := s.Get(t.Context(), tt.policy.Name)
+				_, err := s.Get(t.Context(), root, tt.policy.Name)
 
 				if !errors.Is(err, authorization.ErrUnreadablePolicy) {
 					t.Errorf("got %v, want %v", err, authorization.ErrUnreadablePolicy)
@@ -392,14 +395,14 @@ var operations = []struct {
 	call func(ctx context.Context, s *authorization.Service) error
 }{
 	{"put", func(ctx context.Context, s *authorization.Service) error {
-		return s.Put(ctx, policyWithRule("secrets/*", authorization.CapabilityRead))
+		return s.Put(ctx, root, policyWithRule("secrets/*", authorization.CapabilityRead))
 	}},
 	{"get", func(ctx context.Context, s *authorization.Service) error {
-		_, err := s.Get(ctx, "dev")
+		_, err := s.Get(ctx, root, "dev")
 		return err
 	}},
 	{"delete", func(ctx context.Context, s *authorization.Service) error {
-		return s.Delete(ctx, "dev")
+		return s.Delete(ctx, root, "dev")
 	}},
 }
 

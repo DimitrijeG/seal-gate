@@ -135,6 +135,40 @@ func TestPolicy(t *testing.T) {
 		}
 	})
 
+	t.Run("each operation passes the authenticated principal to the service", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			method string
+			body   string
+		}{
+			{"get", http.MethodGet, ""},
+			{"put", http.MethodPut, devPolicyJSON},
+			{"delete", http.MethodDelete, ""},
+		}
+
+		want := authorization.NewPolicyPrincipal("dev")
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakePolicy{}
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Policy: fake})
+
+				do(t, router, tt.method, "/v1/policies/dev", tt.body)
+
+				if !reflect.DeepEqual(fake.principal, want) {
+					t.Errorf("got %+v, want %+v", fake.principal, want)
+				}
+			})
+		}
+	})
+
+	t.Run("a denied operation is forbidden", func(t *testing.T) {
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{err: authorization.ErrDenied}})
+
+		rec := do(t, router, http.MethodGet, "/v1/policies/dev", "")
+
+		assertError(t, rec, http.StatusForbidden, "permission denied")
+	})
+
 	t.Run("each operation reports the service's error", func(t *testing.T) {
 		tests := []struct {
 			name   string

@@ -24,7 +24,10 @@ type Authorizer interface {
 
 var _ Authorizer = (*Service)(nil)
 
-// Service manages policies, validating them before they reach the repository, and decides access from them.
+// policyResourcePrefix turns a policy name into the resource policies name it by.
+const policyResourcePrefix = "system/policies/"
+
+// Service manages policies, validating each and authorizing its principal before the repository, and decides access from them.
 type Service struct {
 	repo Repository
 }
@@ -34,8 +37,8 @@ func New(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// Put stores policy under its name, replacing any policy already there.
-func (s *Service) Put(ctx context.Context, policy Policy) error {
+// Put stores policy under its name, replacing any policy already there; principal needs update on it, whether or not it exists.
+func (s *Service) Put(ctx context.Context, principal Principal, policy Policy) error {
 	if !validName(policy.Name) {
 		return ErrInvalidName
 	}
@@ -43,6 +46,9 @@ func (s *Service) Put(ctx context.Context, policy Policy) error {
 		if !validRule(rule) {
 			return ErrInvalidRule
 		}
+	}
+	if err := s.Authorize(ctx, principal, policyResourcePrefix+policy.Name, CapabilityUpdate); err != nil {
+		return err
 	}
 
 	err := s.repo.Put(ctx, policy)
@@ -52,8 +58,20 @@ func (s *Service) Put(ctx context.Context, policy Policy) error {
 	return err
 }
 
-// Get returns the policy named name; ErrNotFound if there is none, ErrUnreadablePolicy if its record or any rule in it is invalid.
-func (s *Service) Get(ctx context.Context, name string) (Policy, error) {
+// Get returns the policy named name if principal may read it; ErrNotFound if there is none, ErrUnreadablePolicy if its record or any rule in it is invalid.
+func (s *Service) Get(ctx context.Context, principal Principal, name string) (Policy, error) {
+	if !validName(name) {
+		return Policy{}, ErrInvalidName
+	}
+	if err := s.Authorize(ctx, principal, policyResourcePrefix+name, CapabilityRead); err != nil {
+		return Policy{}, err
+	}
+
+	return s.get(ctx, name)
+}
+
+// get reads without authorizing, since Authorize reads through it and would otherwise ask itself forever.
+func (s *Service) get(ctx context.Context, name string) (Policy, error) {
 	if !validName(name) {
 		return Policy{}, ErrInvalidName
 	}
@@ -75,10 +93,13 @@ func (s *Service) Get(ctx context.Context, name string) (Policy, error) {
 	return policy, nil
 }
 
-// Delete removes the policy named name; a missing name is not an error.
-func (s *Service) Delete(ctx context.Context, name string) error {
+// Delete removes the policy named name if principal may delete it; a missing name is not an error.
+func (s *Service) Delete(ctx context.Context, principal Principal, name string) error {
 	if !validName(name) {
 		return ErrInvalidName
+	}
+	if err := s.Authorize(ctx, principal, policyResourcePrefix+name, CapabilityDelete); err != nil {
+		return err
 	}
 
 	err := s.repo.Delete(ctx, name)
@@ -99,7 +120,7 @@ func (s *Service) Authorize(ctx context.Context, principal Principal, resource s
 
 	// Deny wins over any grant, so every matching rule is seen before deciding.
 	for _, name := range principal.policies {
-		policy, err := s.Get(ctx, name)
+		policy, err := s.get(ctx, name)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}

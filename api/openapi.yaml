@@ -318,7 +318,8 @@ paths:
       summary: Store a policy, replacing any policy already under the name.
       description: >
         Creates or replaces; the response is the same either way. The name is
-        taken from the path only.
+        taken from the path only. Needs `update` on `system/policies/<name>`,
+        whether or not the policy exists.
       requestBody:
         required: true
         content:
@@ -332,6 +333,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -346,6 +349,8 @@ paths:
       operationId: getPolicy
       tags: [policies]
       summary: Read a policy.
+      description: >
+        Needs `read` on `system/policies/<name>`.
       responses:
         "200":
           description: The policy's rules.
@@ -357,6 +362,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "503":
@@ -369,7 +376,8 @@ paths:
       tags: [policies]
       summary: Delete a policy.
       description: >
-        Idempotent: deleting a missing policy also succeeds.
+        Idempotent: deleting a missing policy also succeeds. Needs `delete`
+        on `system/policies/<name>`.
       responses:
         "204":
           description: Deleted, or there was nothing to delete.
@@ -377,6 +385,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":

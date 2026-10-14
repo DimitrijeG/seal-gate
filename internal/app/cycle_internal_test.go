@@ -441,6 +441,17 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a token is forbidden a policy no rule grants", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/policies/dev", "")
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+	})
+
 	t.Run("a secret written after unseal reads back", func(t *testing.T) {
 		router := unsealed(t)
 		want := "c2VjcmV0" // "secret"

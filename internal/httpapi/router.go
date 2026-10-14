@@ -33,9 +33,9 @@ type SecretService interface {
 
 // PolicyService is policy storage as the handlers use it.
 type PolicyService interface {
-	Put(ctx context.Context, policy authorization.Policy) error
-	Get(ctx context.Context, name string) (authorization.Policy, error)
-	Delete(ctx context.Context, name string) error
+	Put(ctx context.Context, principal authorization.Principal, policy authorization.Policy) error
+	Get(ctx context.Context, principal authorization.Principal, name string) (authorization.Policy, error)
+	Delete(ctx context.Context, principal authorization.Principal, name string) error
 }
 
 // EntityService is entity storage as the handlers use it.

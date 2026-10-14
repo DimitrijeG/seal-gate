@@ -142,23 +142,27 @@ type ruleBody struct {
 }
 
 type fakePolicy struct {
-	name      string // the last name Get or Delete got
+	principal authorization.Principal // the last principal any method got
+	name      string                  // the last name Get or Delete got
 	putPolicy authorization.Policy
 	getPolicy authorization.Policy
 	err       error
 }
 
-func (f *fakePolicy) Put(ctx context.Context, policy authorization.Policy) error {
+func (f *fakePolicy) Put(ctx context.Context, principal authorization.Principal, policy authorization.Policy) error {
+	f.principal = principal
 	f.putPolicy = policy
 	return f.err
 }
 
-func (f *fakePolicy) Get(ctx context.Context, name string) (authorization.Policy, error) {
+func (f *fakePolicy) Get(ctx context.Context, principal authorization.Principal, name string) (authorization.Policy, error) {
+	f.principal = principal
 	f.name = name
 	return f.getPolicy, f.err
 }
 
-func (f *fakePolicy) Delete(ctx context.Context, name string) error {
+func (f *fakePolicy) Delete(ctx context.Context, principal authorization.Principal, name string) error {
+	f.principal = principal
 	f.name = name
 	return f.err
 }
