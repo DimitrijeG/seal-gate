@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
@@ -16,12 +17,13 @@ import (
 // principal is who every call acts as; these tests do not depend on who it is.
 var principal = authorization.NewEntityPrincipal("0123456789abcdef0123456789abcdef", "dev")
 
-// fakeRepository keeps secrets in a map; err, when set, fails every call, and putErr only Put.
+// fakeRepository keeps secrets in a map; err, when set, fails every call, putErr only Put, and getErr only Get.
 type fakeRepository struct {
 	secrets map[string]secret.Entry
 	calls   int
 	err     error
 	putErr  error
+	getErr  error
 }
 
 func (r *fakeRepository) Put(_ context.Context, path string, entry secret.Entry) error {
@@ -40,6 +42,9 @@ func (r *fakeRepository) Get(_ context.Context, path string) (secret.Entry, erro
 	r.calls++
 	if r.err != nil {
 		return secret.Entry{}, r.err
+	}
+	if r.getErr != nil {
+		return secret.Entry{}, r.getErr
 	}
 	entry, ok := r.secrets[path]
 	if !ok {
@@ -122,10 +127,33 @@ func (r *fakeRandom) Bytes(n int) ([]byte, error) {
 
 func newGeneratingService(t *testing.T) (*secret.Service, *fakeRepository, *fakeRandom, *fakeAuthorizer) {
 	t.Helper()
-	repo := &fakeRepository{secrets: make(map[string]secret.Entry)}
-	random := &fakeRandom{}
-	authorizer := &fakeAuthorizer{}
-	return secret.New(repo, random, authorizer), repo, random, authorizer
+	f := newFixture(t)
+	return f.service, f.repo, f.random, f.authorizer
+}
+
+// fakeClock reads as now; tests move time by assigning it.
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+type fixture struct {
+	service    *secret.Service
+	repo       *fakeRepository
+	random     *fakeRandom
+	authorizer *fakeAuthorizer
+	clock      *fakeClock
+}
+
+func newFixture(t *testing.T) fixture {
+	t.Helper()
+	f := fixture{
+		repo:       &fakeRepository{secrets: make(map[string]secret.Entry)},
+		random:     &fakeRandom{},
+		authorizer: &fakeAuthorizer{},
+		clock:      &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)},
+	}
+	f.service = secret.New(f.repo, f.random, f.authorizer, f.clock)
+	return f
 }
 
 func TestService(t *testing.T) {
@@ -133,7 +161,7 @@ func TestService(t *testing.T) {
 		s, _ := newService(t)
 		path := "db/password"
 
-		if err := s.Put(t.Context(), principal, path, []byte("secret")); err != nil {
+		if err := s.Put(t.Context(), principal, path, []byte("secret"), 0); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		got, err := s.Get(t.Context(), principal, path)
@@ -141,8 +169,103 @@ func TestService(t *testing.T) {
 			t.Fatalf("Get: %v", err)
 		}
 
-		if !bytes.Equal(got, []byte("secret")) {
-			t.Errorf("got %q, want %q", got, []byte("secret"))
+		if !bytes.Equal(got.Value, []byte("secret")) {
+			t.Errorf("got %q, want %q", got.Value, []byte("secret"))
+		}
+	})
+
+	t.Run("a secret written with a TTL expires that long after it was written", func(t *testing.T) {
+		f := newFixture(t)
+		path := "db/password"
+		want := f.clock.now.Add(time.Hour)
+
+		if err := f.service.Put(t.Context(), principal, path, []byte("secret"), time.Hour); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := f.service.Get(t.Context(), principal, path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.ExpiresAt.Equal(want) {
+			t.Errorf("got %v, want %v", got.ExpiresAt, want)
+		}
+	})
+
+	t.Run("a secret written without a TTL never expires", func(t *testing.T) {
+		f := newFixture(t)
+		path := "db/password"
+
+		if err := f.service.Put(t.Context(), principal, path, []byte("secret"), 0); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := f.service.Get(t.Context(), principal, path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.ExpiresAt.IsZero() {
+			t.Errorf("got %v, want none", got.ExpiresAt)
+		}
+	})
+
+	t.Run("a secret keeps the TTL it was written with", func(t *testing.T) {
+		f := newFixture(t)
+
+		if err := f.service.Put(t.Context(), principal, "db/password", []byte("secret"), time.Hour); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+
+		if got := f.repo.secrets["db/password"].TTL; got != time.Hour {
+			t.Errorf("got %v, want %v", got, time.Hour)
+		}
+	})
+
+	t.Run("writing again without a TTL clears the expiry", func(t *testing.T) {
+		f := newFixture(t)
+		path := "db/password"
+
+		if err := f.service.Put(t.Context(), principal, path, []byte("secret"), time.Hour); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := f.service.Put(t.Context(), principal, path, []byte("secret"), 0); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := f.service.Get(t.Context(), principal, path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.ExpiresAt.IsZero() {
+			t.Errorf("got %v, want none", got.ExpiresAt)
+		}
+	})
+
+	t.Run("a stored secret is not found from its expiry on", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			elapsed time.Duration
+		}{
+			{"at its expiry", time.Hour},
+			{"after it", time.Hour + time.Second},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				f := newFixture(t)
+				path := "db/password"
+
+				if err := f.service.Put(t.Context(), principal, path, []byte("secret"), time.Hour); err != nil {
+					t.Fatalf("Put: %v", err)
+				}
+				f.clock.now = f.clock.now.Add(tt.elapsed)
+
+				_, err := f.service.Get(t.Context(), principal, path)
+
+				if !errors.Is(err, secret.ErrNotFound) {
+					t.Errorf("got %v, want %v", err, secret.ErrNotFound)
+				}
+			})
 		}
 	})
 
@@ -160,7 +283,7 @@ func TestService(t *testing.T) {
 		s, _ := newService(t)
 		path := "db/password"
 
-		if err := s.Put(t.Context(), principal, path, []byte("secret")); err != nil {
+		if err := s.Put(t.Context(), principal, path, []byte("secret"), 0); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		if err := s.Delete(t.Context(), principal, path); err != nil {
@@ -188,7 +311,7 @@ func TestService(t *testing.T) {
 				s, _ := newService(t)
 
 				for _, path := range []string{"api-key", "db/password", "db/user"} {
-					if err := s.Put(t.Context(), principal, path, []byte("secret")); err != nil {
+					if err := s.Put(t.Context(), principal, path, []byte("secret"), 0); err != nil {
 						t.Fatalf("Put: %v", err)
 					}
 				}
@@ -201,6 +324,56 @@ func TestService(t *testing.T) {
 					t.Errorf("got %v, want %v", got, tt.want)
 				}
 			})
+		}
+	})
+
+	t.Run("an expired stored secret is left out of listings", func(t *testing.T) {
+		f := newFixture(t)
+
+		if err := f.service.Put(t.Context(), principal, "db/password", []byte("secret"), time.Hour); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := f.service.Put(t.Context(), principal, "db/user", []byte("secret"), 0); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		f.clock.now = f.clock.now.Add(time.Hour)
+
+		got, err := f.service.List(t.Context(), principal, "db/")
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if want := []string{"db/user"}; !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a secret deleted while listing is left out", func(t *testing.T) {
+		s, repo := newService(t)
+		repo.secrets["db/password"] = secret.Entry{Value: []byte("secret")}
+		// Listing finds the path, but the read after it no longer does.
+		repo.getErr = secret.ErrNotFound
+
+		got, err := s.List(t.Context(), principal, "db/")
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if len(got) != 0 {
+			t.Errorf("got %v, want none", got)
+		}
+	})
+
+	t.Run("a failed read while listing reaches the caller", func(t *testing.T) {
+		s, repo := newService(t)
+		repo.secrets["db/password"] = secret.Entry{Value: []byte("secret")}
+		repoErr := errors.New("disk failed")
+		repo.getErr = repoErr
+
+		_, err := s.List(t.Context(), principal, "db/")
+
+		if !errors.Is(err, repoErr) {
+			t.Errorf("got %v, want %v", err, repoErr)
 		}
 	})
 
@@ -224,7 +397,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				err := s.Put(t.Context(), principal, tt.path, []byte("secret"))
+				err := s.Put(t.Context(), principal, tt.path, []byte("secret"), 0)
 
 				if !errors.Is(err, secret.ErrInvalidPath) {
 					t.Errorf("got %v, want %v", err, secret.ErrInvalidPath)
@@ -247,7 +420,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				if err := s.Put(t.Context(), principal, tt.path, []byte("secret")); err != nil {
+				if err := s.Put(t.Context(), principal, tt.path, []byte("secret"), 0); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -260,7 +433,7 @@ func TestService(t *testing.T) {
 			call func(ctx context.Context, s *secret.Service) error
 		}{
 			{"put", func(ctx context.Context, s *secret.Service) error {
-				return s.Put(ctx, principal, "db/", []byte("secret"))
+				return s.Put(ctx, principal, "db/", []byte("secret"), 0)
 			}},
 			{"get", func(ctx context.Context, s *secret.Service) error {
 				_, err := s.Get(ctx, principal, "db/")
@@ -270,7 +443,7 @@ func TestService(t *testing.T) {
 				return s.Delete(ctx, principal, "db/")
 			}},
 			{"generate", func(ctx context.Context, s *secret.Service) error {
-				_, err := s.Generate(ctx, principal, "db/", 32)
+				_, err := s.Generate(ctx, principal, "db/", 32, 0)
 				return err
 			}},
 			{"rotate", func(ctx context.Context, s *secret.Service) error {
@@ -325,10 +498,23 @@ func TestService(t *testing.T) {
 	t.Run("a value over the maximum size is refused", func(t *testing.T) {
 		s, repo := newService(t)
 
-		err := s.Put(t.Context(), principal, "db/password", make([]byte, secret.MaxValueSize+1))
+		err := s.Put(t.Context(), principal, "db/password", make([]byte, secret.MaxValueSize+1), 0)
 
 		if !errors.Is(err, secret.ErrValueTooLarge) {
 			t.Errorf("err: got %v, want %v", err, secret.ErrValueTooLarge)
+		}
+		if repo.calls != 0 {
+			t.Errorf("calls: got %d, want 0", repo.calls)
+		}
+	})
+
+	t.Run("a negative TTL is refused before the repository", func(t *testing.T) {
+		s, repo := newService(t)
+
+		err := s.Put(t.Context(), principal, "db/password", []byte("secret"), -time.Second)
+
+		if !errors.Is(err, secret.ErrInvalidTTL) {
+			t.Errorf("err: got %v, want %v", err, secret.ErrInvalidTTL)
 		}
 		if repo.calls != 0 {
 			t.Errorf("calls: got %d, want 0", repo.calls)
@@ -349,7 +535,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				if err := s.Put(t.Context(), principal, "db/password", tt.value); err != nil {
+				if err := s.Put(t.Context(), principal, "db/password", tt.value, 0); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -359,7 +545,7 @@ func TestService(t *testing.T) {
 	t.Run("a generated secret has the requested length", func(t *testing.T) {
 		s, _ := newService(t)
 
-		got, err := s.Generate(t.Context(), principal, "db/password", 32)
+		got, err := s.Generate(t.Context(), principal, "db/password", 32, 0)
 		if err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
@@ -374,7 +560,7 @@ func TestService(t *testing.T) {
 		// fakeRandom's first call fills every byte with 1.
 		want := bytes.Repeat([]byte{1}, 32)
 
-		got, err := s.Generate(t.Context(), principal, "db/password", 32)
+		got, err := s.Generate(t.Context(), principal, "db/password", 32, 0)
 		if err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
@@ -388,7 +574,7 @@ func TestService(t *testing.T) {
 		s, _ := newService(t)
 		path := "db/password"
 
-		want, err := s.Generate(t.Context(), principal, path, 32)
+		want, err := s.Generate(t.Context(), principal, path, 32, 0)
 		if err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
@@ -397,15 +583,15 @@ func TestService(t *testing.T) {
 			t.Fatalf("Get: %v", err)
 		}
 
-		if !bytes.Equal(got, want) {
-			t.Errorf("got %x, want %x", got, want)
+		if !bytes.Equal(got.Value, want) {
+			t.Errorf("got %x, want %x", got.Value, want)
 		}
 	})
 
 	t.Run("a generated secret is marked generated", func(t *testing.T) {
 		s, repo := newService(t)
 
-		if _, err := s.Generate(t.Context(), principal, "db/password", 32); err != nil {
+		if _, err := s.Generate(t.Context(), principal, "db/password", 32, 0); err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
 
@@ -414,14 +600,122 @@ func TestService(t *testing.T) {
 		}
 	})
 
+	t.Run("a generated secret with a TTL is due that long after it was generated", func(t *testing.T) {
+		f := newFixture(t)
+		path := "db/password"
+		want := f.clock.now.Add(time.Hour)
+
+		if _, err := f.service.Generate(t.Context(), principal, path, 32, time.Hour); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		got, err := f.service.Get(t.Context(), principal, path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.ExpiresAt.Equal(want) {
+			t.Errorf("got %v, want %v", got.ExpiresAt, want)
+		}
+	})
+
+	t.Run("a generated secret keeps the TTL it was generated with", func(t *testing.T) {
+		f := newFixture(t)
+
+		if _, err := f.service.Generate(t.Context(), principal, "db/password", 32, time.Hour); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		if got := f.repo.secrets["db/password"].TTL; got != time.Hour {
+			t.Errorf("got %v, want %v", got, time.Hour)
+		}
+	})
+
+	t.Run("a generated secret without a TTL is never due", func(t *testing.T) {
+		f := newFixture(t)
+		path := "db/password"
+
+		if _, err := f.service.Generate(t.Context(), principal, path, 32, 0); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		got, err := f.service.Get(t.Context(), principal, path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.ExpiresAt.IsZero() {
+			t.Errorf("got %v, want none", got.ExpiresAt)
+		}
+	})
+
+	t.Run("a generated secret past its expiry still reads", func(t *testing.T) {
+		f := newFixture(t)
+		path := "db/password"
+
+		want, err := f.service.Generate(t.Context(), principal, path, 32, time.Hour)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		want = bytes.Clone(want)
+		f.clock.now = f.clock.now.Add(2 * time.Hour)
+
+		got, err := f.service.Get(t.Context(), principal, path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !bytes.Equal(got.Value, want) {
+			t.Errorf("got %x, want %x", got.Value, want)
+		}
+	})
+
+	t.Run("a generated secret past its expiry stays listed", func(t *testing.T) {
+		f := newFixture(t)
+
+		if _, err := f.service.Generate(t.Context(), principal, "db/password", 32, time.Hour); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		f.clock.now = f.clock.now.Add(2 * time.Hour)
+
+		got, err := f.service.List(t.Context(), principal, "db/")
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if want := []string{"db/password"}; !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("rotating sets the next expiry from the stored TTL", func(t *testing.T) {
+		f := newFixture(t)
+		path := "db/password"
+
+		if _, err := f.service.Generate(t.Context(), principal, path, 32, time.Hour); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		f.clock.now = f.clock.now.Add(90 * time.Minute)
+		want := f.clock.now.Add(time.Hour)
+		if _, err := f.service.Rotate(t.Context(), principal, path); err != nil {
+			t.Fatalf("Rotate: %v", err)
+		}
+		got, err := f.service.Get(t.Context(), principal, path)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.ExpiresAt.Equal(want) {
+			t.Errorf("got %v, want %v", got.ExpiresAt, want)
+		}
+	})
+
 	t.Run("a put over a generated secret clears the mark", func(t *testing.T) {
 		s, repo := newService(t)
 		path := "db/password"
 
-		if _, err := s.Generate(t.Context(), principal, path, 32); err != nil {
+		if _, err := s.Generate(t.Context(), principal, path, 32, 0); err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
-		if err := s.Put(t.Context(), principal, path, []byte("secret")); err != nil {
+		if err := s.Put(t.Context(), principal, path, []byte("secret"), 0); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 
@@ -434,10 +728,22 @@ func TestService(t *testing.T) {
 		s, repo := newService(t)
 		repo.secrets["db/password"] = secret.Entry{Value: []byte("old")}
 
-		_, err := s.Generate(t.Context(), principal, "db/password", 32)
+		_, err := s.Generate(t.Context(), principal, "db/password", 32, 0)
 
 		if !errors.Is(err, secret.ErrExists) {
 			t.Errorf("got %v, want %v", err, secret.ErrExists)
+		}
+	})
+
+	t.Run("generating over an expired stored secret succeeds", func(t *testing.T) {
+		f := newFixture(t)
+		if err := f.service.Put(t.Context(), principal, "db/password", []byte("old"), time.Hour); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		f.clock.now = f.clock.now.Add(time.Hour)
+
+		if _, err := f.service.Generate(t.Context(), principal, "db/password", 32, 0); err != nil {
+			t.Errorf("got %v, want nil", err)
 		}
 	})
 
@@ -456,7 +762,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, repo := newService(t)
 
-				_, err := s.Generate(t.Context(), principal, "db/password", tt.length)
+				_, err := s.Generate(t.Context(), principal, "db/password", tt.length, 0)
 
 				if !errors.Is(err, secret.ErrInvalidLength) {
 					t.Errorf("err: got %v, want %v", err, secret.ErrInvalidLength)
@@ -465,6 +771,19 @@ func TestService(t *testing.T) {
 					t.Errorf("calls: got %d, want 0", repo.calls)
 				}
 			})
+		}
+	})
+
+	t.Run("a negative TTL on generate is refused before the repository", func(t *testing.T) {
+		s, repo := newService(t)
+
+		_, err := s.Generate(t.Context(), principal, "db/password", 32, -time.Second)
+
+		if !errors.Is(err, secret.ErrInvalidTTL) {
+			t.Errorf("err: got %v, want %v", err, secret.ErrInvalidTTL)
+		}
+		if repo.calls != 0 {
+			t.Errorf("calls: got %d, want 0", repo.calls)
 		}
 	})
 
@@ -481,7 +800,7 @@ func TestService(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newService(t)
 
-				if _, err := s.Generate(t.Context(), principal, "db/password", tt.length); err != nil {
+				if _, err := s.Generate(t.Context(), principal, "db/password", tt.length, 0); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})
@@ -493,7 +812,7 @@ func TestService(t *testing.T) {
 		randomErr := errors.New("entropy exhausted")
 		random.err = randomErr
 
-		_, err := s.Generate(t.Context(), principal, "db/password", 32)
+		_, err := s.Generate(t.Context(), principal, "db/password", 32, 0)
 
 		if !errors.Is(err, randomErr) {
 			t.Errorf("got %v, want %v", err, randomErr)
@@ -505,7 +824,7 @@ func TestService(t *testing.T) {
 		repoErr := errors.New("disk failed")
 		repo.putErr = repoErr
 
-		_, err := s.Generate(t.Context(), principal, "db/password", 32)
+		_, err := s.Generate(t.Context(), principal, "db/password", 32, 0)
 
 		if !errors.Is(err, repoErr) {
 			t.Errorf("got %v, want %v", err, repoErr)
@@ -517,7 +836,7 @@ func TestService(t *testing.T) {
 		repo.putErr = errors.New("disk failed")
 		want := make([]byte, 32)
 
-		if _, err := s.Generate(t.Context(), principal, "db/password", 32); err == nil {
+		if _, err := s.Generate(t.Context(), principal, "db/password", 32, 0); err == nil {
 			t.Fatal("Generate: got nil, want an error")
 		}
 
@@ -527,13 +846,13 @@ func TestService(t *testing.T) {
 	})
 
 	t.Run("two generates racing on the same path create one secret", func(t *testing.T) {
-		s := secret.New(newRacingRepository(), &fakeRandom{}, &fakeAuthorizer{})
+		s := secret.New(newRacingRepository(), &fakeRandom{}, &fakeAuthorizer{}, &fakeClock{})
 		ctx := t.Context()
 
 		var errs [2]error
 		var wg sync.WaitGroup
 		for i := range errs {
-			wg.Go(func() { _, errs[i] = s.Generate(ctx, principal, "db/password", 32) })
+			wg.Go(func() { _, errs[i] = s.Generate(ctx, principal, "db/password", 32, 0) })
 		}
 		wg.Wait()
 
@@ -555,7 +874,7 @@ func TestService(t *testing.T) {
 		s, _ := newService(t)
 		path := "db/password"
 
-		old, err := s.Generate(t.Context(), principal, path, 32)
+		old, err := s.Generate(t.Context(), principal, path, 32, 0)
 		if err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
@@ -574,7 +893,7 @@ func TestService(t *testing.T) {
 		s, _ := newService(t)
 		path := "db/password"
 
-		if _, err := s.Generate(t.Context(), principal, path, 48); err != nil {
+		if _, err := s.Generate(t.Context(), principal, path, 48, 0); err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
 		got, err := s.Rotate(t.Context(), principal, path)
@@ -591,7 +910,7 @@ func TestService(t *testing.T) {
 		s, _ := newService(t)
 		path := "db/password"
 
-		if _, err := s.Generate(t.Context(), principal, path, 32); err != nil {
+		if _, err := s.Generate(t.Context(), principal, path, 32, 0); err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
 		want, err := s.Rotate(t.Context(), principal, path)
@@ -603,8 +922,8 @@ func TestService(t *testing.T) {
 			t.Fatalf("Get: %v", err)
 		}
 
-		if !bytes.Equal(got, want) {
-			t.Errorf("got %x, want %x", got, want)
+		if !bytes.Equal(got.Value, want) {
+			t.Errorf("got %x, want %x", got.Value, want)
 		}
 	})
 
@@ -612,7 +931,7 @@ func TestService(t *testing.T) {
 		s, repo := newService(t)
 		path := "db/password"
 
-		if _, err := s.Generate(t.Context(), principal, path, 32); err != nil {
+		if _, err := s.Generate(t.Context(), principal, path, 32, 0); err != nil {
 			t.Fatalf("Generate: %v", err)
 		}
 		if _, err := s.Rotate(t.Context(), principal, path); err != nil {
@@ -653,6 +972,20 @@ func TestService(t *testing.T) {
 		s, _ := newService(t)
 
 		_, err := s.Rotate(t.Context(), principal, "missing")
+
+		if !errors.Is(err, secret.ErrNotFound) {
+			t.Errorf("got %v, want %v", err, secret.ErrNotFound)
+		}
+	})
+
+	t.Run("rotating an expired stored secret is not found", func(t *testing.T) {
+		f := newFixture(t)
+		if err := f.service.Put(t.Context(), principal, "db/password", []byte("old"), time.Hour); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		f.clock.now = f.clock.now.Add(time.Hour)
+
+		_, err := f.service.Rotate(t.Context(), principal, "db/password")
 
 		if !errors.Is(err, secret.ErrNotFound) {
 			t.Errorf("got %v, want %v", err, secret.ErrNotFound)
@@ -703,7 +1036,7 @@ func TestService(t *testing.T) {
 	t.Run("a put racing a rotation is never overwritten", func(t *testing.T) {
 		repo := newPutFirstRepository()
 		repo.secrets["db/password"] = secret.Entry{Value: make([]byte, 32), Generated: true}
-		s := secret.New(repo, &fakeRandom{}, &fakeAuthorizer{})
+		s := secret.New(repo, &fakeRandom{}, &fakeAuthorizer{}, &fakeClock{})
 		ctx := t.Context()
 		want := []byte("secret")
 
@@ -716,7 +1049,7 @@ func TestService(t *testing.T) {
 		// The put starts only once the rotation has read the secret.
 		<-repo.read
 		wg.Go(func() {
-			if err := s.Put(ctx, principal, "db/password", want); err != nil {
+			if err := s.Put(ctx, principal, "db/password", want, 0); err != nil {
 				t.Errorf("Put: %v", err)
 			}
 		})
@@ -765,7 +1098,7 @@ var operations = []struct {
 	call func(ctx context.Context, s *secret.Service) error
 }{
 	{"put", func(ctx context.Context, s *secret.Service) error {
-		return s.Put(ctx, principal, "db/password", []byte("secret"))
+		return s.Put(ctx, principal, "db/password", []byte("secret"), 0)
 	}},
 	{"get", func(ctx context.Context, s *secret.Service) error {
 		_, err := s.Get(ctx, principal, "db/password")
@@ -779,7 +1112,7 @@ var operations = []struct {
 		return err
 	}},
 	{"generate", func(ctx context.Context, s *secret.Service) error {
-		_, err := s.Generate(ctx, principal, "db/password", 32)
+		_, err := s.Generate(ctx, principal, "db/password", 32, 0)
 		return err
 	}},
 	{"rotate", func(ctx context.Context, s *secret.Service) error {

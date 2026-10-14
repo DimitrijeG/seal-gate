@@ -27,11 +27,11 @@ type SystemService interface {
 
 // SecretService is secret storage as the handlers use it.
 type SecretService interface {
-	Put(ctx context.Context, principal authorization.Principal, path string, value []byte) error
-	Get(ctx context.Context, principal authorization.Principal, path string) ([]byte, error)
+	Put(ctx context.Context, principal authorization.Principal, path string, value []byte, ttl time.Duration) error
+	Get(ctx context.Context, principal authorization.Principal, path string) (secret.Entry, error)
 	Delete(ctx context.Context, principal authorization.Principal, path string) error
 	List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error)
-	Generate(ctx context.Context, principal authorization.Principal, path string, length int) ([]byte, error)
+	Generate(ctx context.Context, principal authorization.Principal, path string, length int, ttl time.Duration) ([]byte, error)
 	Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error)
 }
 

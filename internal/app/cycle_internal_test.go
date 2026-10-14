@@ -37,7 +37,8 @@ type initBody struct {
 }
 
 type secretBody struct {
-	Value string `json:"value"`
+	Value     string `json:"value"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type listBody struct {
@@ -74,9 +75,14 @@ type createGroupBody struct {
 	ID string `json:"id"`
 }
 
+// fakeClock reads as now; tests move time by assigning it.
 type fakeClock struct{ now time.Time }
 
-func (c fakeClock) Now() time.Time { return c.now }
+func (c *fakeClock) Now() time.Time { return c.now }
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+}
 
 // newRouter wires the real components over a fresh memory backend.
 func newRouter(t *testing.T) http.Handler {
@@ -100,6 +106,12 @@ func routerOver(t *testing.T, backend storage.Backend) http.Handler {
 // auditedRouterOver is routerOver that also returns the path of the file it audits to.
 func auditedRouterOver(t *testing.T, backend storage.Backend) (http.Handler, string) {
 	t.Helper()
+	return clockedRouterOver(t, backend, newFakeClock())
+}
+
+// clockedRouterOver is auditedRouterOver on a clock the caller holds.
+func clockedRouterOver(t *testing.T, backend storage.Backend, clock *fakeClock) (http.Handler, string) {
+	t.Helper()
 	infra, err := buildInfrastructure(&config.Config{
 		Logger: config.LoggerConfig{Level: "error", Format: "text"},
 		Crypto: config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
@@ -107,7 +119,7 @@ func auditedRouterOver(t *testing.T, backend storage.Backend) (http.Handler, str
 	if err != nil {
 		t.Fatalf("buildInfrastructure: %v", err)
 	}
-	infra.clock = fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+	infra.clock = clock
 	services := buildServices(infra, buildRepositories(backend, infra))
 
 	// A real file sink, so every cycle test is audited as production is.
@@ -244,10 +256,18 @@ func withToken(h http.Handler, token string) http.Handler {
 // unsealed returns a router over an initialized, unsealed instance, sending its root token.
 func unsealed(t *testing.T) http.Handler {
 	t.Helper()
-	router := newRouter(t)
+	router, _ := clockedUnsealed(t)
+	return router
+}
+
+// clockedUnsealed is unsealed that also returns the clock the instance reads, for the test to move.
+func clockedUnsealed(t *testing.T) (http.Handler, *fakeClock) {
+	t.Helper()
+	clock := newFakeClock()
+	router, _ := clockedRouterOver(t, memory.New(), clock)
 	body := initialize(t, router)
 	unsealAll(t, router, body.Shares)
-	return withToken(router, body.RootToken)
+	return withToken(router, body.RootToken), clock
 }
 
 func putSecret(t *testing.T, h http.Handler, path, value string) {
@@ -748,6 +768,42 @@ func TestSealLifecycle(t *testing.T) {
 
 		if rec.Code != http.StatusConflict {
 			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body)
+		}
+	})
+
+	t.Run("a secret written with a TTL is not found after its expiry", func(t *testing.T) {
+		router, clock := clockedUnsealed(t)
+		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0","ttl":3600}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		getSecret(t, router, "db/password")
+		clock.now = clock.now.Add(time.Hour)
+
+		rec = send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body)
+		}
+	})
+
+	t.Run("a rotated secret's expiry moves forward", func(t *testing.T) {
+		router, clock := clockedUnsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("generate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		clock.now = clock.now.Add(90 * time.Minute)
+		want := clock.now.Add(time.Hour).Format(time.RFC3339)
+		rotateSecret(t, router, "db/password")
+
+		rec = send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[secretBody](t, rec).ExpiresAt; got != want {
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 
