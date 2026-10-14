@@ -101,12 +101,12 @@ func (s *GroupService) getGroup(ctx context.Context, id string) (Group, error) {
 
 // DeleteGroup removes the group with id if principal may delete it; a missing ID is not an error.
 func (s *GroupService) DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !validID(id) {
 		return ErrInvalidGroupID
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.authorizer.Authorize(ctx, principal, groupsResource+"/"+id, authorization.CapabilityDelete); err != nil {
 		return fmt.Errorf("identity: %w", err)
 	}
@@ -120,15 +120,15 @@ func (s *GroupService) DeleteGroup(ctx context.Context, principal authorization.
 
 // UpdateGroup replaces an existing group's policies if principal may update it; it never creates one, so a missing ID is ErrGroupNotFound.
 func (s *GroupService) UpdateGroup(ctx context.Context, principal authorization.Principal, group Group) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !validID(group.ID) {
 		return ErrInvalidGroupID
 	}
 	if err := validateGroup(group); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.authorizer.Authorize(ctx, principal, groupsResource+"/"+group.ID, authorization.CapabilityUpdate); err != nil {
 		return fmt.Errorf("identity: %w", err)
 	}

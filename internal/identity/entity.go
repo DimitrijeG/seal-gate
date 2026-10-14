@@ -101,12 +101,12 @@ func (s *EntityService) getEntity(ctx context.Context, id string) (Entity, error
 
 // DeleteEntity removes the entity with id if principal may delete it; a missing ID is not an error.
 func (s *EntityService) DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !validID(id) {
 		return ErrInvalidEntityID
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.authorizer.Authorize(ctx, principal, entitiesResource+"/"+id, authorization.CapabilityDelete); err != nil {
 		return fmt.Errorf("identity: %w", err)
 	}
@@ -120,15 +120,15 @@ func (s *EntityService) DeleteEntity(ctx context.Context, principal authorizatio
 
 // UpdateEntity replaces an existing entity's policies and groups if principal may update it; it never creates one, so a missing ID is ErrEntityNotFound.
 func (s *EntityService) UpdateEntity(ctx context.Context, principal authorization.Principal, entity Entity) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !validID(entity.ID) {
 		return ErrInvalidEntityID
 	}
 	if err := validateLists(entity); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.authorizer.Authorize(ctx, principal, entitiesResource+"/"+entity.ID, authorization.CapabilityUpdate); err != nil {
 		return fmt.Errorf("identity: %w", err)
 	}
