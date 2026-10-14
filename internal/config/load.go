@@ -23,5 +23,10 @@ func Load() (*Config, error) {
 			WriteTimeout:      5 * time.Second,
 			GracefulShutdown:  5 * time.Second,
 		},
+		Audit: AuditConfig{
+			Sinks: []AuditSinkConfig{
+				{Type: "file", Path: "seal-gate-audit.log", Required: true, Timeout: time.Second},
+			},
+		},
 	}, nil
 }
