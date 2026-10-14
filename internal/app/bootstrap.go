@@ -33,12 +33,13 @@ type repositories struct {
 }
 
 type services struct {
-	system *system.Service
-	secret *secret.Service
-	policy *authorization.Service
-	entity *identity.EntityService
-	token  *identity.TokenService
-	group  *identity.GroupService
+	authenticator *identity.Authenticator
+	system        *system.Service
+	secret        *secret.Service
+	policy        *authorization.Service
+	entity        *identity.EntityService
+	token         *identity.TokenService
+	group         *identity.GroupService
 }
 
 func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
@@ -88,27 +89,32 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 		infra.keys,
 	)
 
+	sys := system.NewService(keyring, infra.clock)
 	entity := identity.NewEntityService(repositories.set.Entity, infra.random)
+	token := identity.NewTokenService(repositories.set.Token, entity, infra.random)
+	group := identity.NewGroupService(repositories.set.Group, infra.random)
 
 	return &services{
-		system: system.NewService(keyring, infra.clock),
-		secret: secret.New(repositories.set.Secret),
-		policy: authorization.New(repositories.set.Policy),
-		entity: entity,
-		token:  identity.NewTokenService(repositories.set.Token, entity, infra.random),
-		group:  identity.NewGroupService(repositories.set.Group, infra.random),
+		authenticator: identity.NewAuthenticator(sys, token, group),
+		system:        sys,
+		secret:        secret.New(repositories.set.Secret),
+		policy:        authorization.New(repositories.set.Policy),
+		entity:        entity,
+		token:         token,
+		group:         group,
 	}
 }
 
 func buildRouter(services *services, logger *slog.Logger) http.Handler {
 	return httpapi.NewRouter(&httpapi.Handlers{
-		System: services.system,
-		Secret: services.secret,
-		Policy: services.policy,
-		Entity: services.entity,
-		Token:  services.token,
-		Group:  services.group,
-		Logger: logger,
+		Authenticator: services.authenticator,
+		System:        services.system,
+		Secret:        services.secret,
+		Policy:        services.policy,
+		Entity:        services.entity,
+		Token:         services.token,
+		Group:         services.group,
+		Logger:        logger,
 	})
 }
 

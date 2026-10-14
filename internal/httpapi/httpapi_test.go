@@ -34,6 +34,22 @@ type statusBody struct {
 	Progress    int  `json:"progress"`
 }
 
+// fakeAuthenticator accepts every token as the root unless err is set.
+type fakeAuthenticator struct {
+	token []byte // a copy of the last token
+	given []byte // the last token as given, to check it is cleared
+	err   error
+}
+
+func (f *fakeAuthenticator) Authenticate(ctx context.Context, token []byte) (authorization.Principal, error) {
+	f.token = bytes.Clone(token)
+	f.given = token
+	if f.err != nil {
+		return authorization.Principal{}, f.err
+	}
+	return authorization.NewRootPrincipal(), nil
+}
+
 type fakeSystem struct {
 	initConfig   system.SealConfiguration
 	initResult   system.InitResult
@@ -231,10 +247,22 @@ func (f *fakeGroup) DeleteGroup(ctx context.Context, id string) error {
 	return f.err
 }
 
+// bearer authenticates as whatever the router's authenticator decides; AQID is {1, 2, 3}.
+const bearer = "Bearer AQID"
+
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doWithAuthorization(t, h, bearer, method, path, body)
+}
+
+// doWithAuthorization sends authorization as the Authorization header, or none if it is empty.
+func doWithAuthorization(t *testing.T, h http.Handler, authorization, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", contentTypeJSON)
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)

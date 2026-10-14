@@ -157,12 +157,23 @@ func unsealAll(t *testing.T, h http.Handler, shares []string) {
 	}
 }
 
-// unsealed returns a router over an initialized, unsealed instance.
+// withToken sends token as a bearer token on every request that does not carry one.
+func withToken(h http.Handler, token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// unsealed returns a router over an initialized, unsealed instance, sending its root token.
 func unsealed(t *testing.T) http.Handler {
 	t.Helper()
 	router := newRouter(t)
-	unsealAll(t, router, initialize(t, router).Shares)
-	return router
+	body := initialize(t, router)
+	unsealAll(t, router, body.Shares)
+	return withToken(router, body.RootToken)
 }
 
 func putSecret(t *testing.T, h http.Handler, path, value string) {
@@ -226,7 +237,7 @@ func writeOnBolt(t *testing.T, cfg *config.Config, value string) initBody {
 	router := routerOver(t, backend)
 	body := initialize(t, router)
 	unsealAll(t, router, body.Shares)
-	putSecret(t, router, "db/password", value)
+	putSecret(t, withToken(router, body.RootToken), "db/password", value)
 
 	// Close releases the file lock; reopening before it would return ErrLocked.
 	if err := backend.Close(); err != nil {
@@ -357,6 +368,29 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a request without a token is unauthorized", func(t *testing.T) {
+		router := newRouter(t)
+		unsealAll(t, router, initialize(t, router).Shares)
+
+		rec := send(t, router, http.MethodGet, "/v1/secrets?prefix=", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a token never issued is unauthorized", func(t *testing.T) {
+		router := newRouter(t)
+		unsealAll(t, router, initialize(t, router).Shares)
+		token := base64.StdEncoding.EncodeToString(make([]byte, 32))
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets?prefix=", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
 	t.Run("a secret written after unseal reads back", func(t *testing.T) {
 		router := unsealed(t)
 		want := "c2VjcmV0" // "secret"
@@ -370,12 +404,12 @@ func TestSealLifecycle(t *testing.T) {
 	t.Run("a secret written before a restart reads back after unsealing", func(t *testing.T) {
 		cfg := boltConfig(t)
 		want := "c2VjcmV0" // "secret"
-		shares := writeOnBolt(t, cfg, want).Shares
+		body := writeOnBolt(t, cfg, want)
 
 		router := routerOver(t, reopenBolt(t, cfg))
-		unsealAll(t, router, shares)
+		unsealAll(t, router, body.Shares)
 
-		if got := getSecret(t, router, "db/password"); got != want {
+		if got := getSecret(t, withToken(router, body.RootToken), "db/password"); got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
@@ -442,9 +476,9 @@ func TestSealLifecycle(t *testing.T) {
 
 	t.Run("writing a secret while sealed is service unavailable", func(t *testing.T) {
 		router := newRouter(t)
-		initialize(t, router)
+		token := initialize(t, router).RootToken
 
-		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0"}`)
+		rec := send(t, withToken(router, token), http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0"}`)
 
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body)

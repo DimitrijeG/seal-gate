@@ -28,6 +28,7 @@ var (
 	errTrailingData         = errors.New("request body must contain a single JSON object")
 	errShareWithReset       = errors.New("share and reset cannot be sent together")
 	errSealed               = errors.New("the system is sealed")
+	errUnauthenticated      = errors.New("missing or invalid token")
 )
 
 const mediaTypeJSON = "application/json"
@@ -39,6 +40,10 @@ func writeError(w http.ResponseWriter, logger *slog.Logger, err error) {
 
 	if status == http.StatusInternalServerError && logger != nil {
 		logger.Error("request failed", "error", err)
+	}
+	// Every 401 must name the scheme it expects (RFC 7235).
+	if status == http.StatusUnauthorized {
+		w.Header().Set("WWW-Authenticate", "Bearer")
 	}
 
 	writeJSON(w, status, errorResponse{Errors: []string{message}})
@@ -78,6 +83,9 @@ func classify(err error) (int, string) {
 		return http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", sizeErr.Limit)
 	case errors.As(err, &base64Err):
 		return http.StatusBadRequest, "request body has a value that is not valid base64"
+	// Authentication: one message for every failure, so a client cannot probe which check it failed.
+	case errors.Is(err, errUnauthenticated):
+		return http.StatusUnauthorized, err.Error()
 	// Instance state: the request was valid, but there is no key to serve it with.
 	case errors.Is(err, errSealed):
 		return http.StatusServiceUnavailable, err.Error()
@@ -122,6 +130,8 @@ var domainErrors = []struct {
 	{identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
 	{identity.ErrGroupNotFound, http.StatusNotFound, "group not found"},
 	{identity.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
+	// Shares errUnauthenticated's message, so a client cannot tell a known token from a malformed one.
+	{identity.ErrInvalidToken, http.StatusUnauthorized, "missing or invalid token"},
 }
 
 // writeJSON forbids caching on every body, since a body may carry a secret or a share.

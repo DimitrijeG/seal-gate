@@ -25,7 +25,7 @@ func devPolicy() authorization.Policy {
 func TestPolicy(t *testing.T) {
 	t.Run("a written policy reaches the service with its name and rules", func(t *testing.T) {
 		fake := &fakePolicy{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Policy: fake})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: fake})
 		want := devPolicy()
 
 		rec := do(t, router, http.MethodPut, "/v1/policies/dev", devPolicyJSON)
@@ -39,7 +39,7 @@ func TestPolicy(t *testing.T) {
 	})
 
 	t.Run("a body naming the policy is refused", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{}})
 
 		rec := do(t, router, http.MethodPut, "/v1/policies/dev", `{"name":"admin","rules":[]}`)
 
@@ -47,7 +47,7 @@ func TestPolicy(t *testing.T) {
 	})
 
 	t.Run("a field of the wrong type is refused without naming a Go type", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{}})
 
 		rec := do(t, router, http.MethodPut, "/v1/policies/dev", `{"rules":"x"}`)
 
@@ -56,7 +56,7 @@ func TestPolicy(t *testing.T) {
 
 	t.Run("an absent rule list stores a policy with none", func(t *testing.T) {
 		fake := &fakePolicy{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Policy: fake})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: fake})
 
 		rec := do(t, router, http.MethodPut, "/v1/policies/dev", `{}`)
 		if rec.Code != http.StatusNoContent {
@@ -69,7 +69,7 @@ func TestPolicy(t *testing.T) {
 	})
 
 	t.Run("a stored policy is returned with its rules", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{getPolicy: devPolicy()}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{getPolicy: devPolicy()}})
 		want := policyBody{Rules: []ruleBody{{Path: "secrets/dev/*", Capabilities: []string{"read", "list"}}}}
 
 		rec := do(t, router, http.MethodGet, "/v1/policies/dev", "")
@@ -84,7 +84,7 @@ func TestPolicy(t *testing.T) {
 	})
 
 	t.Run("a policy without rules is returned with an empty list", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{getPolicy: authorization.Policy{Name: "dev"}}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{getPolicy: authorization.Policy{Name: "dev"}}})
 		want := `{"rules":[]}`
 
 		rec := do(t, router, http.MethodGet, "/v1/policies/dev", "")
@@ -99,7 +99,7 @@ func TestPolicy(t *testing.T) {
 	})
 
 	t.Run("a delete answers no content", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{}})
 
 		rec := do(t, router, http.MethodDelete, "/v1/policies/dev", "")
 
@@ -124,7 +124,7 @@ func TestPolicy(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakePolicy{}
-				router := httpapi.NewRouter(&httpapi.Handlers{Policy: fake})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: fake})
 
 				do(t, router, tt.method, "/v1/policies/"+want, "")
 
@@ -148,7 +148,7 @@ func TestPolicy(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{err: authorization.ErrSealed}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{err: authorization.ErrSealed}})
 
 				rec := do(t, router, tt.method, "/v1/policies/dev", tt.body)
 
@@ -173,7 +173,7 @@ func TestPolicy(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Policy: &fakePolicy{err: tt.err}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{err: tt.err}})
 
 				rec := do(t, router, http.MethodGet, "/v1/policies/dev", "")
 

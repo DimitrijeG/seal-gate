@@ -15,7 +15,7 @@ const devGroupJSON = `{"policies":["dev"]}`
 func TestGroup(t *testing.T) {
 	t.Run("a created group reaches the service with its policies", func(t *testing.T) {
 		fake := &fakeGroup{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: fake})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: fake})
 		want := identity.Group{Policies: []string{"dev"}}
 
 		rec := do(t, router, http.MethodPost, "/v1/groups", devGroupJSON)
@@ -29,7 +29,7 @@ func TestGroup(t *testing.T) {
 	})
 
 	t.Run("a create answers with the new ID", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{createID: groupID}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{createID: groupID}})
 
 		rec := do(t, router, http.MethodPost, "/v1/groups", devGroupJSON)
 		if rec.Code != http.StatusCreated {
@@ -43,7 +43,7 @@ func TestGroup(t *testing.T) {
 	})
 
 	t.Run("a body naming the ID is refused", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{}})
 
 		rec := do(t, router, http.MethodPost, "/v1/groups", `{"id":"`+groupID+`","policies":[]}`)
 
@@ -52,7 +52,7 @@ func TestGroup(t *testing.T) {
 
 	t.Run("an empty object creates a group without policies", func(t *testing.T) {
 		fake := &fakeGroup{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: fake})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: fake})
 
 		rec := do(t, router, http.MethodPost, "/v1/groups", `{}`)
 		if rec.Code != http.StatusCreated {
@@ -66,7 +66,7 @@ func TestGroup(t *testing.T) {
 
 	t.Run("a stored group is returned with its policies", func(t *testing.T) {
 		stored := identity.Group{ID: groupID, Policies: []string{"dev"}}
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{getGroup: stored}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{getGroup: stored}})
 		want := groupBody{Policies: []string{"dev"}}
 
 		rec := do(t, router, http.MethodGet, "/v1/groups/"+groupID, "")
@@ -81,7 +81,7 @@ func TestGroup(t *testing.T) {
 	})
 
 	t.Run("a group without policies is returned with an empty list", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{getGroup: identity.Group{ID: groupID}}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{getGroup: identity.Group{ID: groupID}}})
 		want := `{"policies":[]}`
 
 		rec := do(t, router, http.MethodGet, "/v1/groups/"+groupID, "")
@@ -97,7 +97,7 @@ func TestGroup(t *testing.T) {
 
 	t.Run("an update reaches the service with the ID from the URL", func(t *testing.T) {
 		fake := &fakeGroup{}
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: fake})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: fake})
 		want := identity.Group{ID: groupID, Policies: []string{"dev"}}
 
 		rec := do(t, router, http.MethodPut, "/v1/groups/"+groupID, devGroupJSON)
@@ -111,7 +111,7 @@ func TestGroup(t *testing.T) {
 	})
 
 	t.Run("a delete answers no content", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{}})
 
 		rec := do(t, router, http.MethodDelete, "/v1/groups/"+groupID, "")
 
@@ -135,7 +135,7 @@ func TestGroup(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				fake := &fakeGroup{}
-				router := httpapi.NewRouter(&httpapi.Handlers{Group: fake})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: fake})
 
 				do(t, router, tt.method, "/v1/groups/"+groupID, "")
 
@@ -161,7 +161,7 @@ func TestGroup(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{err: identity.ErrSealed}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{err: identity.ErrSealed}})
 
 				rec := do(t, router, tt.method, tt.path, tt.body)
 
@@ -186,7 +186,7 @@ func TestGroup(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := httpapi.NewRouter(&httpapi.Handlers{Group: &fakeGroup{err: tt.err}})
+				router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{err: tt.err}})
 
 				rec := do(t, router, http.MethodGet, "/v1/groups/"+groupID, "")
 

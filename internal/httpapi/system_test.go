@@ -284,7 +284,7 @@ func TestUnseal(t *testing.T) {
 
 func TestSeal(t *testing.T) {
 	t.Run("seal returns 204 with no body", func(t *testing.T) {
-		router := httpapi.NewRouter(&httpapi.Handlers{System: &fakeSystem{}})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{}})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/seal", "")
 
@@ -301,7 +301,7 @@ func TestSeal(t *testing.T) {
 
 	t.Run("seal seals the service", func(t *testing.T) {
 		fake := &fakeSystem{}
-		router := httpapi.NewRouter(&httpapi.Handlers{System: fake})
+		router := httpapi.NewRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: fake})
 
 		rec := do(t, router, http.MethodPost, "/v1/sys/seal", "")
 		if rec.Code != http.StatusNoContent {
