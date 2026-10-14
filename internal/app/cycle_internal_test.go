@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,8 +84,21 @@ func newRouter(t *testing.T) http.Handler {
 	return routerOver(t, memory.New())
 }
 
+// auditedRouter is newRouter that also returns the path of the file it audits to.
+func auditedRouter(t *testing.T) (http.Handler, string) {
+	t.Helper()
+	return auditedRouterOver(t, memory.New())
+}
+
 // routerOver wires the real components over backend, with a fresh key holder, so sealed.
 func routerOver(t *testing.T, backend storage.Backend) http.Handler {
+	t.Helper()
+	router, _ := auditedRouterOver(t, backend)
+	return router
+}
+
+// auditedRouterOver is routerOver that also returns the path of the file it audits to.
+func auditedRouterOver(t *testing.T, backend storage.Backend) (http.Handler, string) {
 	t.Helper()
 	infra, err := buildInfrastructure(&config.Config{
 		Logger: config.LoggerConfig{Level: "error", Format: "text"},
@@ -98,8 +112,9 @@ func routerOver(t *testing.T, backend storage.Backend) http.Handler {
 
 	// A real file sink, so every cycle test is audited as production is.
 	a, dir := newAuditApplication(t)
+	path := filepath.Join(dir, "audit.log")
 	destinations, err := a.auditDestinations(auditConfig(config.AuditSinkConfig{
-		Type: "file", Path: filepath.Join(dir, "audit.log"), Required: true, Timeout: time.Second,
+		Type: "file", Path: path, Required: true, Timeout: time.Second,
 	}))
 	if err != nil {
 		t.Fatalf("auditDestinations: %v", err)
@@ -108,7 +123,52 @@ func routerOver(t *testing.T, backend storage.Backend) http.Handler {
 	if err != nil {
 		t.Fatalf("audit.New: %v", err)
 	}
-	return buildRouter(services, infra, auditor)
+	return buildRouter(services, infra, auditor), path
+}
+
+// auditLine is one line of the audit file, as an operator reads it.
+type auditLine struct {
+	RequestID string `json:"request_id"`
+	Kind      string `json:"kind"`
+	Principal string `json:"principal"`
+	Route     string `json:"route"`
+	Status    int    `json:"status"`
+}
+
+// auditedSecret is the secret value the audited actions write, raw.
+const auditedSecret = "hunter2-database-password"
+
+// auditActions initializes, unseals, writes a secret as root and reads it without a token,
+// then returns what init handed out and the audit file's bytes.
+func auditActions(t *testing.T) (initBody, []byte) {
+	t.Helper()
+	router, path := auditedRouter(t)
+	body := initialize(t, router)
+	unsealAll(t, router, body.Shares)
+	putSecret(t, withToken(router, body.RootToken), "db/password", base64.StdEncoding.EncodeToString([]byte(auditedSecret)))
+	if rec := send(t, router, http.MethodGet, "/v1/secrets/db/password", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+	}
+
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	return body, written
+}
+
+// auditLines decodes every line of an audit file.
+func auditLines(t *testing.T, written []byte) []auditLine {
+	t.Helper()
+	var lines []auditLine
+	for raw := range bytes.Lines(written) {
+		var line auditLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("Unmarshal %q: %v", raw, err)
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // The key is part of the stored format, so the test spells it out.
@@ -746,6 +806,80 @@ func TestSealLifecycle(t *testing.T) {
 
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("init, unseal, a secret write and a refused read are in the audit file", func(t *testing.T) {
+		type action struct {
+			route  string
+			status int
+		}
+		want := map[action]int{
+			{"POST /v1/sys/init", http.StatusOK}:                   1,
+			{"POST /v1/sys/unseal", http.StatusOK}:                 3,
+			{"PUT /v1/secrets/{path...}", http.StatusNoContent}:    1,
+			{"GET /v1/secrets/{path...}", http.StatusUnauthorized}: 1,
+		}
+
+		_, written := auditActions(t)
+
+		// A request line and its response line share an ID; the response holds the status.
+		requests := make(map[string]auditLine)
+		got := make(map[action]int)
+		for _, line := range auditLines(t, written) {
+			switch line.Kind {
+			case "request":
+				requests[line.RequestID] = line
+			case "response":
+				if request, ok := requests[line.RequestID]; ok {
+					got[action{request.Route, line.Status}]++
+				}
+			}
+		}
+		if !maps.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("the audit file holds no secret", func(t *testing.T) {
+		body, written := auditActions(t)
+		// An empty file holds no secret either; that would prove nothing.
+		if len(written) == 0 {
+			t.Fatalf("got an empty audit file, want the actions' lines")
+		}
+		secrets := map[string]string{"secret value": auditedSecret, "root token": body.RootToken}
+		for i, share := range body.Shares {
+			secrets[fmt.Sprintf("share %d", i)] = share
+		}
+
+		for name, encoded := range secrets {
+			// Each is checked as sent and as its raw bytes, whichever form it was handed out in.
+			forms := [][]byte{[]byte(encoded)}
+			if raw, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+				forms = append(forms, raw)
+			} else {
+				forms = append(forms, []byte(base64.StdEncoding.EncodeToString([]byte(encoded))))
+			}
+			for _, form := range forms {
+				if bytes.Contains(written, form) {
+					t.Errorf("got the %s in the audit file, want none", name)
+				}
+			}
+		}
+	})
+
+	t.Run("a secret write is recorded as root", func(t *testing.T) {
+		_, written := auditActions(t)
+
+		var got []string
+		for _, line := range auditLines(t, written) {
+			if line.Kind == "request" && line.Route == "PUT /v1/secrets/{path...}" {
+				got = append(got, line.Principal)
+			}
+		}
+
+		if want := []string{"root"}; !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 }

@@ -14,6 +14,7 @@ func (h *Handlers) audit(next http.Handler) http.Handler {
 			Time:      h.Clock.Now(),
 			RequestID: rand.Text(),
 			Kind:      audit.KindRequest,
+			Principal: principalFrom(r).Identity(),
 			Method:    r.Method,
 			Route:     r.Pattern,
 			Path:      r.URL.Path,

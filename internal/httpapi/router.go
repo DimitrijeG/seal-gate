@@ -94,67 +94,97 @@ func NewRouter(h *Handlers) http.Handler {
 	mux := http.NewServeMux()
 
 	// Open: they must work before any token exists, or while none can be checked.
-	mux.HandleFunc("POST /v1/sys/init", h.handleInit)
-	mux.HandleFunc("POST /v1/sys/unseal", h.handleUnseal)
-	mux.Handle("GET /v1/sys/status", h.audit(http.HandlerFunc(h.handleStatus)))
-	mux.HandleFunc("GET /v1/sys/health", h.handleHealth)
+	mux.Handle("POST /v1/sys/init", h.open(h.handleInit))
+	mux.Handle("POST /v1/sys/unseal", h.open(h.handleUnseal))
+	mux.Handle("GET /v1/sys/status", h.open(h.handleStatus))
+	mux.Handle("GET /v1/sys/health", h.open(h.handleHealth))
 
-	mux.Handle("POST /v1/sys/seal", h.authenticate(h.handleSeal))
+	mux.Handle("POST /v1/sys/seal", h.authenticated(h.handleSeal))
 
-	mux.Handle("GET /v1/secrets", h.authenticate(h.handleListSecrets))
-	mux.Handle("PUT /v1/secrets/{path...}", h.authenticate(h.handlePutSecret))
-	mux.Handle("GET /v1/secrets/{path...}", h.authenticate(h.handleGetSecret))
-	mux.Handle("DELETE /v1/secrets/{path...}", h.authenticate(h.handleDeleteSecret))
+	mux.Handle("GET /v1/secrets", h.authenticated(h.handleListSecrets))
+	mux.Handle("PUT /v1/secrets/{path...}", h.authenticated(h.handlePutSecret))
+	mux.Handle("GET /v1/secrets/{path...}", h.authenticated(h.handleGetSecret))
+	mux.Handle("DELETE /v1/secrets/{path...}", h.authenticated(h.handleDeleteSecret))
 
-	mux.Handle("PUT /v1/policies/{name}", h.authenticate(h.handlePutPolicy))
-	mux.Handle("GET /v1/policies/{name}", h.authenticate(h.handleGetPolicy))
-	mux.Handle("DELETE /v1/policies/{name}", h.authenticate(h.handleDeletePolicy))
+	mux.Handle("PUT /v1/policies/{name}", h.authenticated(h.handlePutPolicy))
+	mux.Handle("GET /v1/policies/{name}", h.authenticated(h.handleGetPolicy))
+	mux.Handle("DELETE /v1/policies/{name}", h.authenticated(h.handleDeletePolicy))
 
-	mux.Handle("POST /v1/entities", h.authenticate(h.handleCreateEntity))
-	mux.Handle("GET /v1/entities/{id}", h.authenticate(h.handleGetEntity))
-	mux.Handle("PUT /v1/entities/{id}", h.authenticate(h.handleUpdateEntity))
-	mux.Handle("DELETE /v1/entities/{id}", h.authenticate(h.handleDeleteEntity))
-	mux.Handle("POST /v1/entities/{id}/tokens", h.authenticate(h.handleCreateToken))
+	mux.Handle("POST /v1/entities", h.authenticated(h.handleCreateEntity))
+	mux.Handle("GET /v1/entities/{id}", h.authenticated(h.handleGetEntity))
+	mux.Handle("PUT /v1/entities/{id}", h.authenticated(h.handleUpdateEntity))
+	mux.Handle("DELETE /v1/entities/{id}", h.authenticated(h.handleDeleteEntity))
+	mux.Handle("POST /v1/entities/{id}/tokens", h.authenticated(h.handleCreateToken))
 
-	mux.Handle("POST /v1/groups", h.authenticate(h.handleCreateGroup))
-	mux.Handle("GET /v1/groups/{id}", h.authenticate(h.handleGetGroup))
-	mux.Handle("PUT /v1/groups/{id}", h.authenticate(h.handleUpdateGroup))
-	mux.Handle("DELETE /v1/groups/{id}", h.authenticate(h.handleDeleteGroup))
+	mux.Handle("POST /v1/groups", h.authenticated(h.handleCreateGroup))
+	mux.Handle("GET /v1/groups/{id}", h.authenticated(h.handleGetGroup))
+	mux.Handle("PUT /v1/groups/{id}", h.authenticated(h.handleUpdateGroup))
+	mux.Handle("DELETE /v1/groups/{id}", h.authenticated(h.handleDeleteGroup))
 
 	return h.refuseUncleanPaths(mux)
 }
 
-// authenticate refuses a request whose bearer token does not authenticate, before next runs.
-func (h *Handlers) authenticate(next http.HandlerFunc) http.Handler {
+// open audits a route that needs no token.
+func (h *Handlers) open(next http.HandlerFunc) http.Handler {
+	return h.audit(next)
+}
+
+// authenticated identifies the caller, audits the request, then refuses it unless the caller authenticated.
+func (h *Handlers) authenticated(next http.HandlerFunc) http.Handler {
+	// Audit sits between the halves: after identify, so it knows the principal;
+	// before require, so it records the requests require refuses.
+	return h.identify(h.audit(h.require(next)))
+}
+
+// authentication is what identify learned: a principal, or why there is none.
+type authentication struct {
+	principal authorization.Principal
+	err       error
+}
+
+type authenticationKey struct{}
+
+// identify resolves the bearer token, if any, and stores the outcome for require; it refuses nothing.
+func (h *Handlers) identify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result := authentication{err: errUnauthenticated}
 		// The scheme is case-insensitive (RFC 7235); the token is not.
 		scheme, encoded, _ := strings.Cut(r.Header.Get("Authorization"), " ")
-		if !strings.EqualFold(scheme, "Bearer") {
-			writeError(w, h.Logger, errUnauthenticated)
-			return
+		if strings.EqualFold(scheme, "Bearer") {
+			token, err := base64.StdEncoding.DecodeString(encoded)
+			// Deferred before the check: a rejected decode can still return the bytes it read.
+			defer clear(token)
+			if err == nil && len(token) > 0 {
+				result.principal, result.err = h.Authenticator.Authenticate(r.Context(), token)
+			}
 		}
-		token, err := base64.StdEncoding.DecodeString(encoded)
-		// Deferred before the check: a rejected decode can still return the bytes it read.
-		defer clear(token)
-		if err != nil || len(token) == 0 {
-			writeError(w, h.Logger, errUnauthenticated)
-			return
-		}
-		principal, err := h.Authenticator.Authenticate(r.Context(), token)
-		if err != nil {
-			writeError(w, h.Logger, err)
-			return
-		}
-		next(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal)))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authenticationKey{}, result)))
 	})
 }
 
-type principalKey struct{}
+// require refuses a request identify did not authenticate, before next runs.
+func (h *Handlers) require(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result, ok := r.Context().Value(authenticationKey{}).(authentication)
+		// Without identify there is no outcome, and no outcome is no caller.
+		if !ok {
+			result.err = errUnauthenticated
+		}
+		if result.err != nil {
+			writeError(w, h.Logger, result.err)
+			return
+		}
+		next(w, r)
+	})
+}
 
-// principalFrom returns the principal authenticate stored, or the zero principal, which grants nothing.
+// principalFrom returns the principal identify authenticated, or the zero principal, which grants nothing.
 func principalFrom(r *http.Request) authorization.Principal {
-	principal, _ := r.Context().Value(principalKey{}).(authorization.Principal)
-	return principal
+	result, _ := r.Context().Value(authenticationKey{}).(authentication)
+	if result.err != nil {
+		return authorization.Principal{}
+	}
+	return result.principal
 }
 
 // refuseUncleanPaths runs before the mux, which would otherwise redirect an
