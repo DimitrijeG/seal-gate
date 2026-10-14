@@ -8,6 +8,7 @@ type Config struct {
 	Storage StorageConfig
 	Crypto  CryptoConfig
 	HTTP    HTTPConfig
+	Audit   AuditConfig
 }
 
 type LoggerConfig struct {
@@ -30,4 +31,17 @@ type HTTPConfig struct {
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	GracefulShutdown  time.Duration
+}
+
+// AuditConfig names the sinks every audit event is written to.
+type AuditConfig struct {
+	Sinks []AuditSinkConfig
+}
+
+// AuditSinkConfig is one audit sink: its type ("file"), where it writes, whether its failure fails the request, and how long a write may take.
+type AuditSinkConfig struct {
+	Type     string
+	Path     string
+	Required bool
+	Timeout  time.Duration
 }

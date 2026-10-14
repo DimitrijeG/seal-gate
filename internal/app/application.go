@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"slices"
 
+	"github.com/dimitrijegasic/seal-gate/internal/audit"
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
@@ -44,11 +45,20 @@ func Build(ctx context.Context, cfg *config.Config) (_ *Application, err error) 
 	}
 	app.closers = append(app.closers, backend.Close)
 
+	destinations, err := app.auditDestinations(cfg)
+	if err != nil {
+		return nil, err
+	}
+	auditor, err := audit.New(infra.logger, destinations...)
+	if err != nil {
+		return nil, fmt.Errorf("app: %w", err)
+	}
+
 	repositories := buildRepositories(backend, infra)
 	services := buildServices(infra, repositories)
 
 	app.system = services.system
-	app.server = buildHTTP(cfg, services, infra.logger)
+	app.server = buildHTTP(cfg, services, infra, auditor)
 
 	return app, nil
 }

@@ -33,7 +33,7 @@ func TestEnforcement(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, tt.policies...)
 
-				_, err := s.Get(t.Context(), authorization.NewPolicyPrincipal("admin"), "ops")
+				_, err := s.Get(t.Context(), authorization.NewEntityPrincipal(entityID, "admin"), "ops")
 
 				if !errors.Is(err, authorization.ErrDenied) {
 					t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -60,7 +60,7 @@ func TestEnforcement(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, admin("system/policies/*", tt.granted...))
 
-				err := tt.call(t.Context(), s, authorization.NewPolicyPrincipal("admin"))
+				err := tt.call(t.Context(), s, authorization.NewEntityPrincipal(entityID, "admin"))
 
 				if !errors.Is(err, authorization.ErrDenied) {
 					t.Errorf("got %v, want %v", err, authorization.ErrDenied)
@@ -93,7 +93,7 @@ func TestEnforcement(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, _ := newAuthorizer(t, append(tt.stored, admin("system/policies/ops", tt.capability))...)
 
-				if err := tt.call(t.Context(), s, authorization.NewPolicyPrincipal("admin")); err != nil {
+				if err := tt.call(t.Context(), s, authorization.NewEntityPrincipal(entityID, "admin")); err != nil {
 					t.Errorf("got %v, want nil", err)
 				}
 			})

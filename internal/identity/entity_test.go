@@ -116,10 +116,14 @@ func (r *fakeRandom) Bytes(n int) ([]byte, error) {
 	return r.last, nil
 }
 
-const hexID = "0123456789abcdef0123456789abcdef"
+const (
+	hexID = "0123456789abcdef0123456789abcdef"
+	// callerID differs from hexID, so the caller is never the entity it acts on.
+	callerID = "fedcba9876543210fedcba9876543210"
+)
 
 // principal is who every call acts as; these tests do not depend on who it is.
-var principal = authorization.NewPolicyPrincipal("dev")
+var principal = authorization.NewEntityPrincipal(callerID, "dev")
 
 func newEntityService(t *testing.T) (*identity.EntityService, *fakeEntities, *fakeRandom) {
 	t.Helper()

@@ -73,7 +73,7 @@ func (c fakeClock) Now() time.Time { return c.now }
 var (
 	sealConfig = system.SealConfiguration{Shares: 5, Threshold: 3}
 	initTime   = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	principal  = authorization.NewPolicyPrincipal("ops")
+	principal  = authorization.NewEntityPrincipal("0123456789abcdef0123456789abcdef", "ops")
 )
 
 func newService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.KeyHolder) {

@@ -13,7 +13,7 @@ import (
 )
 
 // principal is who every call acts as; these tests do not depend on who it is.
-var principal = authorization.NewPolicyPrincipal("dev")
+var principal = authorization.NewEntityPrincipal("0123456789abcdef0123456789abcdef", "dev")
 
 // fakeRepository keeps secrets in a map; err, when set, fails every call.
 type fakeRepository struct {
