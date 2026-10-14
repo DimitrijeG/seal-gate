@@ -12,6 +12,8 @@ import (
 
 // Service runs the seal lifecycle: it decides when keys move, and Keyring moves them.
 type Service struct {
+	// Serializes the keyring, so two inits cannot both pass the initialized check and racing unseals submit shares in turn.
+	// Process-local: it assumes one instance per backend.
 	mu         sync.Mutex
 	keyring    *Keyring
 	clock      Clock
@@ -50,8 +52,6 @@ func (s *Service) Init(ctx context.Context, cfg SealConfiguration) (InitResult, 
 		return InitResult{}, ErrInvalidSealConfig
 	}
 
-	// Held across check and save so two inits cannot both pass the check.
-	// Process-local: it assumes one instance per backend.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
