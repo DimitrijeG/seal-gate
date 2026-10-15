@@ -80,6 +80,10 @@ func (w *Worker) Tick(ctx context.Context) {
 		}
 	}
 	for _, job := range w.jobs {
+		// A job may scan the whole store before it first checks ctx, so a deactivate must not wait on one.
+		if ctx.Err() != nil {
+			return
+		}
 		// Logged and passed over: one job's failure says nothing about the next one's records.
 		if err := job.Run(ctx, report); err != nil {
 			w.logger.Error("lifecycle job failed", "error", err)

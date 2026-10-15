@@ -257,14 +257,32 @@ func TestWorker(t *testing.T) {
 
 	t.Run("actions before a cancelled job are still audited", func(t *testing.T) {
 		f := newFixture(t)
-		f.job.actions = twoActions[:1]
 		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
+		job := &cancellingJob{cancel: cancel, actions: twoActions[:1]}
+		worker, err := lifecycle.New(time.Minute, []lifecycle.Job{job}, f.recorder, f.clock, slog.New(slog.DiscardHandler))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
 
-		f.worker.Tick(ctx)
+		worker.Tick(ctx)
 
 		if got := len(f.recorder.events); got != 1 {
 			t.Errorf("got %d events, want 1", got)
+		}
+	})
+
+	t.Run("a cancelled tick starts no further job", func(t *testing.T) {
+		f := newFixture(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		worker, err := lifecycle.New(time.Minute, []lifecycle.Job{&cancellingJob{cancel: cancel}, f.job}, f.recorder, f.clock, slog.New(slog.DiscardHandler))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+
+		worker.Tick(ctx)
+
+		if got := f.job.runs(); got != 0 {
+			t.Errorf("got %d runs, want 0", got)
 		}
 	})
 
@@ -519,6 +537,20 @@ func awaitRun(t *testing.T, job *fakeJob) context.Context {
 		t.Fatal("got no run, want one")
 		return nil
 	}
+}
+
+// cancellingJob cancels its tick, as a deactivate arriving mid-job would, then reports its actions.
+type cancellingJob struct {
+	cancel  context.CancelFunc
+	actions []lifecycle.Action
+}
+
+func (j *cancellingJob) Run(ctx context.Context, report func(lifecycle.Action)) error {
+	j.cancel()
+	for _, action := range j.actions {
+		report(action)
+	}
+	return ctx.Err()
 }
 
 // cancellableJob reports its actions one at a time, stopping at the first one its context is done before.
