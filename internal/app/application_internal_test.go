@@ -9,6 +9,7 @@ import (
 
 	"github.com/dimitrijegasic/seal-gate/internal/audit"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
+	"github.com/dimitrijegasic/seal-gate/internal/lifecycle"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/bolt"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
@@ -18,11 +19,12 @@ func TestApplication(t *testing.T) {
 	t.Run("stopping the application releases the bolt file", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "test.db")
 		cfg := &config.Config{
-			Logger:  config.LoggerConfig{Level: "error", Format: "text"},
-			Storage: config.StorageConfig{Type: "bolt", Path: path},
-			Crypto:  config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
-			HTTP:    config.HTTPConfig{Address: "127.0.0.1:0", GracefulShutdown: time.Second},
-			Audit:   fileAudit(t),
+			Logger:    config.LoggerConfig{Level: "error", Format: "text"},
+			Storage:   config.StorageConfig{Type: "bolt", Path: path},
+			Crypto:    config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
+			HTTP:      config.HTTPConfig{Address: "127.0.0.1:0", GracefulShutdown: time.Second},
+			Audit:     fileAudit(t),
+			Lifecycle: config.LifecycleConfig{Interval: time.Hour},
 		}
 
 		application, err := Build(t.Context(), cfg)
@@ -48,11 +50,12 @@ func TestApplication(t *testing.T) {
 
 	t.Run("stopping the application seals it", func(t *testing.T) {
 		cfg := &config.Config{
-			Logger:  config.LoggerConfig{Level: "error", Format: "text"},
-			Storage: config.StorageConfig{Type: "memory"},
-			Crypto:  config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
-			HTTP:    config.HTTPConfig{Address: "127.0.0.1:0", GracefulShutdown: time.Second},
-			Audit:   fileAudit(t),
+			Logger:    config.LoggerConfig{Level: "error", Format: "text"},
+			Storage:   config.StorageConfig{Type: "memory"},
+			Crypto:    config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
+			HTTP:      config.HTTPConfig{Address: "127.0.0.1:0", GracefulShutdown: time.Second},
+			Audit:     fileAudit(t),
+			Lifecycle: config.LifecycleConfig{Interval: time.Hour},
 		}
 
 		application, err := Build(t.Context(), cfg)
@@ -99,7 +102,11 @@ func TestApplication(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildInfrastructure: %v", err)
 		}
-		services := buildServices(infra, buildRepositories(memory.New(), infra))
+		auditor, _ := fileAuditor(t, infra.logger)
+		services, err := buildServices(infra, buildRepositories(memory.New(), infra), auditor, time.Hour)
+		if err != nil {
+			t.Fatalf("buildServices: %v", err)
+		}
 
 		result, err := services.system.Init(t.Context(), system.SealConfiguration{Shares: 5, Threshold: 3})
 		if err != nil {
@@ -143,6 +150,34 @@ func TestApplication(t *testing.T) {
 
 		if !errors.Is(err, audit.ErrNoSinks) {
 			t.Errorf("got %v, want %v", err, audit.ErrNoSinks)
+		}
+	})
+
+	t.Run("a build with a non-positive lifecycle interval fails", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			interval time.Duration
+		}{
+			{"zero", 0},
+			{"negative", -time.Second},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				cfg := &config.Config{
+					Logger:    config.LoggerConfig{Level: "error", Format: "text"},
+					Storage:   config.StorageConfig{Type: "memory"},
+					Crypto:    config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
+					Audit:     fileAudit(t),
+					Lifecycle: config.LifecycleConfig{Interval: tt.interval},
+				}
+
+				_, err := Build(t.Context(), cfg)
+
+				if !errors.Is(err, lifecycle.ErrInvalidInterval) {
+					t.Errorf("got %v, want %v", err, lifecycle.ErrInvalidInterval)
+				}
+			})
 		}
 	})
 

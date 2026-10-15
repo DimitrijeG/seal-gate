@@ -55,7 +55,10 @@ func Build(ctx context.Context, cfg *config.Config) (_ *Application, err error) 
 	}
 
 	repositories := buildRepositories(backend, infra)
-	services := buildServices(infra, repositories)
+	services, err := buildServices(infra, repositories, auditor, cfg.Lifecycle.Interval)
+	if err != nil {
+		return nil, err
+	}
 
 	app.system = services.system
 	app.server = buildHTTP(cfg, services, infra, auditor)
