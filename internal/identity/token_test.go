@@ -7,40 +7,66 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
 )
 
-// fakeTokens keeps entity IDs by token hash; err, when set, fails every call.
+// fakeTokens keeps stored tokens by hash; err, when set, fails every call.
 type fakeTokens struct {
-	tokens map[[sha256.Size]byte]string
+	tokens map[[sha256.Size]byte]identity.StoredToken
 	calls  int
 	err    error
 }
 
-func (r *fakeTokens) Put(_ context.Context, hash [sha256.Size]byte, entityID string) error {
+func (r *fakeTokens) Put(_ context.Context, hash [sha256.Size]byte, token identity.StoredToken) error {
 	r.calls++
 	if r.err != nil {
 		return r.err
 	}
-	r.tokens[hash] = entityID
+	r.tokens[hash] = token
 	return nil
 }
 
-func (r *fakeTokens) Get(_ context.Context, hash [sha256.Size]byte) (string, error) {
+func (r *fakeTokens) Get(_ context.Context, hash [sha256.Size]byte) (identity.StoredToken, error) {
 	r.calls++
 	if r.err != nil {
-		return "", r.err
+		return identity.StoredToken{}, r.err
 	}
-	entityID, ok := r.tokens[hash]
+	token, ok := r.tokens[hash]
 	if !ok {
-		return "", identity.ErrInvalidToken
+		return identity.StoredToken{}, identity.ErrInvalidToken
 	}
-	return entityID, nil
+	return token, nil
 }
+
+// fakeClock reads as now; tests move it with advance.
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+func (c *fakeClock) advance(d time.Duration) { c.now = c.now.Add(d) }
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
+}
+
+// liveToken is a stored token for entityID that has not expired at the fake clock's time.
+func liveToken(entityID string) identity.StoredToken {
+	return identity.StoredToken{EntityID: entityID, ExpiresAt: newFakeClock().now.Add(tokenTTL)}
+}
+
+func newFakeTokens() *fakeTokens {
+	return &fakeTokens{tokens: make(map[[sha256.Size]byte]identity.StoredToken)}
+}
+
+// tokenTTL is not an hour, so a TTL hard-coded to the config default fails.
+const tokenTTL = 90 * time.Minute
 
 func newTokenService(t *testing.T) (*identity.TokenService, *fakeEntities, *fakeTokens, *fakeRandom) {
 	t.Helper()
@@ -48,14 +74,26 @@ func newTokenService(t *testing.T) (*identity.TokenService, *fakeEntities, *fake
 	return s, entities, tokens, random
 }
 
+// newClockedTokenService is newTokenService that also returns the clock the service reads, for the test to move.
+func newClockedTokenService(t *testing.T) (*identity.TokenService, *fakeEntities, *fakeTokens, *fakeClock) {
+	t.Helper()
+	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
+	tokens := newFakeTokens()
+	random := &fakeRandom{}
+	authorizer := &fakeAuthorizer{}
+	clock := newFakeClock()
+	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, clock, tokenTTL)
+	return s, entities, tokens, clock
+}
+
 // newAuthorizedTokenService gives both services one authorizer, so an entity read the token service authorizes shows in it.
 func newAuthorizedTokenService(t *testing.T) (*identity.TokenService, *fakeEntities, *fakeTokens, *fakeRandom, *fakeAuthorizer) {
 	t.Helper()
 	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
-	tokens := &fakeTokens{tokens: make(map[[sha256.Size]byte]string)}
+	tokens := newFakeTokens()
 	random := &fakeRandom{}
 	authorizer := &fakeAuthorizer{}
-	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer)
+	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, newFakeClock(), tokenTTL)
 	return s, entities, tokens, random, authorizer
 }
 
@@ -103,9 +141,25 @@ func TestToken(t *testing.T) {
 			t.Fatalf("CreateToken: %v", err)
 		}
 
-		want := map[[sha256.Size]byte]string{sha256.Sum256(token): hexID}
-		if !reflect.DeepEqual(tokens.tokens, want) {
-			t.Errorf("got %x, want %x", tokens.tokens, want)
+		want := [][sha256.Size]byte{sha256.Sum256(token)}
+		if got := slices.Collect(maps.Keys(tokens.tokens)); !reflect.DeepEqual(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
+	t.Run("a token is stored to expire one TTL after it is issued", func(t *testing.T) {
+		s, entities, tokens, clock := newClockedTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		clock.advance(time.Minute)
+		want := clock.now.Add(tokenTTL)
+
+		token, err := s.CreateToken(t.Context(), principal, hexID)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		if got := tokens.tokens[sha256.Sum256(token)].ExpiresAt; !got.Equal(want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
@@ -217,7 +271,7 @@ func TestToken(t *testing.T) {
 	t.Run("a token whose entity is unreadable reports unreadable", func(t *testing.T) {
 		s, entities, tokens, _ := newTokenService(t)
 		token := bytes.Repeat([]byte{1}, 32)
-		tokens.tokens[sha256.Sum256(token)] = hexID
+		tokens.tokens[sha256.Sum256(token)] = liveToken(hexID)
 		entities.entities[hexID] = identity.Entity{ID: hexID, Policies: []string{"dev/ops"}}
 
 		_, err := s.Resolve(t.Context(), token)
@@ -243,10 +297,38 @@ func TestToken(t *testing.T) {
 		}
 	})
 
+	t.Run("an expired token is refused like an unknown one", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			elapsed time.Duration
+		}{
+			{"at its expiry", tokenTTL},
+			{"past its expiry", tokenTTL + time.Second},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, entities, _, clock := newClockedTokenService(t)
+				entities.entities[hexID] = identity.Entity{ID: hexID}
+				token, err := s.CreateToken(t.Context(), principal, hexID)
+				if err != nil {
+					t.Fatalf("CreateToken: %v", err)
+				}
+				clock.advance(tt.elapsed)
+
+				_, err = s.Resolve(t.Context(), token)
+
+				if !errors.Is(err, identity.ErrInvalidToken) {
+					t.Errorf("got %v, want %v", err, identity.ErrInvalidToken)
+				}
+			})
+		}
+	})
+
 	t.Run("a stored token naming an invalid entity ID is unreadable", func(t *testing.T) {
 		s, _, tokens, _ := newTokenService(t)
 		token := bytes.Repeat([]byte{1}, 32)
-		tokens.tokens[sha256.Sum256(token)] = "../dev"
+		tokens.tokens[sha256.Sum256(token)] = liveToken("../dev")
 
 		_, err := s.Resolve(t.Context(), token)
 

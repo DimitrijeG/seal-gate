@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
@@ -17,8 +18,9 @@ import (
 
 var (
 	// Any 32 bytes do: the repository is given a hash and never sees a token.
-	tokenHash = sha256.Sum256([]byte("token"))
-	tokenKey  = "tokens/" + hex.EncodeToString(tokenHash[:])
+	tokenHash   = sha256.Sum256([]byte("token"))
+	tokenKey    = "tokens/" + hex.EncodeToString(tokenHash[:])
+	tokenExpiry = time.Date(2026, 10, 1, 13, 30, 0, 0, time.UTC)
 )
 
 func TestTokenRepository(t *testing.T) {
@@ -26,7 +28,7 @@ func TestTokenRepository(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Token
 
-		if err := repo.Put(t.Context(), tokenHash, entityID); err != nil {
+		if err := repo.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		got, err := repo.Get(t.Context(), tokenHash)
@@ -34,8 +36,25 @@ func TestTokenRepository(t *testing.T) {
 			t.Fatalf("Get: %v", err)
 		}
 
-		if got != entityID {
-			t.Errorf("got %q, want %q", got, entityID)
+		if got.EntityID != entityID {
+			t.Errorf("got %q, want %q", got.EntityID, entityID)
+		}
+	})
+
+	t.Run("a stored token's expiry reads back", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Token
+
+		if err := repo.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID, ExpiresAt: tokenExpiry}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := repo.Get(t.Context(), tokenHash)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if !got.ExpiresAt.Equal(tokenExpiry) {
+			t.Errorf("got %v, want %v", got.ExpiresAt, tokenExpiry)
 		}
 	})
 
@@ -44,7 +63,7 @@ func TestTokenRepository(t *testing.T) {
 		repo := f.set.Token
 		plaintext := []byte(entityID)
 
-		if err := repo.Put(t.Context(), tokenHash, entityID); err != nil {
+		if err := repo.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		keys, err := f.backend.List(t.Context(), "")
@@ -72,7 +91,7 @@ func TestTokenRepository(t *testing.T) {
 		repo := f.set.Token
 		want := []string{tokenKey}
 
-		if err := repo.Put(t.Context(), tokenHash, entityID); err != nil {
+		if err := repo.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		got, err := f.backend.List(t.Context(), "")
@@ -85,16 +104,16 @@ func TestTokenRepository(t *testing.T) {
 		}
 	})
 
-	t.Run("the stored record is version 1 JSON holding the entity ID", func(t *testing.T) {
+	t.Run("the stored record is version 2 JSON holding the entity ID and its expiry", func(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Token
 		// Decoded into any, so the field names are compared case-sensitively.
 		var want any
-		if err := json.Unmarshal([]byte(`{"version": 1, "entity_id": "`+entityID+`"}`), &want); err != nil {
+		if err := json.Unmarshal([]byte(`{"version": 2, "entity_id": "`+entityID+`", "expires_at": "2026-10-01T13:30:00Z"}`), &want); err != nil {
 			t.Fatalf("Unmarshal want: %v", err)
 		}
 
-		if err := repo.Put(t.Context(), tokenHash, entityID); err != nil {
+		if err := repo.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID, ExpiresAt: tokenExpiry}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		data, err := f.encrypted.Get(t.Context(), tokenKey)
@@ -126,7 +145,7 @@ func TestTokenRepository(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Token
 
-		if err := repo.Put(t.Context(), tokenHash, entityID); err != nil {
+		if err := repo.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		raw, err := f.backend.Get(t.Context(), tokenKey)
@@ -177,7 +196,8 @@ func TestTokenRepository(t *testing.T) {
 			name string
 			raw  string
 		}{
-			{"version 2", `{"version":2,"entity_id":"` + entityID + `"}`},
+			{"version 1", `{"version":1,"entity_id":"` + entityID + `"}`},
+			{"version 3", `{"version":3,"entity_id":"` + entityID + `","expires_at":"2026-10-01T13:30:00Z"}`},
 			{"no version field", `{"entity_id":"` + entityID + `"}`},
 		}
 
@@ -204,7 +224,7 @@ func TestTokenRepository(t *testing.T) {
 			fn   func(*testing.T, *repository.Set) error
 		}{
 			{"put", func(t *testing.T, set *repository.Set) error {
-				return set.Token.Put(t.Context(), tokenHash, entityID)
+				return set.Token.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID})
 			}},
 			{"get", func(t *testing.T, set *repository.Set) error {
 				_, err := set.Token.Get(t.Context(), tokenHash)
@@ -215,7 +235,7 @@ func TestTokenRepository(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newBarrierFixture(t)
-				if err := f.set.Token.Put(t.Context(), tokenHash, entityID); err != nil {
+				if err := f.set.Token.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
 				f.keys.Clear()

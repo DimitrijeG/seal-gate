@@ -55,7 +55,7 @@ func Build(ctx context.Context, cfg *config.Config) (_ *Application, err error) 
 	}
 
 	repositories := buildRepositories(backend, infra)
-	services, err := buildServices(infra, repositories, auditor, cfg.Lifecycle.Interval)
+	services, err := buildServices(infra, repositories, auditor, cfg.Lifecycle.Interval, cfg.Token)
 	if err != nil {
 		return nil, err
 	}

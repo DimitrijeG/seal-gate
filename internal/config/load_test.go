@@ -45,4 +45,15 @@ func TestLoad(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+
+	t.Run("the default config issues tokens for an hour", func(t *testing.T) {
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		if got, want := cfg.Token.DefaultTTL, time.Hour; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
 }

@@ -156,7 +156,7 @@ func TestAuthorization(t *testing.T) {
 		want := identity.Entity{ID: hexID}
 		entities.entities[hexID] = want
 		token := bytes.Repeat([]byte{1}, 32)
-		tokens.tokens[sha256.Sum256(token)] = hexID
+		tokens.tokens[sha256.Sum256(token)] = liveToken(hexID)
 		// Resolve runs before any principal exists, so no decision may stand in its way.
 		authorizer.err = authorization.ErrDenied
 
@@ -332,7 +332,7 @@ func TestAuthorization(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				entities, _, _, authorizer := newAuthorizedEntityService(t)
-				tokens := identity.NewTokenService(&fakeTokens{}, entities, &fakeRandom{}, authorizer)
+				tokens := identity.NewTokenService(&fakeTokens{}, entities, &fakeRandom{}, authorizer, newFakeClock(), tokenTTL)
 				authorizer.err = authorization.ErrDenied
 
 				err := tt.call(t.Context(), entities, tokens)

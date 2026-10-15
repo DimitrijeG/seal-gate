@@ -5,15 +5,22 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 )
 
-// TokenRepository stores token hashes against entity IDs; it never sees a token. Get returns ErrInvalidToken
+// StoredToken is what is kept against a token's hash; the token is refused from ExpiresAt on.
+type StoredToken struct {
+	EntityID  string
+	ExpiresAt time.Time
+}
+
+// TokenRepository stores tokens by their hashes; it never sees a token. Get returns ErrInvalidToken
 // for a missing hash and ErrUnreadableToken for a corrupt record; both methods return ErrSealed while sealed.
 type TokenRepository interface {
-	Put(ctx context.Context, hash [sha256.Size]byte, entityID string) error
-	Get(ctx context.Context, hash [sha256.Size]byte) (string, error)
+	Put(ctx context.Context, hash [sha256.Size]byte, stored StoredToken) error
+	Get(ctx context.Context, hash [sha256.Size]byte) (StoredToken, error)
 }
 
 // TokenService issues tokens to entities and resolves them back; it stores only their hashes.
@@ -23,11 +30,13 @@ type TokenService struct {
 	entities   *EntityService
 	random     Random
 	authorizer authorization.Authorizer
+	clock      Clock
+	ttl        time.Duration
 }
 
-// NewTokenService returns a TokenService over tokens, checking each token's entity through entities and asking authorizer before issuing.
-func NewTokenService(tokens TokenRepository, entities *EntityService, random Random, authorizer authorization.Authorizer) *TokenService {
-	return &TokenService{tokens: tokens, entities: entities, random: random, authorizer: authorizer}
+// NewTokenService returns a TokenService over tokens that issues each token to live ttl from clock's time, checking its entity through entities and asking authorizer first.
+func NewTokenService(tokens TokenRepository, entities *EntityService, random Random, authorizer authorization.Authorizer, clock Clock, ttl time.Duration) *TokenService {
+	return &TokenService{tokens: tokens, entities: entities, random: random, authorizer: authorizer, clock: clock, ttl: ttl}
 }
 
 // CreateToken issues a token for the entity with id if principal may create its tokens; only its hash is stored, so the caller must clear it once delivered.
@@ -49,7 +58,7 @@ func (s *TokenService) CreateToken(ctx context.Context, principal authorization.
 		return nil, fmt.Errorf("identity: %w", err)
 	}
 
-	err = s.tokens.Put(ctx, sha256.Sum256(token), entityID)
+	err = s.tokens.Put(ctx, sha256.Sum256(token), StoredToken{EntityID: entityID, ExpiresAt: s.clock.Now().Add(s.ttl)})
 	if err != nil {
 		// Never returned, so no caller can clear it.
 		clear(token)
@@ -61,13 +70,13 @@ func (s *TokenService) CreateToken(ctx context.Context, principal authorization.
 	return token, nil
 }
 
-// Resolve returns the entity a token authenticates as; a missing, unknown or orphaned token is ErrInvalidToken alike.
+// Resolve returns the entity a token authenticates as; a missing, unknown, expired or orphaned token is ErrInvalidToken alike.
 func (s *TokenService) Resolve(ctx context.Context, token []byte) (Entity, error) {
 	if len(token) != tokenBytes {
 		return Entity{}, ErrInvalidToken
 	}
 
-	entityID, err := s.tokens.Get(ctx, sha256.Sum256(token))
+	stored, err := s.tokens.Get(ctx, sha256.Sum256(token))
 	if err != nil && !ours(err) {
 		return Entity{}, fmt.Errorf("identity: %w", err)
 	}
@@ -75,11 +84,14 @@ func (s *TokenService) Resolve(ctx context.Context, token []byte) (Entity, error
 		return Entity{}, err
 	}
 	// Checked here, not in getEntity: a bad stored ID is a corrupt record, not the caller's mistake.
-	if !validID(entityID) {
+	if !validID(stored.EntityID) {
 		return Entity{}, ErrUnreadableToken
 	}
+	if !s.clock.Now().Before(stored.ExpiresAt) {
+		return Entity{}, ErrInvalidToken
+	}
 
-	entity, err := s.entities.getEntity(ctx, entityID)
+	entity, err := s.entities.getEntity(ctx, stored.EntityID)
 	if errors.Is(err, ErrEntityNotFound) {
 		return Entity{}, ErrInvalidToken
 	}

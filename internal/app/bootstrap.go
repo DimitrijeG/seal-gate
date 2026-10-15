@@ -83,7 +83,7 @@ func buildRepositories(backend storage.Backend, infra *infrastructure) *reposito
 	}
 }
 
-func buildServices(infra *infrastructure, repositories *repositories, auditor lifecycle.Recorder, interval time.Duration) (*services, error) {
+func buildServices(infra *infrastructure, repositories *repositories, auditor lifecycle.Recorder, interval time.Duration, tokens config.TokenConfig) (*services, error) {
 	keyring := system.NewKeyring(
 		repositories.set.System,
 		infra.shamir,
@@ -100,7 +100,7 @@ func buildServices(infra *infrastructure, repositories *repositories, auditor li
 	}
 	sys := system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
 	entity := identity.NewEntityService(repositories.set.Entity, infra.random, policy)
-	token := identity.NewTokenService(repositories.set.Token, entity, infra.random, policy)
+	token := identity.NewTokenService(repositories.set.Token, entity, infra.random, policy, infra.clock, tokens.DefaultTTL)
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)
 
 	return &services{

@@ -23,12 +23,12 @@ func (fakeRoot) IsRoot(token []byte) bool {
 func newAuthenticator(t *testing.T) (*identity.Authenticator, *fakeEntities, *fakeTokens, *fakeGroups) {
 	t.Helper()
 	entities := &fakeEntities{entities: make(map[string]identity.Entity)}
-	tokens := &fakeTokens{tokens: make(map[[sha256.Size]byte]string)}
+	tokens := newFakeTokens()
 	groups := &fakeGroups{groups: make(map[string]identity.Group)}
 	random := &fakeRandom{}
 	a := identity.NewAuthenticator(
 		fakeRoot{},
-		identity.NewTokenService(tokens, identity.NewEntityService(entities, random, &fakeAuthorizer{}), random, &fakeAuthorizer{}),
+		identity.NewTokenService(tokens, identity.NewEntityService(entities, random, &fakeAuthorizer{}), random, &fakeAuthorizer{}, newFakeClock(), tokenTTL),
 		identity.NewGroupService(groups, random, &fakeAuthorizer{}),
 	)
 	return a, entities, tokens, groups
@@ -51,7 +51,7 @@ func TestAuthenticate(t *testing.T) {
 	t.Run("an entity's token authenticates with its own and its groups' policies", func(t *testing.T) {
 		a, entities, tokens, groups := newAuthenticator(t)
 		token := bytes.Repeat([]byte{1}, 32)
-		tokens.tokens[sha256.Sum256(token)] = hexID
+		tokens.tokens[sha256.Sum256(token)] = liveToken(hexID)
 		entities.entities[hexID] = identity.Entity{ID: hexID, Policies: []string{"dev"}, Groups: []string{groupID}}
 		groups.groups[groupID] = identity.Group{ID: groupID, Policies: []string{"ops"}}
 
@@ -68,7 +68,7 @@ func TestAuthenticate(t *testing.T) {
 	t.Run("an entity's token authenticates to a principal named by the entity", func(t *testing.T) {
 		a, entities, tokens, _ := newAuthenticator(t)
 		token := bytes.Repeat([]byte{1}, 32)
-		tokens.tokens[sha256.Sum256(token)] = hexID
+		tokens.tokens[sha256.Sum256(token)] = liveToken(hexID)
 		entities.entities[hexID] = identity.Entity{ID: hexID}
 
 		got, err := a.Authenticate(t.Context(), token)
@@ -126,7 +126,7 @@ func TestAuthenticate(t *testing.T) {
 	t.Run("an unreadable group is an error, not a narrower principal", func(t *testing.T) {
 		a, entities, tokens, groups := newAuthenticator(t)
 		token := bytes.Repeat([]byte{1}, 32)
-		tokens.tokens[sha256.Sum256(token)] = hexID
+		tokens.tokens[sha256.Sum256(token)] = liveToken(hexID)
 		entities.entities[hexID] = identity.Entity{ID: hexID, Policies: []string{"dev"}, Groups: []string{groupID}}
 		// Dropping the group instead could drop a deny and widen access.
 		groups.groups[groupID] = identity.Group{ID: groupID, Policies: []string{"dev/ops"}}

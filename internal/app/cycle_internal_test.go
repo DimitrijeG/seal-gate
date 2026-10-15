@@ -159,7 +159,7 @@ func newInstance(t *testing.T, backend storage.Backend, clock *fakeClock, interv
 	infra.clock = clock
 
 	auditor, path := fileAuditor(t, infra.logger)
-	services, err := buildServices(infra, buildRepositories(backend, infra), auditor, interval)
+	services, err := buildServices(infra, buildRepositories(backend, infra), auditor, interval, config.TokenConfig{DefaultTTL: time.Hour})
 	if err != nil {
 		t.Fatalf("buildServices: %v", err)
 	}
@@ -602,6 +602,22 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a token is refused once the clock passes its expiry", func(t *testing.T) {
+		router, clock := clockedUnsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+		if rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/dev/a", ""); rec.Code != http.StatusOK {
+			t.Fatalf("read before expiry: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		clock.advance(time.Hour)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
 		}
 	})
 

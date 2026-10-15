@@ -103,7 +103,7 @@ func TestApplication(t *testing.T) {
 			t.Fatalf("buildInfrastructure: %v", err)
 		}
 		auditor, _ := fileAuditor(t, infra.logger)
-		services, err := buildServices(infra, buildRepositories(memory.New(), infra), auditor, time.Hour)
+		services, err := buildServices(infra, buildRepositories(memory.New(), infra), auditor, time.Hour, config.TokenConfig{DefaultTTL: time.Hour})
 		if err != nil {
 			t.Fatalf("buildServices: %v", err)
 		}
