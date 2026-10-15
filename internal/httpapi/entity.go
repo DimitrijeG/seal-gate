@@ -1,7 +1,11 @@
 package httpapi
 
 import (
+	"bufio"
+	"errors"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
 )
@@ -81,13 +85,54 @@ func (h *Handlers) handleDeleteEntity(w http.ResponseWriter, r *http.Request) {
 
 // createTokenResponse carries the token once; []byte encodes as base64.
 type createTokenResponse struct {
-	Token []byte `json:"token"`
+	Token     []byte    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// tokenBodyLimit fits {"ttl": n} with room to spare.
+const tokenBodyLimit = 1 << 10
+
+type tokenRequest struct {
+	TTL int64 `json:"ttl"`
+}
+
+// tokenTTL reads the optional token request body: a client that sends none gets the default TTL.
+func tokenTTL(w http.ResponseWriter, r *http.Request) (time.Duration, error) {
+	var req tokenRequest
+	if !emptyBody(r) {
+		if err := decodeJSON(w, r, &req, tokenBodyLimit); err != nil {
+			return 0, err
+		}
+	}
+	return ttlFrom(req.TTL)
+}
+
+// emptyBody reports whether r has no body; one of unknown length is peeked at and put back whole.
+func emptyBody(r *http.Request) bool {
+	if r.ContentLength != -1 {
+		return r.ContentLength == 0
+	}
+	body := bufio.NewReader(r.Body)
+	if _, err := body.Peek(1); errors.Is(err, io.EOF) {
+		return true
+	}
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{body, r.Body}
+	return false
 }
 
 func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	token, err := h.Token.CreateToken(r.Context(), principalFrom(r), id)
+	ttl, err := tokenTTL(w, r)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	token, expiresAt, err := h.Token.CreateToken(r.Context(), principalFrom(r), id, ttl)
 	// Deferred before the error check: cleared after the response is written, whatever CreateToken returned.
 	defer clear(token)
 	if err != nil {
@@ -95,7 +140,35 @@ func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token})
+	// The spec promises UTC, whatever zone the clock reads.
+	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token, ExpiresAt: expiresAt.UTC()})
+}
+
+func (h *Handlers) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	if err := h.Token.RevokeToken(r.Context(), tokenFrom(r)); err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) handleRotateToken(w http.ResponseWriter, r *http.Request) {
+	ttl, err := tokenTTL(w, r)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	token, expiresAt, err := h.Token.RotateToken(r.Context(), tokenFrom(r), ttl)
+	// Deferred before the error check: cleared after the response is written, whatever RotateToken returned.
+	defer clear(token)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token, ExpiresAt: expiresAt.UTC()})
 }
 
 // entity takes id from the URL, or none on create, never from the body: IDs are generated, not chosen.

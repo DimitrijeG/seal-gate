@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
@@ -275,6 +276,94 @@ func TestEntity(t *testing.T) {
 		}
 	})
 
+	t.Run("an issued token's expiry is returned in UTC", func(t *testing.T) {
+		expiresAt := time.Date(2026, 10, 1, 15, 30, 0, 0, time.FixedZone("CEST", 2*60*60))
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: make([]byte, 32), expiresAt: expiresAt}})
+		want := "2026-10-01T13:30:00Z"
+
+		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if got := decode[tokenBody](t, rec).ExpiresAt; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a token request without a body gets the default TTL", func(t *testing.T) {
+		tests := []struct {
+			name string
+			send sender
+		}{
+			{"known length", do},
+			{"unknown length", doUnknownLength},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// Set, so a handler that ignores the body cannot pass by leaving it at zero.
+				fake := &fakeToken{token: make([]byte, 32), ttl: time.Minute}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+
+				rec := tt.send(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+				if rec.Code != http.StatusCreated {
+					t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+				}
+
+				if fake.ttl != 0 {
+					t.Errorf("got %v, want 0", fake.ttl)
+				}
+			})
+		}
+	})
+
+	t.Run("a ttl in the body reaches the service in seconds", func(t *testing.T) {
+		tests := []struct {
+			name string
+			send sender
+		}{
+			{"known length", do},
+			{"unknown length", doUnknownLength},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeToken{token: make([]byte, 32)}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+				want := 2 * time.Hour
+
+				rec := tt.send(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", `{"ttl":7200}`)
+				if rec.Code != http.StatusCreated {
+					t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+				}
+
+				if fake.ttl != want {
+					t.Errorf("got %v, want %v", fake.ttl, want)
+				}
+			})
+		}
+	})
+
+	t.Run("a refused ttl is 400", func(t *testing.T) {
+		tests := []struct {
+			name string
+			body string
+			err  error
+		}{
+			{"negative", `{"ttl":-1}`, nil},
+			{"too large to hold", `{"ttl":9223372037}`, nil},
+			{"above the maximum", `{"ttl":7200}`, identity.ErrInvalidTTL},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{err: tt.err}})
+
+				rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", tt.body)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid TTL")
+			})
+		}
+	})
+
 	t.Run("a token is issued for the entity in the URL", func(t *testing.T) {
 		fake := &fakeToken{token: make([]byte, 32)}
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
@@ -292,6 +381,173 @@ func TestEntity(t *testing.T) {
 		want := make([]byte, 32)
 
 		rec := do(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if !bytes.Equal(fake.token, want) {
+			t.Errorf("got %x, want %x", fake.token, want)
+		}
+	})
+
+	t.Run("revoking returns 204", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{}})
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/revoke", "")
+
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+	})
+
+	t.Run("the presented token is the one revoked", func(t *testing.T) {
+		fake := &fakeToken{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		want := []byte{1, 2, 3}
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/revoke", "")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if !bytes.Equal(fake.revoked, want) {
+			t.Errorf("got %x, want %x", fake.revoked, want)
+		}
+	})
+
+	t.Run("the root token cannot be revoked", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{err: identity.ErrRootToken}})
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/revoke", "")
+
+		assertError(t, rec, http.StatusBadRequest, "the root token cannot be revoked or rotated")
+	})
+
+	t.Run("rotating returns 201 with the new token", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: bytes.Repeat([]byte{0xab}, 32)}})
+		// A copy: the handler clears the fake's slice once the response is written.
+		want := bytes.Repeat([]byte{0xab}, 32)
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/rotate", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		got, err := base64.StdEncoding.DecodeString(decode[tokenBody](t, rec).Token)
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+
+		if !bytes.Equal(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
+	t.Run("a rotated token's expiry is returned in UTC", func(t *testing.T) {
+		expiresAt := time.Date(2026, 10, 1, 15, 30, 0, 0, time.FixedZone("CEST", 2*60*60))
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: make([]byte, 32), expiresAt: expiresAt}})
+		want := "2026-10-01T13:30:00Z"
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/rotate", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if got := decode[tokenBody](t, rec).ExpiresAt; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the presented token is the one rotated", func(t *testing.T) {
+		fake := &fakeToken{token: make([]byte, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		want := []byte{1, 2, 3}
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/rotate", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if !bytes.Equal(fake.rotated, want) {
+			t.Errorf("got %x, want %x", fake.rotated, want)
+		}
+	})
+
+	t.Run("a ttl in the rotate body reaches the service in seconds", func(t *testing.T) {
+		fake := &fakeToken{token: make([]byte, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		want := 2 * time.Hour
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/rotate", `{"ttl":7200}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if fake.ttl != want {
+			t.Errorf("got %v, want %v", fake.ttl, want)
+		}
+	})
+
+	t.Run("a rotate request without a body gets the default TTL", func(t *testing.T) {
+		tests := []struct {
+			name string
+			send sender
+		}{
+			{"known length", do},
+			{"unknown length", doUnknownLength},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// Set, so a handler that ignores the body cannot pass by leaving it at zero.
+				fake := &fakeToken{token: make([]byte, 32), ttl: time.Minute}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+
+				rec := tt.send(t, router, http.MethodPost, "/v1/auth/token/rotate", "")
+				if rec.Code != http.StatusCreated {
+					t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+				}
+
+				if fake.ttl != 0 {
+					t.Errorf("got %v, want 0", fake.ttl)
+				}
+			})
+		}
+	})
+
+	t.Run("a refused rotate ttl is 400", func(t *testing.T) {
+		tests := []struct {
+			name string
+			body string
+			err  error
+		}{
+			{"negative", `{"ttl":-1}`, nil},
+			{"too large to hold", `{"ttl":9223372037}`, nil},
+			{"above the maximum", `{"ttl":7200}`, identity.ErrInvalidTTL},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{err: tt.err}})
+
+				rec := do(t, router, http.MethodPost, "/v1/auth/token/rotate", tt.body)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid TTL")
+			})
+		}
+	})
+
+	t.Run("the root token cannot be rotated", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{err: identity.ErrRootToken}})
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/rotate", "")
+
+		assertError(t, rec, http.StatusBadRequest, "the root token cannot be revoked or rotated")
+	})
+
+	t.Run("a rotated token is cleared after the response is written", func(t *testing.T) {
+		fake := &fakeToken{token: bytes.Repeat([]byte{0xab}, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		want := make([]byte, 32)
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/rotate", "")
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
 		}
