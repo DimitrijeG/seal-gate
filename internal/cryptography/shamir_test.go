@@ -352,3 +352,63 @@ func TestShamir(t *testing.T) {
 		}
 	})
 }
+
+// shamirShapes run from a small split to the largest init accepts.
+var shamirShapes = []struct {
+	name string
+	n, k int
+}{
+	{"n=3,k=2", 3, 2},
+	{"n=5,k=3", 5, 3},
+	{"n=10,k=5", 10, 5},
+	{"n=255,k=128", 255, 128},
+}
+
+func BenchmarkShamir(b *testing.B) {
+	// The size of the root key the keyring splits.
+	secret := bytes.Repeat([]byte{0xab}, 32)
+
+	b.Run("Split", func(b *testing.B) {
+		for _, tt := range shamirShapes {
+			b.Run(tt.name, func(b *testing.B) {
+				s := cryptography.NewShamir(cryptography.CryptoRandom{})
+				b.ReportAllocs()
+
+				for b.Loop() {
+					if _, err := s.Split(secret, tt.n, tt.k); err != nil {
+						b.Fatalf("Split: %v", err)
+					}
+				}
+			})
+		}
+	})
+
+	b.Run("Combine", func(b *testing.B) {
+		for _, tt := range shamirShapes {
+			b.Run(tt.name, func(b *testing.B) {
+				s := cryptography.NewShamir(cryptography.CryptoRandom{})
+				shares, err := s.Split(secret, tt.n, tt.k)
+				if err != nil {
+					b.Fatalf("Split: %v", err)
+				}
+				// Exactly the threshold, as unseal submits.
+				threshold := shares[:tt.k]
+				// Combine cannot tell too few shares, so check these really recover the secret.
+				got, err := s.Combine(threshold)
+				if err != nil {
+					b.Fatalf("Combine: %v", err)
+				}
+				if !bytes.Equal(got, secret) {
+					b.Fatalf("Combine: got %x, want %x", got, secret)
+				}
+				b.ReportAllocs()
+
+				for b.Loop() {
+					if _, err := s.Combine(threshold); err != nil {
+						b.Fatalf("Combine: %v", err)
+					}
+				}
+			})
+		}
+	})
+}
