@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -991,6 +992,24 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("after a tick past its expiry, a token is gone from storage", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Hour)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+		raw, err := base64.StdEncoding.DecodeString(token)
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+		hash := sha256.Sum256(raw)
+		clock.advance(time.Hour)
+
+		i.services.worker.Tick(t.Context())
+
+		// The API already refuses an expired token; only storage shows the purge deleted it.
+		if _, err := i.backend.Get(t.Context(), "tokens/"+hex.EncodeToString(hash[:])); !errors.Is(err, storage.ErrNotFound) {
+			t.Errorf("got %v, want %v", err, storage.ErrNotFound)
+		}
+	})
+
 	t.Run("a tick's actions are in the audit file", func(t *testing.T) {
 		i, router, clock := unsealedInstance(t, time.Hour)
 		rec := send(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
@@ -1003,6 +1022,29 @@ func TestSealLifecycle(t *testing.T) {
 		}
 		clock.advance(time.Hour)
 		want := map[string]string{"secrets/db/password": "rotate secret", "secrets/db/user": "expire secret"}
+
+		i.services.worker.Tick(t.Context())
+
+		written, err := os.ReadFile(i.auditPath)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		got := make(map[string]string)
+		for _, line := range auditLines(t, written) {
+			if line.Kind == "lifecycle" {
+				got[line.Path] = line.Route
+			}
+		}
+		if !maps.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a tick's token purge is in the audit file without the token", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Hour)
+		entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+		clock.advance(time.Hour)
+		want := map[string]string{"": "expire token"}
 
 		i.services.worker.Tick(t.Context())
 
@@ -1048,11 +1090,11 @@ func TestSealLifecycle(t *testing.T) {
 			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
 		}
 
-		// A tick while sealed fails its sweep on the missing key, and logs it.
+		// A tick while sealed fails its jobs on the missing key, and logs it.
 		time.Sleep(20 * time.Millisecond)
 
-		if got := i.log.String(); strings.Contains(got, "lifecycle sweep failed") {
-			t.Errorf("got %q, want no sweep after seal", got)
+		if got := i.log.String(); strings.Contains(got, "lifecycle job failed") {
+			t.Errorf("got %q, want no job after seal", got)
 		}
 	})
 

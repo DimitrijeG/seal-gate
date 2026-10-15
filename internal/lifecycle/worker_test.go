@@ -14,37 +14,36 @@ import (
 
 	"github.com/dimitrijegasic/seal-gate/internal/audit"
 	"github.com/dimitrijegasic/seal-gate/internal/lifecycle"
-	"github.com/dimitrijegasic/seal-gate/internal/secret"
 )
 
-// fakeSweeper reports actions and returns err from every sweep and counts them; swept, when set, is sent each
-// sweep's context without blocking. Locked: the worker sweeps from its own goroutine.
-type fakeSweeper struct {
+// fakeJob reports actions and returns err from every run and counts them; ran, when set, is sent each run's context
+// without blocking. Locked: the worker runs it from its own goroutine.
+type fakeJob struct {
 	mu      sync.Mutex
-	actions []secret.Action
+	actions []lifecycle.Action
 	err     error
 	calls   int
-	swept   chan context.Context
+	ran     chan context.Context
 }
 
-func (s *fakeSweeper) Sweep(ctx context.Context, report func(secret.Action)) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls++
+func (j *fakeJob) Run(ctx context.Context, report func(lifecycle.Action)) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.calls++
 	select {
-	case s.swept <- ctx:
+	case j.ran <- ctx:
 	default:
 	}
-	for _, action := range s.actions {
+	for _, action := range j.actions {
 		report(action)
 	}
-	return s.err
+	return j.err
 }
 
-func (s *fakeSweeper) sweeps() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.calls
+func (j *fakeJob) runs() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.calls
 }
 
 // fakeRecorder keeps every event; err, when set, fails every call, and a done context fails it as the fan-out's does.
@@ -73,7 +72,7 @@ func (c *fakeClock) Now() time.Time { return c.now }
 
 type fixture struct {
 	worker   *lifecycle.Worker
-	sweeper  *fakeSweeper
+	job      *fakeJob
 	recorder *fakeRecorder
 	clock    *fakeClock
 	log      *bytes.Buffer
@@ -82,12 +81,31 @@ type fixture struct {
 func newFixture(t *testing.T) fixture {
 	t.Helper()
 	f := fixture{
-		sweeper:  &fakeSweeper{},
+		job:      &fakeJob{},
 		recorder: &fakeRecorder{},
 		clock:    &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)},
 		log:      &bytes.Buffer{},
 	}
-	worker, err := lifecycle.New(time.Minute, f.sweeper, f.recorder, f.clock, slog.New(slog.NewTextHandler(f.log, nil)))
+	worker, err := lifecycle.New(time.Minute, []lifecycle.Job{f.job}, f.recorder, f.clock, slog.New(slog.NewTextHandler(f.log, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	f.worker = worker
+	return f
+}
+
+type twoJobFixture struct {
+	worker   *lifecycle.Worker
+	first    *fakeJob
+	second   *fakeJob
+	recorder *fakeRecorder
+	log      *bytes.Buffer
+}
+
+func newTwoJobFixture(t *testing.T) twoJobFixture {
+	t.Helper()
+	f := twoJobFixture{first: &fakeJob{}, second: &fakeJob{}, recorder: &fakeRecorder{}, log: &bytes.Buffer{}}
+	worker, err := lifecycle.New(time.Minute, []lifecycle.Job{f.first, f.second}, f.recorder, &fakeClock{}, slog.New(slog.NewTextHandler(f.log, nil)))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -96,19 +114,56 @@ func newFixture(t *testing.T) fixture {
 }
 
 func TestWorker(t *testing.T) {
-	t.Run("a tick sweeps", func(t *testing.T) {
-		f := newFixture(t)
+	t.Run("a tick runs every job", func(t *testing.T) {
+		f := newTwoJobFixture(t)
 
 		f.worker.Tick(t.Context())
 
-		if got := f.sweeper.sweeps(); got != 1 {
-			t.Errorf("got %d sweeps, want 1", got)
+		if got := []int{f.first.runs(), f.second.runs()}; !slices.Equal(got, []int{1, 1}) {
+			t.Errorf("got %v runs, want [1 1]", got)
+		}
+	})
+
+	t.Run("a failed job does not stop the next", func(t *testing.T) {
+		f := newTwoJobFixture(t)
+		f.first.err = errors.New("disk failed")
+
+		f.worker.Tick(t.Context())
+
+		if got := f.second.runs(); got != 1 {
+			t.Errorf("got %d runs, want 1", got)
+		}
+	})
+
+	t.Run("a tick's jobs share one request ID", func(t *testing.T) {
+		f := newTwoJobFixture(t)
+		f.first.actions = twoActions[:1]
+		f.second.actions = twoActions[1:]
+
+		f.worker.Tick(t.Context())
+
+		if first, second := f.recorder.events[0].RequestID, f.recorder.events[1].RequestID; first != second {
+			t.Errorf("got %q and %q, want one ID", first, second)
+		}
+	})
+
+	t.Run("each failed job is logged", func(t *testing.T) {
+		f := newTwoJobFixture(t)
+		f.first.err = errors.New("disk failed")
+		f.second.err = errors.New("store failed")
+
+		f.worker.Tick(t.Context())
+
+		for _, want := range []string{"disk failed", "store failed"} {
+			if got := f.log.String(); !strings.Contains(got, want) {
+				t.Errorf("got log %q, want %q", got, want)
+			}
 		}
 	})
 
 	t.Run("each action is audited", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions
+		f.job.actions = twoActions
 
 		f.worker.Tick(t.Context())
 
@@ -117,9 +172,9 @@ func TestWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("an event names the secret's resource as its path", func(t *testing.T) {
+	t.Run("an event names the action's resource as its path", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions
+		f.job.actions = twoActions
 
 		f.worker.Tick(t.Context())
 
@@ -129,34 +184,21 @@ func TestWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("an event names its operation", func(t *testing.T) {
-		tests := []struct {
-			name string
-			kind secret.ActionKind
-			want string
-		}{
-			{"rotated", secret.ActionRotated, "rotate secret"},
-			{"expired", secret.ActionExpired, "expire secret"},
-		}
+	t.Run("an event names the action's operation as its route", func(t *testing.T) {
+		f := newFixture(t)
+		f.job.actions = twoActions
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				f := newFixture(t)
-				f.sweeper.actions = []secret.Action{{Path: "db/password", Kind: tt.kind}}
+		f.worker.Tick(t.Context())
 
-				f.worker.Tick(t.Context())
-
-				want := []string{tt.want}
-				if got := eventField(f.recorder.events, func(e audit.Event) string { return e.Route }); !slices.Equal(got, want) {
-					t.Errorf("got %v, want %v", got, want)
-				}
-			})
+		want := []string{"rotate secret", "expire secret"}
+		if got := eventField(f.recorder.events, func(e audit.Event) string { return e.Route }); !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
 	t.Run("an event is recorded as the lifecycle", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions[:1]
+		f.job.actions = twoActions[:1]
 
 		f.worker.Tick(t.Context())
 
@@ -169,7 +211,7 @@ func TestWorker(t *testing.T) {
 
 	t.Run("an event is stamped with the clock's time", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions[:1]
+		f.job.actions = twoActions[:1]
 
 		f.worker.Tick(t.Context())
 
@@ -180,7 +222,7 @@ func TestWorker(t *testing.T) {
 
 	t.Run("a tick's events share one request ID", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions
+		f.job.actions = twoActions
 
 		f.worker.Tick(t.Context())
 
@@ -191,7 +233,7 @@ func TestWorker(t *testing.T) {
 
 	t.Run("two ticks have different request IDs", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions[:1]
+		f.job.actions = twoActions[:1]
 
 		f.worker.Tick(t.Context())
 		f.worker.Tick(t.Context())
@@ -201,10 +243,10 @@ func TestWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("actions before a failed sweep are still audited", func(t *testing.T) {
+	t.Run("actions before a failed job are still audited", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions
-		f.sweeper.err = errors.New("disk failed")
+		f.job.actions = twoActions
+		f.job.err = errors.New("disk failed")
 
 		f.worker.Tick(t.Context())
 
@@ -213,9 +255,9 @@ func TestWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("actions before a cancelled sweep are still audited", func(t *testing.T) {
+	t.Run("actions before a cancelled job are still audited", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions[:1]
+		f.job.actions = twoActions[:1]
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
@@ -226,11 +268,11 @@ func TestWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("a cancel during a record stops the sweep after it", func(t *testing.T) {
+	t.Run("a cancel during a record stops the job after it", func(t *testing.T) {
 		f := newFixture(t)
 		ctx, cancel := context.WithCancel(t.Context())
 		recorder := &cancellingRecorder{cancel: cancel}
-		worker, err := lifecycle.New(time.Minute, &cancellableSweeper{actions: twoActions}, recorder, f.clock, slog.New(slog.DiscardHandler))
+		worker, err := lifecycle.New(time.Minute, []lifecycle.Job{&cancellableJob{actions: twoActions}}, recorder, f.clock, slog.New(slog.DiscardHandler))
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -242,20 +284,20 @@ func TestWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("a failed sweep is logged", func(t *testing.T) {
+	t.Run("a failed job is logged", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.err = errors.New("disk failed")
+		f.job.err = errors.New("disk failed")
 
 		f.worker.Tick(t.Context())
 
 		if got := f.log.String(); !strings.Contains(got, "disk failed") {
-			t.Errorf("got log %q, want the sweep's error", got)
+			t.Errorf("got log %q, want the job's error", got)
 		}
 	})
 
 	t.Run("a failed record is logged", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions[:1]
+		f.job.actions = twoActions[:1]
 		f.recorder.err = errors.New("sink failed")
 
 		f.worker.Tick(t.Context())
@@ -267,9 +309,9 @@ func TestWorker(t *testing.T) {
 
 	t.Run("a failed record does not stop the rest", func(t *testing.T) {
 		f := newFixture(t)
-		f.sweeper.actions = twoActions
+		f.job.actions = twoActions
 		recorder := &failFirstRecorder{}
-		worker, err := lifecycle.New(time.Minute, f.sweeper, recorder, f.clock, slog.New(slog.NewTextHandler(f.log, nil)))
+		worker, err := lifecycle.New(time.Minute, []lifecycle.Job{f.job}, recorder, f.clock, slog.New(slog.NewTextHandler(f.log, nil)))
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -294,7 +336,7 @@ func TestWorker(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				f := newFixture(t)
 
-				_, err := lifecycle.New(tt.interval, f.sweeper, f.recorder, f.clock, slog.Default())
+				_, err := lifecycle.New(tt.interval, []lifecycle.Job{f.job}, f.recorder, f.clock, slog.Default())
 
 				if !errors.Is(err, lifecycle.ErrInvalidInterval) {
 					t.Errorf("got %v, want %v", err, lifecycle.ErrInvalidInterval)
@@ -304,49 +346,49 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("activate starts ticking", func(t *testing.T) {
-		worker, sweeper := newTickingWorker(t)
+		worker, job := newTickingWorker(t)
 
 		activate(t, worker, t.Context())
 
-		awaitSweep(t, sweeper)
+		awaitRun(t, job)
 	})
 
 	t.Run("ticking outlives the activating context", func(t *testing.T) {
-		worker, sweeper := newTickingWorker(t)
+		worker, job := newTickingWorker(t)
 		ctx, cancel := context.WithCancel(t.Context())
 		activate(t, worker, ctx)
 		cancel()
-		// Drain a sweep that may have started before the cancel.
-		awaitSweep(t, sweeper)
+		// Drain a run that may have started before the cancel.
+		awaitRun(t, job)
 
-		if err := awaitSweep(t, sweeper).Err(); err != nil {
+		if err := awaitRun(t, job).Err(); err != nil {
 			t.Errorf("got %v, want a live context", err)
 		}
 	})
 
 	t.Run("deactivate stops ticking", func(t *testing.T) {
-		worker, sweeper := newTickingWorker(t)
+		worker, job := newTickingWorker(t)
 		if err := worker.Activate(t.Context()); err != nil {
 			t.Fatalf("Activate: %v", err)
 		}
-		awaitSweep(t, sweeper)
+		awaitRun(t, job)
 
 		worker.Deactivate()
-		before := sweeper.sweeps()
+		before := job.runs()
 		time.Sleep(20 * time.Millisecond)
 
-		if got := sweeper.sweeps(); got != before {
-			t.Errorf("got %d sweeps, want %d", got, before)
+		if got := job.runs(); got != before {
+			t.Errorf("got %d runs, want %d", got, before)
 		}
 	})
 
 	t.Run("deactivate cancels a tick in flight", func(t *testing.T) {
-		sweeper := &blockingSweeper{started: make(chan struct{})}
-		worker := newWorkerOver(t, sweeper)
+		job := &blockingJob{started: make(chan struct{})}
+		worker := newWorkerOver(t, job)
 		if err := worker.Activate(t.Context()); err != nil {
 			t.Fatalf("Activate: %v", err)
 		}
-		<-sweeper.started
+		<-job.started
 
 		deactivated := make(chan struct{})
 		go func() {
@@ -362,16 +404,16 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("deactivate waits for a tick in flight", func(t *testing.T) {
-		sweeper := &blockingSweeper{started: make(chan struct{})}
-		worker := newWorkerOver(t, sweeper)
+		job := &blockingJob{started: make(chan struct{})}
+		worker := newWorkerOver(t, job)
 		if err := worker.Activate(t.Context()); err != nil {
 			t.Fatalf("Activate: %v", err)
 		}
-		<-sweeper.started
+		<-job.started
 
 		worker.Deactivate()
 
-		if !sweeper.finished.Load() {
+		if !job.finished.Load() {
 			t.Error("deactivate returned before the tick finished")
 		}
 	})
@@ -402,64 +444,60 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("a deactivated worker activates again", func(t *testing.T) {
-		worker, sweeper := newTickingWorker(t)
+		worker, job := newTickingWorker(t)
 		if err := worker.Activate(t.Context()); err != nil {
 			t.Fatalf("Activate: %v", err)
 		}
 		worker.Deactivate()
-		// Empty the report of any sweep from before the deactivation.
+		// Empty the report of any run from before the deactivation.
 		select {
-		case <-sweeper.swept:
+		case <-job.ran:
 		default:
 		}
 
 		activate(t, worker, t.Context())
 
-		awaitSweep(t, sweeper)
+		awaitRun(t, job)
 	})
 }
 
-// blockingSweeper holds its first sweep until the sweep's context is done, then marks it finished.
-type blockingSweeper struct {
+// blockingJob holds its first run until the run's context is done, then marks it finished.
+type blockingJob struct {
 	started  chan struct{}
 	once     sync.Once
 	finished atomic.Bool
 }
 
-func (s *blockingSweeper) Sweep(ctx context.Context, _ func(secret.Action)) error {
+func (j *blockingJob) Run(ctx context.Context, _ func(lifecycle.Action)) error {
 	first := false
-	s.once.Do(func() {
+	j.once.Do(func() {
 		first = true
-		close(s.started)
+		close(j.started)
 	})
 	if first {
 		<-ctx.Done()
 		// Slower than a cancel, so a deactivate that does not wait returns first.
 		time.Sleep(10 * time.Millisecond)
-		s.finished.Store(true)
+		j.finished.Store(true)
 	}
 	return ctx.Err()
 }
 
-// newWorkerOver returns a worker on a 1 ms interval over sweeper.
-func newWorkerOver(t *testing.T, sweeper lifecycle.Sweeper) *lifecycle.Worker {
+// newWorkerOver returns a worker on a 1 ms interval running job.
+func newWorkerOver(t *testing.T, job lifecycle.Job) *lifecycle.Worker {
 	t.Helper()
-	worker, err := lifecycle.New(time.Millisecond, sweeper, &fakeRecorder{}, &fakeClock{}, slog.New(slog.DiscardHandler))
+	worker, err := lifecycle.New(time.Millisecond, []lifecycle.Job{job}, &fakeRecorder{}, &fakeClock{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	return worker
 }
 
-// newTickingWorker returns a worker on a 1 ms interval whose sweeper reports each sweep.
-func newTickingWorker(t *testing.T) (*lifecycle.Worker, *fakeSweeper) {
+// newTickingWorker returns a worker on a 1 ms interval whose job reports each run.
+func newTickingWorker(t *testing.T) (*lifecycle.Worker, *fakeJob) {
 	t.Helper()
-	sweeper := &fakeSweeper{swept: make(chan context.Context, 1)}
-	worker, err := lifecycle.New(time.Millisecond, sweeper, &fakeRecorder{}, &fakeClock{}, slog.New(slog.DiscardHandler))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return worker, sweeper
+	job := &fakeJob{ran: make(chan context.Context, 1)}
+	return newWorkerOver(t, job), job
 }
 
 // activate activates worker on ctx and deactivates it when the test ends.
@@ -471,25 +509,25 @@ func activate(t *testing.T, worker *lifecycle.Worker, ctx context.Context) {
 	t.Cleanup(worker.Deactivate)
 }
 
-// awaitSweep returns the context of the next sweep, failing if none comes within a second.
-func awaitSweep(t *testing.T, sweeper *fakeSweeper) context.Context {
+// awaitRun returns the context of the job's next run, failing if none comes within a second.
+func awaitRun(t *testing.T, job *fakeJob) context.Context {
 	t.Helper()
 	select {
-	case ctx := <-sweeper.swept:
+	case ctx := <-job.ran:
 		return ctx
 	case <-time.After(time.Second):
-		t.Fatal("got no sweep, want one")
+		t.Fatal("got no run, want one")
 		return nil
 	}
 }
 
-// cancellableSweeper reports its actions one at a time, stopping at the first one its context is done before.
-type cancellableSweeper struct {
-	actions []secret.Action
+// cancellableJob reports its actions one at a time, stopping at the first one its context is done before.
+type cancellableJob struct {
+	actions []lifecycle.Action
 }
 
-func (s *cancellableSweeper) Sweep(ctx context.Context, report func(secret.Action)) error {
-	for _, action := range s.actions {
+func (j *cancellableJob) Run(ctx context.Context, report func(lifecycle.Action)) error {
+	for _, action := range j.actions {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -532,8 +570,8 @@ func eventField(events []audit.Event, field func(audit.Event) string) []string {
 	return got
 }
 
-// twoActions is one rotation and one expiry, in the order a sweep reports them.
-var twoActions = []secret.Action{
-	{Path: "api/key", Kind: secret.ActionRotated},
-	{Path: "db/password", Kind: secret.ActionExpired},
+// twoActions is one rotation and one expiry, as the secret sweep's adapter reports them.
+var twoActions = []lifecycle.Action{
+	{Operation: "rotate secret", Resource: "secrets/api/key"},
+	{Operation: "expire secret", Resource: "secrets/db/password"},
 }
