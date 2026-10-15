@@ -58,7 +58,8 @@ type LifecycleConfig struct {
 	Interval time.Duration
 }
 
-// TokenConfig is how long an issued token lives.
+// TokenConfig is how long an issued token lives when no TTL is asked for, and the longest TTL that may be.
 type TokenConfig struct {
 	DefaultTTL time.Duration
+	MaxTTL     time.Duration
 }

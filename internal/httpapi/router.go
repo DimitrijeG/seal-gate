@@ -52,7 +52,7 @@ type EntityService interface {
 
 // TokenService is token issuing as the handlers use it.
 type TokenService interface {
-	CreateToken(ctx context.Context, principal authorization.Principal, entityID string) ([]byte, error)
+	CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error)
 }
 
 // GroupService is group storage as the handlers use it.

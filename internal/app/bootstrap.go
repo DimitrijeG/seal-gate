@@ -100,7 +100,7 @@ func buildServices(infra *infrastructure, repositories *repositories, auditor li
 	}
 	sys := system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
 	entity := identity.NewEntityService(repositories.set.Entity, infra.random, policy)
-	token := identity.NewTokenService(repositories.set.Token, entity, infra.random, policy, infra.clock, tokens.DefaultTTL)
+	token := identity.NewTokenService(repositories.set.Token, entity, infra.random, policy, infra.clock, identity.TokenTTL{Default: tokens.DefaultTTL, Max: tokens.MaxTTL})
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)
 
 	return &services{

@@ -33,6 +33,7 @@ func Load() (*Config, error) {
 		},
 		Token: TokenConfig{
 			DefaultTTL: time.Hour,
+			MaxTTL:     24 * time.Hour,
 		},
 	}, nil
 }

@@ -275,18 +275,22 @@ func (f *fakeEntity) DeleteEntity(ctx context.Context, principal authorization.P
 type fakeToken struct {
 	principal authorization.Principal
 	entityID  string
+	ttl       time.Duration
 	token     []byte
+	expiresAt time.Time
 	err       error
 }
 
-func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Principal, entityID string) ([]byte, error) {
+func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error) {
 	f.principal = principal
 	f.entityID = entityID
-	return f.token, f.err
+	f.ttl = ttl
+	return f.token, f.expiresAt, f.err
 }
 
 type tokenBody struct {
-	Token string `json:"token"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type groupBody struct {

@@ -56,4 +56,15 @@ func TestLoad(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+
+	t.Run("the default config caps token TTLs at a day", func(t *testing.T) {
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		if got, want := cfg.Token.MaxTTL, 24*time.Hour; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
 }

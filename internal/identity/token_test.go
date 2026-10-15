@@ -68,6 +68,17 @@ func newFakeTokens() *fakeTokens {
 // tokenTTL is not an hour, so a TTL hard-coded to the config default fails.
 const tokenTTL = 90 * time.Minute
 
+var tokenLimits = identity.TokenTTL{Default: tokenTTL, Max: 24 * time.Hour}
+
+// invalidTTLs are the TTLs CreateToken refuses under tokenLimits.
+var invalidTTLs = []struct {
+	name string
+	ttl  time.Duration
+}{
+	{"negative", -time.Second},
+	{"above the maximum", tokenLimits.Max + time.Second},
+}
+
 func newTokenService(t *testing.T) (*identity.TokenService, *fakeEntities, *fakeTokens, *fakeRandom) {
 	t.Helper()
 	s, entities, tokens, random, _ := newAuthorizedTokenService(t)
@@ -82,7 +93,7 @@ func newClockedTokenService(t *testing.T) (*identity.TokenService, *fakeEntities
 	random := &fakeRandom{}
 	authorizer := &fakeAuthorizer{}
 	clock := newFakeClock()
-	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, clock, tokenTTL)
+	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, clock, tokenLimits)
 	return s, entities, tokens, clock
 }
 
@@ -93,7 +104,7 @@ func newAuthorizedTokenService(t *testing.T) (*identity.TokenService, *fakeEntit
 	tokens := newFakeTokens()
 	random := &fakeRandom{}
 	authorizer := &fakeAuthorizer{}
-	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, newFakeClock(), tokenTTL)
+	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, newFakeClock(), tokenLimits)
 	return s, entities, tokens, random, authorizer
 }
 
@@ -103,7 +114,7 @@ func TestToken(t *testing.T) {
 		entity := identity.Entity{ID: hexID, Policies: []string{"dev"}}
 		entities.entities[hexID] = entity
 
-		token, err := s.CreateToken(t.Context(), principal, hexID)
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 		if err != nil {
 			t.Fatalf("CreateToken: %v", err)
 		}
@@ -121,7 +132,7 @@ func TestToken(t *testing.T) {
 		s, entities, _, _ := newTokenService(t)
 		entities.entities[hexID] = identity.Entity{ID: hexID}
 
-		token, err := s.CreateToken(t.Context(), principal, hexID)
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 		if err != nil {
 			t.Fatalf("CreateToken: %v", err)
 		}
@@ -136,7 +147,7 @@ func TestToken(t *testing.T) {
 		s, entities, tokens, _ := newTokenService(t)
 		entities.entities[hexID] = identity.Entity{ID: hexID}
 
-		token, err := s.CreateToken(t.Context(), principal, hexID)
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 		if err != nil {
 			t.Fatalf("CreateToken: %v", err)
 		}
@@ -147,13 +158,13 @@ func TestToken(t *testing.T) {
 		}
 	})
 
-	t.Run("a token is stored to expire one TTL after it is issued", func(t *testing.T) {
+	t.Run("a token without a TTL is stored to expire one default TTL after it is issued", func(t *testing.T) {
 		s, entities, tokens, clock := newClockedTokenService(t)
 		entities.entities[hexID] = identity.Entity{ID: hexID}
 		clock.advance(time.Minute)
 		want := clock.now.Add(tokenTTL)
 
-		token, err := s.CreateToken(t.Context(), principal, hexID)
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 		if err != nil {
 			t.Fatalf("CreateToken: %v", err)
 		}
@@ -163,10 +174,87 @@ func TestToken(t *testing.T) {
 		}
 	})
 
+	t.Run("an issued token's expiry is returned with it", func(t *testing.T) {
+		s, entities, _, clock := newClockedTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		want := clock.now.Add(tokenTTL)
+
+		_, got, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		if !got.Equal(want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a token issued with a TTL expires after it", func(t *testing.T) {
+		s, entities, _, clock := newClockedTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		want := clock.now.Add(2 * time.Hour)
+
+		_, got, err := s.CreateToken(t.Context(), principal, hexID, 2*time.Hour)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		if !got.Equal(want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("an invalid TTL is refused", func(t *testing.T) {
+		for _, tt := range invalidTTLs {
+			t.Run(tt.name, func(t *testing.T) {
+				s, entities, _, _ := newTokenService(t)
+				entities.entities[hexID] = identity.Entity{ID: hexID}
+
+				_, _, err := s.CreateToken(t.Context(), principal, hexID, tt.ttl)
+
+				if !errors.Is(err, identity.ErrInvalidTTL) {
+					t.Errorf("got %v, want %v", err, identity.ErrInvalidTTL)
+				}
+			})
+		}
+	})
+
+	t.Run("a TTL at the maximum is accepted", func(t *testing.T) {
+		s, entities, _, clock := newClockedTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		want := clock.now.Add(tokenLimits.Max)
+
+		_, got, err := s.CreateToken(t.Context(), principal, hexID, tokenLimits.Max)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		if !got.Equal(want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("an invalid TTL is refused before any read", func(t *testing.T) {
+		for _, tt := range invalidTTLs {
+			t.Run(tt.name, func(t *testing.T) {
+				s, entities, tokens, _ := newTokenService(t)
+
+				_, _, _ = s.CreateToken(t.Context(), principal, hexID, tt.ttl)
+
+				if entities.calls != 0 {
+					t.Errorf("entity calls: got %d, want 0", entities.calls)
+				}
+				if tokens.calls != 0 {
+					t.Errorf("token calls: got %d, want 0", tokens.calls)
+				}
+			})
+		}
+	})
+
 	t.Run("a token for a missing entity is not found", func(t *testing.T) {
 		s, _, tokens, _ := newTokenService(t)
 
-		_, err := s.CreateToken(t.Context(), principal, hexID)
+		_, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 
 		if !errors.Is(err, identity.ErrEntityNotFound) {
 			t.Errorf("err: got %v, want %v", err, identity.ErrEntityNotFound)
@@ -179,7 +267,7 @@ func TestToken(t *testing.T) {
 	t.Run("a token for an invalid entity ID is refused before any read", func(t *testing.T) {
 		s, entities, tokens, _ := newTokenService(t)
 
-		_, err := s.CreateToken(t.Context(), principal, "../dev")
+		_, _, err := s.CreateToken(t.Context(), principal, "../dev", 0)
 
 		if !errors.Is(err, identity.ErrInvalidEntityID) {
 			t.Errorf("err: got %v, want %v", err, identity.ErrInvalidEntityID)
@@ -255,7 +343,7 @@ func TestToken(t *testing.T) {
 	t.Run("a token whose entity was deleted is refused like an unknown one", func(t *testing.T) {
 		s, entities, _, _ := newTokenService(t)
 		entities.entities[hexID] = identity.Entity{ID: hexID}
-		token, err := s.CreateToken(t.Context(), principal, hexID)
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 		if err != nil {
 			t.Fatalf("CreateToken: %v", err)
 		}
@@ -310,7 +398,7 @@ func TestToken(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				s, entities, _, clock := newClockedTokenService(t)
 				entities.entities[hexID] = identity.Entity{ID: hexID}
-				token, err := s.CreateToken(t.Context(), principal, hexID)
+				token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 				if err != nil {
 					t.Fatalf("CreateToken: %v", err)
 				}
@@ -376,7 +464,7 @@ func TestToken(t *testing.T) {
 		tokens.err = identity.ErrSealed
 		want := make([]byte, 32)
 
-		if _, err := s.CreateToken(t.Context(), principal, hexID); !errors.Is(err, identity.ErrSealed) {
+		if _, _, err := s.CreateToken(t.Context(), principal, hexID, 0); !errors.Is(err, identity.ErrSealed) {
 			t.Fatalf("CreateToken: %v", err)
 		}
 
@@ -391,7 +479,7 @@ func TestToken(t *testing.T) {
 		randomErr := errors.New("entropy exhausted")
 		random.err = randomErr
 
-		_, err := s.CreateToken(t.Context(), principal, hexID)
+		_, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 
 		if !errors.Is(err, randomErr) {
 			t.Errorf("err: got %v, want %v", err, randomErr)
@@ -409,7 +497,7 @@ var tokenOperations = []struct {
 	call func(ctx context.Context, s *identity.TokenService) error
 }{
 	{"create", func(ctx context.Context, s *identity.TokenService) error {
-		_, err := s.CreateToken(ctx, principal, hexID)
+		_, _, err := s.CreateToken(ctx, principal, hexID, 0)
 		return err
 	}},
 	{"resolve", func(ctx context.Context, s *identity.TokenService) error {

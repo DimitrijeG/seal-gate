@@ -159,7 +159,7 @@ func newInstance(t *testing.T, backend storage.Backend, clock *fakeClock, interv
 	infra.clock = clock
 
 	auditor, path := fileAuditor(t, infra.logger)
-	services, err := buildServices(infra, buildRepositories(backend, infra), auditor, interval, config.TokenConfig{DefaultTTL: time.Hour})
+	services, err := buildServices(infra, buildRepositories(backend, infra), auditor, interval, config.TokenConfig{DefaultTTL: time.Hour, MaxTTL: 24 * time.Hour})
 	if err != nil {
 		t.Fatalf("buildServices: %v", err)
 	}
@@ -383,6 +383,12 @@ func createEntity(t *testing.T, h http.Handler) string {
 // and returns a token for that entity.
 func entityToken(t *testing.T, h http.Handler, rules string) string {
 	t.Helper()
+	return entityTokenWith(t, h, rules, "")
+}
+
+// entityTokenWith is entityToken that sends body with the token request.
+func entityTokenWith(t *testing.T, h http.Handler, rules, body string) string {
+	t.Helper()
 	if rec := send(t, h, http.MethodPut, "/v1/policies/dev", `{"rules":`+rules+`}`); rec.Code != http.StatusNoContent {
 		t.Fatalf("put policy: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
 	}
@@ -399,7 +405,7 @@ func entityToken(t *testing.T, h http.Handler, rules string) string {
 	}
 	entityID := decode[createEntityBody](t, rec).ID
 
-	rec = send(t, h, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+	rec = send(t, h, http.MethodPost, "/v1/entities/"+entityID+"/tokens", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("issue token: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
 	}
@@ -602,6 +608,20 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a token issued with a ttl stops working after it", func(t *testing.T) {
+		router, clock := clockedUnsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		// A minute, so a token given the hour-long default would still work.
+		token := entityTokenWith(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`, `{"ttl":60}`)
+		clock.advance(time.Minute)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
 		}
 	})
 

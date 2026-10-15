@@ -28,7 +28,7 @@ func newAuthenticator(t *testing.T) (*identity.Authenticator, *fakeEntities, *fa
 	random := &fakeRandom{}
 	a := identity.NewAuthenticator(
 		fakeRoot{},
-		identity.NewTokenService(tokens, identity.NewEntityService(entities, random, &fakeAuthorizer{}), random, &fakeAuthorizer{}, newFakeClock(), tokenTTL),
+		identity.NewTokenService(tokens, identity.NewEntityService(entities, random, &fakeAuthorizer{}), random, &fakeAuthorizer{}, newFakeClock(), tokenLimits),
 		identity.NewGroupService(groups, random, &fakeAuthorizer{}),
 	)
 	return a, entities, tokens, groups

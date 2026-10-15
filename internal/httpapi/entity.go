@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
 )
@@ -81,13 +82,35 @@ func (h *Handlers) handleDeleteEntity(w http.ResponseWriter, r *http.Request) {
 
 // createTokenResponse carries the token once; []byte encodes as base64.
 type createTokenResponse struct {
-	Token []byte `json:"token"`
+	Token     []byte    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// tokenBodyLimit fits {"ttl": n} with room to spare.
+const tokenBodyLimit = 1 << 10
+
+type tokenRequest struct {
+	TTL int64 `json:"ttl"`
 }
 
 func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	token, err := h.Token.CreateToken(r.Context(), principalFrom(r), id)
+	var req tokenRequest
+	// The body is optional: a client that sends none gets the default TTL.
+	if r.ContentLength != 0 {
+		if err := decodeJSON(w, r, &req, tokenBodyLimit); err != nil {
+			writeError(w, h.Logger, err)
+			return
+		}
+	}
+	ttl, err := ttlFrom(req.TTL)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	token, expiresAt, err := h.Token.CreateToken(r.Context(), principalFrom(r), id, ttl)
 	// Deferred before the error check: cleared after the response is written, whatever CreateToken returned.
 	defer clear(token)
 	if err != nil {
@@ -95,7 +118,8 @@ func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token})
+	// The spec promises UTC, whatever zone the clock reads.
+	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token, ExpiresAt: expiresAt.UTC()})
 }
 
 // entity takes id from the URL, or none on create, never from the body: IDs are generated, not chosen.
