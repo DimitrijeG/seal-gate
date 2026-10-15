@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"bufio"
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -96,12 +99,28 @@ type tokenRequest struct {
 // tokenTTL reads the optional token request body: a client that sends none gets the default TTL.
 func tokenTTL(w http.ResponseWriter, r *http.Request) (time.Duration, error) {
 	var req tokenRequest
-	if r.ContentLength != 0 {
+	if !emptyBody(r) {
 		if err := decodeJSON(w, r, &req, tokenBodyLimit); err != nil {
 			return 0, err
 		}
 	}
 	return ttlFrom(req.TTL)
+}
+
+// emptyBody reports whether r has no body; one of unknown length is peeked at and put back whole.
+func emptyBody(r *http.Request) bool {
+	if r.ContentLength != -1 {
+		return r.ContentLength == 0
+	}
+	body := bufio.NewReader(r.Body)
+	if _, err := body.Peek(1); errors.Is(err, io.EOF) {
+		return true
+	}
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{body, r.Body}
+	return false
 }
 
 func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {

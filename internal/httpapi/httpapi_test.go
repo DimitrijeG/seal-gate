@@ -356,6 +356,22 @@ func do(t *testing.T, h http.Handler, method, path, body string) *httptest.Respo
 	return doWithAuthorization(t, h, bearer, method, path, body)
 }
 
+// sender is do or one of its variants, for tables that vary how a request is sent.
+type sender func(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder
+
+// doUnknownLength is do with the body's length unknown, as a chunked or HTTP/2 request without Content-Length arrives.
+func doUnknownLength(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", contentTypeJSON)
+	req.Header.Set("Authorization", bearer)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
 // doWithAuthorization sends authorization as the Authorization header, or none if it is empty.
 func doWithAuthorization(t *testing.T, h http.Handler, authorization, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
