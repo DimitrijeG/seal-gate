@@ -36,8 +36,13 @@ func (e Entry) expired(now time.Time) bool {
 	return !e.Generated && !e.ExpiresAt.IsZero() && !now.Before(e.ExpiresAt)
 }
 
-// Repository stores secrets by path. Get returns an entry the caller owns, or ErrNotFound for a missing path, and
-// Delete does not fail on one; every method returns ErrSealed while sealed.
+// due holds for a generated secret past its expiry, which is its rotation time.
+func (e Entry) due(now time.Time) bool {
+	return e.Generated && !e.ExpiresAt.IsZero() && !now.Before(e.ExpiresAt)
+}
+
+// Repository stores secrets by path. Put keeps no reference to the value, Get returns an entry the caller owns, or
+// ErrNotFound for a missing path, and Delete does not fail on one; every method returns ErrSealed while sealed.
 type Repository interface {
 	Put(ctx context.Context, path string, entry Entry) error
 	Get(ctx context.Context, path string) (Entry, error)
