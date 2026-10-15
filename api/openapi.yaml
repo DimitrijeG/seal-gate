@@ -33,6 +33,11 @@ tags:
       Policy sets that entities join by naming the group's ID. Membership
       lives on the entity, so a group has no member list. Every operation
       needs the instance unsealed.
+  - name: auth
+    description: >
+      Operations on the token presented with the request. Holding it is the
+      proof, so none needs a capability. Every operation needs the instance
+      unsealed.
 
 paths:
   /sys/init:
@@ -667,6 +672,27 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/token/revoke:
+    post:
+      operationId: revokeToken
+      tags: [auth]
+      summary: Revoke the token presented with the request.
+      description: >
+        Takes no request body. From then on the token is refused like one
+        never issued. The root token is not stored, so it cannot be revoked.
+      responses:
+        "204":
+          description: Revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: The presented token is the root token.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":

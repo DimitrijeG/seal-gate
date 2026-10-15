@@ -332,7 +332,7 @@ func TestAuthorization(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				entities, _, _, authorizer := newAuthorizedEntityService(t)
-				tokens := identity.NewTokenService(&fakeTokens{}, entities, &fakeRandom{}, authorizer, newFakeClock(), tokenLimits)
+				tokens := identity.NewTokenService(&fakeTokens{}, entities, fakeRoot{}, &fakeRandom{}, authorizer, newFakeClock(), tokenLimits)
 				authorizer.err = authorization.ErrDenied
 
 				err := tt.call(t.Context(), entities, tokens)

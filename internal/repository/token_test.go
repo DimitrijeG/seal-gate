@@ -141,6 +141,31 @@ func TestTokenRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("a deleted token is gone", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Token
+		if err := repo.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+
+		if err := repo.Delete(t.Context(), tokenHash); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		_, err := repo.Get(t.Context(), tokenHash)
+
+		if !errors.Is(err, identity.ErrInvalidToken) {
+			t.Errorf("got %v, want %v", err, identity.ErrInvalidToken)
+		}
+	})
+
+	t.Run("deleting a missing token succeeds", func(t *testing.T) {
+		f := newBarrierFixture(t)
+
+		if err := f.set.Token.Delete(t.Context(), tokenHash); err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
 	t.Run("a tampered token is not reported as missing", func(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Token
@@ -229,6 +254,9 @@ func TestTokenRepository(t *testing.T) {
 			{"get", func(t *testing.T, set *repository.Set) error {
 				_, err := set.Token.Get(t.Context(), tokenHash)
 				return err
+			}},
+			{"delete", func(t *testing.T, set *repository.Set) error {
+				return set.Token.Delete(t.Context(), tokenHash)
 			}},
 		}
 

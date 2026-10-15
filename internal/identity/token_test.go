@@ -45,6 +45,15 @@ func (r *fakeTokens) Get(_ context.Context, hash [sha256.Size]byte) (identity.St
 	return token, nil
 }
 
+func (r *fakeTokens) Delete(_ context.Context, hash [sha256.Size]byte) error {
+	r.calls++
+	if r.err != nil {
+		return r.err
+	}
+	delete(r.tokens, hash)
+	return nil
+}
+
 // fakeClock reads as now; tests move it with advance.
 type fakeClock struct{ now time.Time }
 
@@ -93,7 +102,7 @@ func newClockedTokenService(t *testing.T) (*identity.TokenService, *fakeEntities
 	random := &fakeRandom{}
 	authorizer := &fakeAuthorizer{}
 	clock := newFakeClock()
-	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, clock, tokenLimits)
+	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), fakeRoot{}, random, authorizer, clock, tokenLimits)
 	return s, entities, tokens, clock
 }
 
@@ -104,7 +113,7 @@ func newAuthorizedTokenService(t *testing.T) (*identity.TokenService, *fakeEntit
 	tokens := newFakeTokens()
 	random := &fakeRandom{}
 	authorizer := &fakeAuthorizer{}
-	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), random, authorizer, newFakeClock(), tokenLimits)
+	s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, authorizer), fakeRoot{}, random, authorizer, newFakeClock(), tokenLimits)
 	return s, entities, tokens, random, authorizer
 }
 
@@ -246,6 +255,60 @@ func TestToken(t *testing.T) {
 				}
 				if tokens.calls != 0 {
 					t.Errorf("token calls: got %d, want 0", tokens.calls)
+				}
+			})
+		}
+	})
+
+	t.Run("a revoked token no longer resolves", func(t *testing.T) {
+		s, entities, _, _ := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		if err := s.RevokeToken(t.Context(), token); err != nil {
+			t.Fatalf("RevokeToken: %v", err)
+		}
+		_, err = s.Resolve(t.Context(), token)
+
+		if !errors.Is(err, identity.ErrInvalidToken) {
+			t.Errorf("got %v, want %v", err, identity.ErrInvalidToken)
+		}
+	})
+
+	t.Run("the root token cannot be revoked", func(t *testing.T) {
+		s, _, _, _ := newTokenService(t)
+
+		err := s.RevokeToken(t.Context(), rootToken)
+
+		if !errors.Is(err, identity.ErrRootToken) {
+			t.Errorf("got %v, want %v", err, identity.ErrRootToken)
+		}
+	})
+
+	t.Run("a revoke of a missing or wrong-length token is refused without a write", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			token []byte
+		}{
+			{"nil", nil},
+			{"empty", []byte{}},
+			{"31 bytes", bytes.Repeat([]byte{1}, 31)},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, tokens, _ := newTokenService(t)
+
+				err := s.RevokeToken(t.Context(), tt.token)
+
+				if !errors.Is(err, identity.ErrInvalidToken) {
+					t.Errorf("err: got %v, want %v", err, identity.ErrInvalidToken)
+				}
+				if tokens.calls != 0 {
+					t.Errorf("calls: got %d, want 0", tokens.calls)
 				}
 			})
 		}
@@ -503,5 +566,8 @@ var tokenOperations = []struct {
 	{"resolve", func(ctx context.Context, s *identity.TokenService) error {
 		_, err := s.Resolve(ctx, bytes.Repeat([]byte{1}, 32))
 		return err
+	}},
+	{"revoke", func(ctx context.Context, s *identity.TokenService) error {
+		return s.RevokeToken(ctx, bytes.Repeat([]byte{1}, 32))
 	}},
 }

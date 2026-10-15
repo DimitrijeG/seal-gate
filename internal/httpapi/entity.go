@@ -122,6 +122,15 @@ func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token, ExpiresAt: expiresAt.UTC()})
 }
 
+func (h *Handlers) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	if err := h.Token.RevokeToken(r.Context(), tokenFrom(r)); err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // entity takes id from the URL, or none on create, never from the body: IDs are generated, not chosen.
 func (req entityRequest) entity(id string) identity.Entity {
 	return identity.Entity{

@@ -17,10 +17,12 @@ type StoredToken struct {
 }
 
 // TokenRepository stores tokens by their hashes; it never sees a token. Get returns ErrInvalidToken
-// for a missing hash and ErrUnreadableToken for a corrupt record; both methods return ErrSealed while sealed.
+// for a missing hash and ErrUnreadableToken for a corrupt record; Delete of a missing hash is nil; every method
+// returns ErrSealed while sealed.
 type TokenRepository interface {
 	Put(ctx context.Context, hash [sha256.Size]byte, stored StoredToken) error
 	Get(ctx context.Context, hash [sha256.Size]byte) (StoredToken, error)
+	Delete(ctx context.Context, hash [sha256.Size]byte) error
 }
 
 // TokenService issues tokens to entities and resolves them back; it stores only their hashes.
@@ -28,6 +30,7 @@ type TokenService struct {
 	tokens TokenRepository
 	// The service, not the repository: a token's entity is validated on read, as getEntity does.
 	entities   *EntityService
+	root       RootChecker
 	random     Random
 	authorizer authorization.Authorizer
 	clock      Clock
@@ -41,9 +44,9 @@ type TokenTTL struct {
 }
 
 // NewTokenService returns a TokenService over tokens that issues each token from clock's time, for ttl's default unless
-// asked otherwise, checking its entity through entities and asking authorizer first.
-func NewTokenService(tokens TokenRepository, entities *EntityService, random Random, authorizer authorization.Authorizer, clock Clock, ttl TokenTTL) *TokenService {
-	return &TokenService{tokens: tokens, entities: entities, random: random, authorizer: authorizer, clock: clock, ttl: ttl}
+// asked otherwise, checking its entity through entities and asking authorizer first; root names the token it never stores.
+func NewTokenService(tokens TokenRepository, entities *EntityService, root RootChecker, random Random, authorizer authorization.Authorizer, clock Clock, ttl TokenTTL) *TokenService {
+	return &TokenService{tokens: tokens, entities: entities, root: root, random: random, authorizer: authorizer, clock: clock, ttl: ttl}
 }
 
 // CreateToken issues a token for the entity with id if principal may create its tokens, returning it and its expiry; a
@@ -83,6 +86,22 @@ func (s *TokenService) CreateToken(ctx context.Context, principal authorization.
 		return nil, time.Time{}, err
 	}
 	return token, expiresAt, nil
+}
+
+// RevokeToken deletes token so it no longer resolves; the root token is ErrRootToken, as it is never stored.
+func (s *TokenService) RevokeToken(ctx context.Context, token []byte) error {
+	if len(token) != tokenBytes {
+		return ErrInvalidToken
+	}
+	if s.root.IsRoot(token) {
+		return ErrRootToken
+	}
+
+	err := s.tokens.Delete(ctx, sha256.Sum256(token))
+	if err != nil && !ours(err) {
+		return fmt.Errorf("identity: %w", err)
+	}
+	return err
 }
 
 // Resolve returns the entity a token authenticates as; a missing, unknown, expired or orphaned token is ErrInvalidToken alike.

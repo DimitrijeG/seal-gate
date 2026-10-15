@@ -278,6 +278,7 @@ type fakeToken struct {
 	ttl       time.Duration
 	token     []byte
 	expiresAt time.Time
+	revoked   []byte // a copy of the token RevokeToken got
 	err       error
 }
 
@@ -286,6 +287,11 @@ func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Pri
 	f.entityID = entityID
 	f.ttl = ttl
 	return f.token, f.expiresAt, f.err
+}
+
+func (f *fakeToken) RevokeToken(ctx context.Context, token []byte) error {
+	f.revoked = bytes.Clone(token)
+	return f.err
 }
 
 type tokenBody struct {

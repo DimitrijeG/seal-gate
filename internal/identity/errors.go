@@ -21,6 +21,8 @@ var (
 	ErrInvalidTTL = errors.New("identity: invalid TTL")
 	// ErrUnreadableGroup reports a stored group that does not decode, or whose policy names are invalid.
 	ErrUnreadableGroup = errors.New("identity: unreadable group")
+	// ErrRootToken reports a revoke or rotate of the root token, which is never stored and so can be neither.
+	ErrRootToken = errors.New("identity: root token cannot be revoked or rotated")
 )
 
 // ours reports the sentinels a repository may return, which pass up unwrapped so their prefix is not doubled.

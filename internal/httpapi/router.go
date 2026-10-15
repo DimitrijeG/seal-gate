@@ -50,9 +50,10 @@ type EntityService interface {
 	DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error
 }
 
-// TokenService is token issuing as the handlers use it.
+// TokenService is token issuing and revoking as the handlers use it.
 type TokenService interface {
 	CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error)
+	RevokeToken(ctx context.Context, token []byte) error
 }
 
 // GroupService is group storage as the handlers use it.
@@ -103,6 +104,8 @@ func NewRouter(h *Handlers) http.Handler {
 
 	mux.Handle("POST /v1/sys/seal", h.authenticated(h.handleSeal))
 
+	mux.Handle("POST /v1/auth/token/revoke", h.authenticated(h.handleRevokeToken))
+
 	mux.Handle("GET /v1/secrets", h.authenticated(h.handleListSecrets))
 	mux.Handle("PUT /v1/secrets/{path...}", h.authenticated(h.handlePutSecret))
 	mux.Handle("GET /v1/secrets/{path...}", h.authenticated(h.handleGetSecret))
@@ -140,10 +143,12 @@ func (h *Handlers) authenticated(next http.HandlerFunc) http.Handler {
 	return h.identify(h.audit(h.require(next)))
 }
 
-// authentication is what identify learned: a principal, or why there is none.
+// authentication is what identify learned: a principal and the token it came from, or why there is none.
 type authentication struct {
 	principal authorization.Principal
-	err       error
+	// Cleared by identify once the handler returns, so no handler keeps or clears it.
+	token []byte
+	err   error
 }
 
 type authenticationKey struct{}
@@ -160,6 +165,9 @@ func (h *Handlers) identify(next http.Handler) http.Handler {
 			defer clear(token)
 			if err == nil && len(token) > 0 {
 				result.principal, result.err = h.Authenticator.Authenticate(r.Context(), token)
+				if result.err == nil {
+					result.token = token
+				}
 			}
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authenticationKey{}, result)))
@@ -189,6 +197,12 @@ func principalFrom(r *http.Request) authorization.Principal {
 		return authorization.Principal{}
 	}
 	return result.principal
+}
+
+// tokenFrom returns the token identify authenticated, or nil; it is cleared once the request is served.
+func tokenFrom(r *http.Request) []byte {
+	result, _ := r.Context().Value(authenticationKey{}).(authentication)
+	return result.token
 }
 
 // refuseUncleanPaths runs before the mux, which would otherwise redirect an

@@ -83,3 +83,14 @@ func (r *tokenRepository) Get(ctx context.Context, hash [sha256.Size]byte) (iden
 	}
 	return identity.StoredToken{EntityID: record.EntityID, ExpiresAt: record.ExpiresAt}, nil
 }
+
+func (r *tokenRepository) Delete(ctx context.Context, hash [sha256.Size]byte) error {
+	err := r.encrypted.Delete(ctx, tokenKey(hash))
+	if errors.Is(err, barrier.ErrSealed) {
+		return identity.ErrSealed
+	}
+	if err != nil {
+		return fmt.Errorf("repository: %w", err)
+	}
+	return nil
+}

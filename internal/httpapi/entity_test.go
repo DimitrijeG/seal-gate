@@ -368,6 +368,39 @@ func TestEntity(t *testing.T) {
 		}
 	})
 
+	t.Run("revoking returns 204", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{}})
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/revoke", "")
+
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+	})
+
+	t.Run("the presented token is the one revoked", func(t *testing.T) {
+		fake := &fakeToken{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		want := []byte{1, 2, 3}
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/revoke", "")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if !bytes.Equal(fake.revoked, want) {
+			t.Errorf("got %x, want %x", fake.revoked, want)
+		}
+	})
+
+	t.Run("the root token cannot be revoked", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{err: identity.ErrRootToken}})
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/token/revoke", "")
+
+		assertError(t, rec, http.StatusBadRequest, "the root token cannot be revoked or rotated")
+	})
+
 	t.Run("an issued token forbids caching", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: make([]byte, 32)}})
 		want := "no-store"

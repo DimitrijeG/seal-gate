@@ -641,6 +641,22 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a revoked token gets 401 at once", func(t *testing.T) {
+		router := unsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		token := withToken(router, entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`))
+		getSecret(t, token, "dev/a")
+		if rec := send(t, token, http.MethodPost, "/v1/auth/token/revoke", ""); rec.Code != http.StatusNoContent {
+			t.Fatalf("revoke: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		rec := send(t, token, http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
 	t.Run("a token is forbidden a secret no policy grants", func(t *testing.T) {
 		router := unsealed(t)
 		putSecret(t, router, "prod/a", "c2VjcmV0")
