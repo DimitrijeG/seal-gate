@@ -34,4 +34,15 @@ func TestLoad(t *testing.T) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
+
+	t.Run("the default config sweeps every minute", func(t *testing.T) {
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		if got, want := cfg.Lifecycle.Interval, time.Minute; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
 }

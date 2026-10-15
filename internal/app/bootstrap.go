@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/barrier"
@@ -12,6 +13,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
+	"github.com/dimitrijegasic/seal-gate/internal/lifecycle"
 	"github.com/dimitrijegasic/seal-gate/internal/repository"
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
@@ -40,6 +42,7 @@ type services struct {
 	entity        *identity.EntityService
 	token         *identity.TokenService
 	group         *identity.GroupService
+	worker        *lifecycle.Worker
 }
 
 func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
@@ -80,7 +83,7 @@ func buildRepositories(backend storage.Backend, infra *infrastructure) *reposito
 	}
 }
 
-func buildServices(infra *infrastructure, repositories *repositories) *services {
+func buildServices(infra *infrastructure, repositories *repositories, auditor lifecycle.Recorder, interval time.Duration) (*services, error) {
 	keyring := system.NewKeyring(
 		repositories.set.System,
 		infra.shamir,
@@ -90,7 +93,12 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 	)
 
 	policy := authorization.New(repositories.set.Policy)
-	sys := system.NewService(keyring, infra.clock, policy)
+	sec := secret.New(repositories.set.Secret, infra.random, policy, infra.clock)
+	worker, err := lifecycle.New(interval, sec, auditor, infra.clock, infra.logger)
+	if err != nil {
+		return nil, fmt.Errorf("app: %w", err)
+	}
+	sys := system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
 	entity := identity.NewEntityService(repositories.set.Entity, infra.random, policy)
 	token := identity.NewTokenService(repositories.set.Token, entity, infra.random, policy)
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)
@@ -98,12 +106,13 @@ func buildServices(infra *infrastructure, repositories *repositories) *services 
 	return &services{
 		authenticator: identity.NewAuthenticator(sys, token, group),
 		system:        sys,
-		secret:        secret.New(repositories.set.Secret, infra.random, policy, infra.clock),
+		secret:        sec,
 		policy:        policy,
 		entity:        entity,
 		token:         token,
 		group:         group,
-	}
+		worker:        worker,
+	}, nil
 }
 
 func buildRouter(services *services, infra *infrastructure, auditor httpapi.Auditor) http.Handler {

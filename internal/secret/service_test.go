@@ -17,13 +17,15 @@ import (
 // principal is who every call acts as; these tests do not depend on who it is.
 var principal = authorization.NewEntityPrincipal("0123456789abcdef0123456789abcdef", "dev")
 
-// fakeRepository keeps secrets in a map; err, when set, fails every call, putErr only Put, and getErr only Get.
+// fakeRepository keeps secrets in a map; err, when set, fails every call, putErr only Put, getErr only Get, and
+// deleteErr only Delete.
 type fakeRepository struct {
-	secrets map[string]secret.Entry
-	calls   int
-	err     error
-	putErr  error
-	getErr  error
+	secrets   map[string]secret.Entry
+	calls     int
+	err       error
+	putErr    error
+	getErr    error
+	deleteErr error
 }
 
 func (r *fakeRepository) Put(_ context.Context, path string, entry secret.Entry) error {
@@ -34,6 +36,8 @@ func (r *fakeRepository) Put(_ context.Context, path string, entry secret.Entry)
 	if r.putErr != nil {
 		return r.putErr
 	}
+	// A copy, as the real repository keeps only the encoded bytes, so a caller clearing its value clears no stored one.
+	entry.Value = bytes.Clone(entry.Value)
 	r.secrets[path] = entry
 	return nil
 }
@@ -58,6 +62,9 @@ func (r *fakeRepository) Delete(_ context.Context, path string) error {
 	r.calls++
 	if r.err != nil {
 		return r.err
+	}
+	if r.deleteErr != nil {
+		return r.deleteErr
 	}
 	delete(r.secrets, path)
 	return nil

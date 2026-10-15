@@ -5,11 +5,12 @@ import "time"
 
 // Config is the whole service configuration, as Load returns it.
 type Config struct {
-	Logger  LoggerConfig
-	Storage StorageConfig
-	Crypto  CryptoConfig
-	HTTP    HTTPConfig
-	Audit   AuditConfig
+	Logger    LoggerConfig
+	Storage   StorageConfig
+	Crypto    CryptoConfig
+	HTTP      HTTPConfig
+	Audit     AuditConfig
+	Lifecycle LifecycleConfig
 }
 
 // LoggerConfig sets the level, as slog.Level parses it ("info", "warn+2"), and the format ("text", else JSON).
@@ -49,4 +50,9 @@ type AuditSinkConfig struct {
 	Path     string
 	Required bool
 	Timeout  time.Duration
+}
+
+// LifecycleConfig is how often the lifecycle worker sweeps for secrets to rotate or expire.
+type LifecycleConfig struct {
+	Interval time.Duration
 }
