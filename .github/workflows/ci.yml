@@ -17,6 +17,20 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    # The postgres backend's tests run against this server; without it they skip.
+    # Passwordless: it lives for one job and listens only on the runner.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v5
 
@@ -35,6 +49,8 @@ jobs:
           fi
 
       - name: Build, vet and test
+        env:
+          SEAL_GATE_POSTGRES_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
         run: |
           go build ./...
           go vet ./...

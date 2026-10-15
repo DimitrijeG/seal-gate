@@ -30,6 +30,20 @@ api/openapi.yaml        the HTTP contract
 tools/graphd/           live package graph + import rule enforcement
 ```
 
+## Storage
+
+The default backend is bolt, a file in the working directory. To store in Postgres,
+set both variables in the environment, so the password in the URL never sits
+in a file:
+
+```sh
+SEAL_GATE_STORAGE_TYPE=postgres
+SEAL_GATE_STORAGE_URL='postgres://seal:<password>@db.example:5432/seal'
+```
+
+The backend keeps one table, `seal_gate`, created on start. Run one instance
+per database: postgres, unlike bolt's file lock, does not stop a second one.
+
 ## What a change includes
 
 Code and its tests ship together, in the same pull request. An issue is never
@@ -61,6 +75,15 @@ cd tools/graphd && go test -count=1 ./...    # import rules
 
 `-count=1` is not optional: graphd runs `go list` on another directory tree,
 which the test cache cannot see, so a cached pass can be stale.
+
+The postgres backend's tests need a server, named by `SEAL_GATE_POSTGRES_URL`;
+without it they skip. Each test gets a schema of its own, so one database
+serves every package at once:
+
+```sh
+docker run -d --name seal-gate-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:5432:5432 postgres:18
+export SEAL_GATE_POSTGRES_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable'
+```
 
 ### Before opening a PR
 

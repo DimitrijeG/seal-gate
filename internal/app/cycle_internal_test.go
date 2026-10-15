@@ -27,6 +27,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
+	"github.com/dimitrijegasic/seal-gate/internal/storage/postgres/postgrestest"
 )
 
 type statusBody struct {
@@ -815,6 +816,34 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got := getSecret(t, withToken(router, body.RootToken), "db/password"); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the lifecycle runs over postgres", func(t *testing.T) {
+		backend, err := buildStorage(t.Context(), &config.Config{Storage: config.StorageConfig{
+			Type: "postgres",
+			URL:  postgrestest.SchemaURL(t),
+		}})
+		if err != nil {
+			t.Fatalf("buildStorage: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := backend.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		})
+		router := routerOver(t, backend)
+		body := initialize(t, router)
+		unsealAll(t, router, body.Shares)
+		root := withToken(router, body.RootToken)
+		want := "c2VjcmV0" // "secret"
+		putSecret(t, root, "db/password", want)
+
+		if got := getSecret(t, root, "db/password"); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+		if rec := send(t, root, http.MethodPost, "/v1/sys/seal", ""); rec.Code != http.StatusNoContent {
+			t.Errorf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
 		}
 	})
 

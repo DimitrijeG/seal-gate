@@ -1,10 +1,13 @@
 package config
 
-import "time"
+import (
+	"os"
+	"time"
+)
 
-// Load returns built-in defaults until a configuration source exists.
+// Load returns built-in defaults, with the storage type and URL taken from the environment when set.
 func Load() (*Config, error) {
-	return &Config{
+	cfg := &Config{
 		Logger: LoggerConfig{
 			Level:  "info",
 			Format: "json",
@@ -35,5 +38,11 @@ func Load() (*Config, error) {
 			DefaultTTL: time.Hour,
 			MaxTTL:     24 * time.Hour,
 		},
-	}, nil
+	}
+
+	if storageType := os.Getenv("SEAL_GATE_STORAGE_TYPE"); storageType != "" {
+		cfg.Storage.Type = storageType
+	}
+	cfg.Storage.URL = os.Getenv("SEAL_GATE_STORAGE_URL")
+	return cfg, nil
 }
