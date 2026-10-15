@@ -93,18 +93,21 @@ type tokenRequest struct {
 	TTL int64 `json:"ttl"`
 }
 
+// tokenTTL reads the optional token request body: a client that sends none gets the default TTL.
+func tokenTTL(w http.ResponseWriter, r *http.Request) (time.Duration, error) {
+	var req tokenRequest
+	if r.ContentLength != 0 {
+		if err := decodeJSON(w, r, &req, tokenBodyLimit); err != nil {
+			return 0, err
+		}
+	}
+	return ttlFrom(req.TTL)
+}
+
 func (h *Handlers) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req tokenRequest
-	// The body is optional: a client that sends none gets the default TTL.
-	if r.ContentLength != 0 {
-		if err := decodeJSON(w, r, &req, tokenBodyLimit); err != nil {
-			writeError(w, h.Logger, err)
-			return
-		}
-	}
-	ttl, err := ttlFrom(req.TTL)
+	ttl, err := tokenTTL(w, r)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -129,6 +132,24 @@ func (h *Handlers) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) handleRotateToken(w http.ResponseWriter, r *http.Request) {
+	ttl, err := tokenTTL(w, r)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	token, expiresAt, err := h.Token.RotateToken(r.Context(), tokenFrom(r), ttl)
+	// Deferred before the error check: cleared after the response is written, whatever RotateToken returned.
+	defer clear(token)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token, ExpiresAt: expiresAt.UTC()})
 }
 
 // entity takes id from the URL, or none on create, never from the body: IDs are generated, not chosen.

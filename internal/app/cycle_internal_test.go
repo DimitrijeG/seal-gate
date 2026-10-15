@@ -412,6 +412,16 @@ func entityTokenWith(t *testing.T, h http.Handler, rules, body string) string {
 	return decode[tokenBody](t, rec).Token
 }
 
+// rotateToken rotates the token h sends and returns the new one.
+func rotateToken(t *testing.T, h http.Handler) string {
+	t.Helper()
+	rec := send(t, h, http.MethodPost, "/v1/auth/token/rotate", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("rotate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	return decode[tokenBody](t, rec).Token
+}
+
 func boltConfig(t *testing.T) *config.Config {
 	t.Helper()
 	return &config.Config{Storage: config.StorageConfig{
@@ -654,6 +664,32 @@ func TestSealLifecycle(t *testing.T) {
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a rotated token's old value gets 401", func(t *testing.T) {
+		router := unsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		old := withToken(router, entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`))
+		rotateToken(t, old)
+
+		rec := send(t, old, http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a rotated token's new value works", func(t *testing.T) {
+		router := unsealed(t)
+		want := "c2VjcmV0" // "secret"
+		putSecret(t, router, "dev/a", want)
+		old := withToken(router, entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`))
+
+		token := rotateToken(t, old)
+
+		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 

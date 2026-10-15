@@ -698,6 +698,44 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /auth/token/rotate:
+    post:
+      operationId: rotateToken
+      tags: [auth]
+      summary: Exchange the presented token for a new one.
+      description: >
+        The new token authenticates as the same entity, with a fresh expiry;
+        the presented one is then refused like one never issued. The request
+        body is optional; without one the new token lives for the configured
+        default TTL. If the presented token cannot be revoked, the rotation
+        fails and the presented token keeps working. The root token is not
+        stored, so it cannot be rotated.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTokenRequest"
+      responses:
+        "201":
+          description: Rotated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /groups:
     post:
       operationId: createGroup

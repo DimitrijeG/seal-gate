@@ -50,10 +50,11 @@ type EntityService interface {
 	DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error
 }
 
-// TokenService is token issuing and revoking as the handlers use it.
+// TokenService is token issuing, revoking and rotating as the handlers use it.
 type TokenService interface {
 	CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error)
 	RevokeToken(ctx context.Context, token []byte) error
+	RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error)
 }
 
 // GroupService is group storage as the handlers use it.
@@ -105,6 +106,7 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.Handle("POST /v1/sys/seal", h.authenticated(h.handleSeal))
 
 	mux.Handle("POST /v1/auth/token/revoke", h.authenticated(h.handleRevokeToken))
+	mux.Handle("POST /v1/auth/token/rotate", h.authenticated(h.handleRotateToken))
 
 	mux.Handle("GET /v1/secrets", h.authenticated(h.handleListSecrets))
 	mux.Handle("PUT /v1/secrets/{path...}", h.authenticated(h.handlePutSecret))

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
@@ -35,6 +36,8 @@ type TokenService struct {
 	authorizer authorization.Authorizer
 	clock      Clock
 	ttl        TokenTTL
+	// Serialises rotations, so two of one token cannot both find it live and each issue a successor.
+	mu sync.Mutex
 }
 
 // TokenTTL is how long a token lives when none is asked for, and the longest one may be asked for.
@@ -67,6 +70,11 @@ func (s *TokenService) CreateToken(ctx context.Context, principal authorization.
 		return nil, time.Time{}, err
 	}
 
+	return s.issue(ctx, entityID, ttl)
+}
+
+// issue stores a new token for entityID, living ttl or the default if zero; on failure the token is cleared.
+func (s *TokenService) issue(ctx context.Context, entityID string, ttl time.Duration) ([]byte, time.Time, error) {
 	token, err := s.random.Bytes(tokenBytes)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("identity: %w", err)
@@ -102,6 +110,42 @@ func (s *TokenService) RevokeToken(ctx context.Context, token []byte) error {
 		return fmt.Errorf("identity: %w", err)
 	}
 	return err
+}
+
+// RotateToken replaces token with a new one for its entity, living ttl or the default if zero; on failure token still works.
+// The root token is ErrRootToken, and an expired or unknown one ErrInvalidToken.
+func (s *TokenService) RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error) {
+	if ttl < 0 || ttl > s.ttl.Max {
+		return nil, time.Time{}, ErrInvalidTTL
+	}
+	if s.root.IsRoot(token) {
+		return nil, time.Time{}, ErrRootToken
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entity, err := s.Resolve(ctx, token)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+
+	// Stored before the old one is deleted, so a failure between leaves the caller a working token.
+	rotated, expiresAt, err := s.issue(ctx, entity.ID, ttl)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+
+	err = s.tokens.Delete(ctx, sha256.Sum256(token))
+	if err != nil {
+		// Best effort, its error dropped: the caller keeps the old token to retry with, which beats two live ones.
+		_ = s.tokens.Delete(context.WithoutCancel(ctx), sha256.Sum256(rotated))
+		clear(rotated)
+		if !ours(err) {
+			return nil, time.Time{}, fmt.Errorf("identity: %w", err)
+		}
+		return nil, time.Time{}, err
+	}
+	return rotated, expiresAt, nil
 }
 
 // Resolve returns the entity a token authenticates as; a missing, unknown, expired or orphaned token is ErrInvalidToken alike.

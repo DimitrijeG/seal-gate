@@ -11,23 +11,30 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
 )
 
-// fakeTokens keeps stored tokens by hash; err, when set, fails every call.
+// fakeTokens keeps stored tokens by hash; err, when set, fails every call, and putErr and deleteErrs fail only theirs.
 type fakeTokens struct {
-	tokens map[[sha256.Size]byte]identity.StoredToken
-	calls  int
-	err    error
+	tokens     map[[sha256.Size]byte]identity.StoredToken
+	calls      int
+	err        error
+	putErr     error
+	deleteErrs map[[sha256.Size]byte]error
 }
 
 func (r *fakeTokens) Put(_ context.Context, hash [sha256.Size]byte, token identity.StoredToken) error {
 	r.calls++
 	if r.err != nil {
 		return r.err
+	}
+	if r.putErr != nil {
+		return r.putErr
 	}
 	r.tokens[hash] = token
 	return nil
@@ -50,8 +57,60 @@ func (r *fakeTokens) Delete(_ context.Context, hash [sha256.Size]byte) error {
 	if r.err != nil {
 		return r.err
 	}
+	if err := r.deleteErrs[hash]; err != nil {
+		return err
+	}
 	delete(r.tokens, hash)
 	return nil
+}
+
+// racingTokens holds the first Get, after it has read, until a Delete has run
+// or 100 ms pass, so an unguarded rotation issues after another has deleted.
+type racingTokens struct {
+	fakeTokens
+	mu      sync.Mutex
+	gets    atomic.Int32
+	read    chan struct{}
+	deleted chan struct{}
+	once    sync.Once
+}
+
+func newRacingTokens() *racingTokens {
+	return &racingTokens{
+		fakeTokens: *newFakeTokens(),
+		read:       make(chan struct{}),
+		deleted:    make(chan struct{}),
+	}
+}
+
+func (r *racingTokens) Put(ctx context.Context, hash [sha256.Size]byte, token identity.StoredToken) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakeTokens.Put(ctx, hash, token)
+}
+
+func (r *racingTokens) Get(ctx context.Context, hash [sha256.Size]byte) (identity.StoredToken, error) {
+	r.mu.Lock()
+	token, err := r.fakeTokens.Get(ctx, hash)
+	r.mu.Unlock()
+
+	if r.gets.Add(1) == 1 {
+		close(r.read)
+		select {
+		case <-r.deleted:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return token, err
+}
+
+func (r *racingTokens) Delete(ctx context.Context, hash [sha256.Size]byte) error {
+	r.mu.Lock()
+	err := r.fakeTokens.Delete(ctx, hash)
+	r.mu.Unlock()
+
+	r.once.Do(func() { close(r.deleted) })
+	return err
 }
 
 // fakeClock reads as now; tests move it with advance.
@@ -314,6 +373,252 @@ func TestToken(t *testing.T) {
 		}
 	})
 
+	t.Run("a rotated token's new value resolves to the same entity", func(t *testing.T) {
+		s, entities, _, _ := newTokenService(t)
+		entity := identity.Entity{ID: hexID, Policies: []string{"dev"}}
+		entities.entities[hexID] = entity
+		old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		token, _, err := s.RotateToken(t.Context(), old, 0)
+		if err != nil {
+			t.Fatalf("RotateToken: %v", err)
+		}
+		got, err := s.Resolve(t.Context(), token)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+
+		if !reflect.DeepEqual(got, entity) {
+			t.Errorf("got %+v, want %+v", got, entity)
+		}
+	})
+
+	t.Run("a rotated token's old value no longer resolves", func(t *testing.T) {
+		s, entities, _, _ := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		if _, _, err := s.RotateToken(t.Context(), old, 0); err != nil {
+			t.Fatalf("RotateToken: %v", err)
+		}
+		_, err = s.Resolve(t.Context(), old)
+
+		if !errors.Is(err, identity.ErrInvalidToken) {
+			t.Errorf("got %v, want %v", err, identity.ErrInvalidToken)
+		}
+	})
+
+	t.Run("a rotated token's expiry follows the requested TTL", func(t *testing.T) {
+		tests := []struct {
+			name string
+			ttl  time.Duration
+			want time.Duration
+		}{
+			{"no TTL", 0, tokenTTL},
+			{"two hours", 2 * time.Hour, 2 * time.Hour},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, entities, _, clock := newClockedTokenService(t)
+				entities.entities[hexID] = identity.Entity{ID: hexID}
+				old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+				if err != nil {
+					t.Fatalf("CreateToken: %v", err)
+				}
+				clock.advance(time.Minute)
+				want := clock.now.Add(tt.want)
+
+				_, got, err := s.RotateToken(t.Context(), old, tt.ttl)
+				if err != nil {
+					t.Fatalf("RotateToken: %v", err)
+				}
+
+				if !got.Equal(want) {
+					t.Errorf("got %v, want %v", got, want)
+				}
+			})
+		}
+	})
+
+	t.Run("an invalid TTL is refused before a rotation reads anything", func(t *testing.T) {
+		for _, tt := range invalidTTLs {
+			t.Run(tt.name, func(t *testing.T) {
+				s, entities, tokens, _ := newTokenService(t)
+
+				_, _, err := s.RotateToken(t.Context(), bytes.Repeat([]byte{1}, 32), tt.ttl)
+
+				if !errors.Is(err, identity.ErrInvalidTTL) {
+					t.Errorf("err: got %v, want %v", err, identity.ErrInvalidTTL)
+				}
+				if entities.calls != 0 {
+					t.Errorf("entity calls: got %d, want 0", entities.calls)
+				}
+				if tokens.calls != 0 {
+					t.Errorf("token calls: got %d, want 0", tokens.calls)
+				}
+			})
+		}
+	})
+
+	t.Run("the root token cannot be rotated", func(t *testing.T) {
+		s, _, _, _ := newTokenService(t)
+
+		_, _, err := s.RotateToken(t.Context(), rootToken, 0)
+
+		if !errors.Is(err, identity.ErrRootToken) {
+			t.Errorf("got %v, want %v", err, identity.ErrRootToken)
+		}
+	})
+
+	t.Run("a rotation of a missing or wrong-length token is refused without a read", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			token []byte
+		}{
+			{"nil", nil},
+			{"empty", []byte{}},
+			{"31 bytes", bytes.Repeat([]byte{1}, 31)},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, tokens, _ := newTokenService(t)
+
+				_, _, err := s.RotateToken(t.Context(), tt.token, 0)
+
+				if !errors.Is(err, identity.ErrInvalidToken) {
+					t.Errorf("err: got %v, want %v", err, identity.ErrInvalidToken)
+				}
+				if tokens.calls != 0 {
+					t.Errorf("calls: got %d, want 0", tokens.calls)
+				}
+			})
+		}
+	})
+
+	t.Run("an expired token cannot be rotated", func(t *testing.T) {
+		s, entities, _, clock := newClockedTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		clock.advance(tokenTTL)
+
+		_, _, err = s.RotateToken(t.Context(), old, 0)
+
+		if !errors.Is(err, identity.ErrInvalidToken) {
+			t.Errorf("got %v, want %v", err, identity.ErrInvalidToken)
+		}
+	})
+
+	t.Run("a failed store of the new token keeps the old one", func(t *testing.T) {
+		s, entities, tokens, _ := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		tokens.putErr = errDisk
+
+		if _, _, err := s.RotateToken(t.Context(), old, 0); !errors.Is(err, errDisk) {
+			t.Fatalf("RotateToken: %v", err)
+		}
+		_, err = s.Resolve(t.Context(), old)
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("a failed delete of the old token fails the rotation", func(t *testing.T) {
+		s, entities, tokens, _ := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		tokens.deleteErrs = map[[sha256.Size]byte]error{sha256.Sum256(old): errDisk}
+
+		_, _, err = s.RotateToken(t.Context(), old, 0)
+
+		if !errors.Is(err, errDisk) {
+			t.Errorf("got %v, want %v", err, errDisk)
+		}
+	})
+
+	t.Run("a failed rotation leaves no new token stored", func(t *testing.T) {
+		s, entities, tokens, _ := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		tokens.deleteErrs = map[[sha256.Size]byte]error{sha256.Sum256(old): errDisk}
+		want := [][sha256.Size]byte{sha256.Sum256(old)}
+
+		if _, _, err := s.RotateToken(t.Context(), old, 0); !errors.Is(err, errDisk) {
+			t.Fatalf("RotateToken: %v", err)
+		}
+
+		if got := slices.Collect(maps.Keys(tokens.tokens)); !reflect.DeepEqual(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
+	t.Run("the new token of a failed rotation is cleared", func(t *testing.T) {
+		s, entities, tokens, random := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		old, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		tokens.deleteErrs = map[[sha256.Size]byte]error{sha256.Sum256(old): errDisk}
+		want := make([]byte, 32)
+
+		if _, _, err := s.RotateToken(t.Context(), old, 0); !errors.Is(err, errDisk) {
+			t.Fatalf("RotateToken: %v", err)
+		}
+
+		if !bytes.Equal(random.last, want) {
+			t.Errorf("got %x, want %x", random.last, want)
+		}
+	})
+
+	t.Run("two rotations of one token issue only one new token", func(t *testing.T) {
+		tokens := newRacingTokens()
+		entities := &fakeEntities{entities: map[string]identity.Entity{hexID: {ID: hexID}}}
+		random := &fakeRandom{}
+		s := identity.NewTokenService(tokens, identity.NewEntityService(entities, random, &fakeAuthorizer{}), fakeRoot{}, random, &fakeAuthorizer{}, newFakeClock(), tokenLimits)
+		old := bytes.Repeat([]byte{9}, 32)
+		tokens.tokens[sha256.Sum256(old)] = liveToken(hexID)
+		ctx := t.Context()
+
+		var firstErr, secondErr error
+		var wg sync.WaitGroup
+		wg.Go(func() { _, _, firstErr = s.RotateToken(ctx, old, 0) })
+		// The second starts only once the first has seen the old token live.
+		<-tokens.read
+		wg.Go(func() { _, _, secondErr = s.RotateToken(ctx, old, 0) })
+		wg.Wait()
+
+		// Either may win; the other must find the old token gone.
+		errs := []error{firstErr, secondErr}
+		if got := slices.IndexFunc(errs, func(err error) bool { return err == nil }); got == -1 {
+			t.Fatalf("got %v, want one success", errs)
+		}
+		if !slices.ContainsFunc(errs, func(err error) bool { return errors.Is(err, identity.ErrInvalidToken) }) {
+			t.Errorf("got %v, want one %v", errs, identity.ErrInvalidToken)
+		}
+	})
+
 	t.Run("a token for a missing entity is not found", func(t *testing.T) {
 		s, _, tokens, _ := newTokenService(t)
 
@@ -569,5 +874,9 @@ var tokenOperations = []struct {
 	}},
 	{"revoke", func(ctx context.Context, s *identity.TokenService) error {
 		return s.RevokeToken(ctx, bytes.Repeat([]byte{1}, 32))
+	}},
+	{"rotate", func(ctx context.Context, s *identity.TokenService) error {
+		_, _, err := s.RotateToken(ctx, bytes.Repeat([]byte{1}, 32), 0)
+		return err
 	}},
 }

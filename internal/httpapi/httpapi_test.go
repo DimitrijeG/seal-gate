@@ -279,7 +279,14 @@ type fakeToken struct {
 	token     []byte
 	expiresAt time.Time
 	revoked   []byte // a copy of the token RevokeToken got
+	rotated   []byte // a copy of the token RotateToken got
 	err       error
+}
+
+func (f *fakeToken) RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error) {
+	f.rotated = bytes.Clone(token)
+	f.ttl = ttl
+	return f.token, f.expiresAt, f.err
 }
 
 func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error) {
