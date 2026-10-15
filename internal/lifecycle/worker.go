@@ -1,4 +1,4 @@
-// Package lifecycle owns when expiry and rotation happen: a worker that sweeps on a ticker while unsealed.
+// Package lifecycle owns when expiry and rotation happen: a worker that runs its jobs on a ticker while unsealed.
 package lifecycle
 
 import (
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/audit"
-	"github.com/dimitrijegasic/seal-gate/internal/secret"
 )
 
 var ErrInvalidInterval = errors.New("lifecycle: interval must be positive")
@@ -17,18 +16,16 @@ var ErrInvalidInterval = errors.New("lifecycle: interval must be positive")
 // principal is who the audit trail says acted: the worker, with no entity behind it.
 const principal = "lifecycle"
 
-// secretResource turns a secret path into the resource name policies and the audit trail use for it.
-const secretResource = "secrets/"
-
-// operations names each action in the audit trail's route field, where a request's route would be.
-var operations = map[secret.ActionKind]string{
-	secret.ActionRotated: "rotate secret",
-	secret.ActionExpired: "expire secret",
+// Action is one change a job made, as the audit trail names it: the operation where a request's route would be, and
+// the resource acted on, empty when its only name must not be logged.
+type Action struct {
+	Operation string
+	Resource  string
 }
 
-// Sweeper rotates and expires what is due, reporting each action it took even if it then fails.
-type Sweeper interface {
-	Sweep(ctx context.Context, report func(secret.Action)) error
+// Job does what is due, reporting each action it took even if it then fails.
+type Job interface {
+	Run(ctx context.Context, report func(Action)) error
 }
 
 // Recorder writes one audit event; Tick logs a failure rather than retrying, as the action already happened.
@@ -41,11 +38,11 @@ type Clock interface {
 	Now() time.Time
 }
 
-// Worker sweeps once per interval while active and audits each action. Activate and Deactivate alternate, never
-// concurrently: the seal lifecycle calls them under its own lock.
+// Worker runs its jobs once per interval while active and audits each action. Activate and Deactivate alternate,
+// never concurrently: the seal lifecycle calls them under its own lock.
 type Worker struct {
 	interval time.Duration
-	sweeper  Sweeper
+	jobs     []Job
 	recorder Recorder
 	clock    Clock
 	logger   *slog.Logger
@@ -53,37 +50,44 @@ type Worker struct {
 	done     chan struct{}
 }
 
-// New returns an inactive Worker; a non-positive interval is ErrInvalidInterval.
-func New(interval time.Duration, sweeper Sweeper, recorder Recorder, clock Clock, logger *slog.Logger) (*Worker, error) {
+// New returns an inactive Worker running jobs in order; a non-positive interval is ErrInvalidInterval.
+func New(interval time.Duration, jobs []Job, recorder Recorder, clock Clock, logger *slog.Logger) (*Worker, error) {
 	if interval <= 0 {
 		return nil, ErrInvalidInterval
 	}
-	return &Worker{interval: interval, sweeper: sweeper, recorder: recorder, clock: clock, logger: logger}, nil
+	return &Worker{interval: interval, jobs: jobs, recorder: recorder, clock: clock, logger: logger}, nil
 }
 
-// Tick runs one sweep and records an event per action; failures are logged, since no caller is waiting on a tick.
+// Tick runs every job and records an event per action; failures are logged, since no caller is waiting on a tick.
 func (w *Worker) Tick(ctx context.Context) {
-	// Not cancelled with the sweep: what it did before a deactivate still happened. Each sink bounds its own write.
+	// Not cancelled with the jobs: what they did before a deactivate still happened. Each sink bounds its own write.
 	recordCtx := context.WithoutCancel(ctx)
-	// One ID per tick, so the trail groups what one sweep did.
+	// One ID per tick, so the trail groups what all its jobs did.
 	id := rand.Text()
-	// Recorded as each action happens, so a deactivate waits on one record at most, not on the whole sweep's.
-	err := w.sweeper.Sweep(ctx, func(action secret.Action) {
+	// Recorded as each action happens, so a deactivate waits on one record at most, not on a whole job's.
+	report := func(action Action) {
 		event := audit.Event{
 			Time:      w.clock.Now(),
 			RequestID: id,
 			Kind:      audit.KindLifecycle,
 			Principal: principal,
-			Route:     operations[action.Kind],
-			Path:      secretResource + action.Path,
+			Route:     action.Operation,
+			Path:      action.Resource,
 		}
 		// Logged, not retried: the action has already happened.
 		if err := w.recorder.Record(recordCtx, event); err != nil {
 			w.logger.Error("lifecycle audit failed", "route", event.Route, "path", event.Path, "error", err)
 		}
-	})
-	if err != nil {
-		w.logger.Error("lifecycle sweep failed", "error", err)
+	}
+	for _, job := range w.jobs {
+		// A job may scan the whole store before it first checks ctx, so a deactivate must not wait on one.
+		if ctx.Err() != nil {
+			return
+		}
+		// Logged and passed over: one job's failure says nothing about the next one's records.
+		if err := job.Run(ctx, report); err != nil {
+			w.logger.Error("lifecycle job failed", "error", err)
+		}
 	}
 }
 
@@ -114,7 +118,7 @@ func (w *Worker) Deactivate() {
 	if w.cancel == nil {
 		return
 	}
-	// Cancel before waiting: a tick in flight stops at its next path instead of finishing the sweep.
+	// Cancel before waiting: a tick in flight stops at its next item instead of finishing its jobs.
 	w.cancel()
 	<-w.done
 	w.cancel, w.done = nil, nil

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/barrier"
 	"github.com/dimitrijegasic/seal-gate/internal/identity"
@@ -21,7 +23,7 @@ type tokenRepository struct {
 var _ identity.TokenRepository = (*tokenRepository)(nil)
 
 const (
-	tokenRecordVersion = 1
+	tokenRecordVersion = 2
 	// Every barrier key starts with its domain's prefix,
 	// never sys/, so no path reaches the system records.
 	tokenPrefix = "tokens/"
@@ -29,18 +31,20 @@ const (
 
 // tokenRecord is the stored layout; it changes only with its version. The hash is the key, not a field.
 type tokenRecord struct {
-	Version  int    `json:"version"`
-	EntityID string `json:"entity_id"`
+	Version   int       `json:"version"`
+	EntityID  string    `json:"entity_id"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func tokenKey(hash [sha256.Size]byte) string {
 	return tokenPrefix + hex.EncodeToString(hash[:])
 }
 
-func (r *tokenRepository) Put(ctx context.Context, hash [sha256.Size]byte, entityID string) error {
+func (r *tokenRepository) Put(ctx context.Context, hash [sha256.Size]byte, stored identity.StoredToken) error {
 	record := tokenRecord{
-		Version:  tokenRecordVersion,
-		EntityID: entityID,
+		Version:   tokenRecordVersion,
+		EntityID:  stored.EntityID,
+		ExpiresAt: stored.ExpiresAt,
 	}
 	encoded, err := json.Marshal(record)
 	if err != nil {
@@ -57,26 +61,58 @@ func (r *tokenRepository) Put(ctx context.Context, hash [sha256.Size]byte, entit
 	return nil
 }
 
-func (r *tokenRepository) Get(ctx context.Context, hash [sha256.Size]byte) (string, error) {
+func (r *tokenRepository) Get(ctx context.Context, hash [sha256.Size]byte) (identity.StoredToken, error) {
 	encoded, err := r.encrypted.Get(ctx, tokenKey(hash))
 	if errors.Is(err, barrier.ErrSealed) {
-		return "", identity.ErrSealed
+		return identity.StoredToken{}, identity.ErrSealed
 	}
 	if errors.Is(err, storage.ErrNotFound) {
-		return "", identity.ErrInvalidToken
+		return identity.StoredToken{}, identity.ErrInvalidToken
 	}
 	if err != nil {
-		return "", fmt.Errorf("repository: %w", err)
+		return identity.StoredToken{}, fmt.Errorf("repository: %w", err)
 	}
 
 	var record tokenRecord
 	// The decode error is replaced, not wrapped: as a *json.SyntaxError it would
 	// reach the client as a 400 about its own request body.
 	if err := json.Unmarshal(encoded, &record); err != nil {
-		return "", identity.ErrUnreadableToken
+		return identity.StoredToken{}, identity.ErrUnreadableToken
 	}
 	if record.Version != tokenRecordVersion {
-		return "", identity.ErrUnreadableToken
+		return identity.StoredToken{}, identity.ErrUnreadableToken
 	}
-	return record.EntityID, nil
+	return identity.StoredToken{EntityID: record.EntityID, ExpiresAt: record.ExpiresAt}, nil
+}
+
+func (r *tokenRepository) List(ctx context.Context) ([][sha256.Size]byte, error) {
+	keys, err := r.encrypted.List(ctx, tokenPrefix)
+	if errors.Is(err, barrier.ErrSealed) {
+		return nil, identity.ErrSealed
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository: %w", err)
+	}
+
+	hashes := make([][sha256.Size]byte, 0, len(keys))
+	for _, key := range keys {
+		raw, err := hex.DecodeString(strings.TrimPrefix(key, tokenPrefix))
+		// A key that is not a hash is skipped: no Put writes one, and failing List on it would block every purge.
+		if err != nil || len(raw) != sha256.Size {
+			continue
+		}
+		hashes = append(hashes, [sha256.Size]byte(raw))
+	}
+	return hashes, nil
+}
+
+func (r *tokenRepository) Delete(ctx context.Context, hash [sha256.Size]byte) error {
+	err := r.encrypted.Delete(ctx, tokenKey(hash))
+	if errors.Is(err, barrier.ErrSealed) {
+		return identity.ErrSealed
+	}
+	if err != nil {
+		return fmt.Errorf("repository: %w", err)
+	}
+	return nil
 }

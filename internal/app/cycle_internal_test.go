@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -159,7 +160,7 @@ func newInstance(t *testing.T, backend storage.Backend, clock *fakeClock, interv
 	infra.clock = clock
 
 	auditor, path := fileAuditor(t, infra.logger)
-	services, err := buildServices(infra, buildRepositories(backend, infra), auditor, interval)
+	services, err := buildServices(infra, buildRepositories(backend, infra), auditor, interval, config.TokenConfig{DefaultTTL: time.Hour, MaxTTL: 24 * time.Hour})
 	if err != nil {
 		t.Fatalf("buildServices: %v", err)
 	}
@@ -383,6 +384,12 @@ func createEntity(t *testing.T, h http.Handler) string {
 // and returns a token for that entity.
 func entityToken(t *testing.T, h http.Handler, rules string) string {
 	t.Helper()
+	return entityTokenWith(t, h, rules, "")
+}
+
+// entityTokenWith is entityToken that sends body with the token request.
+func entityTokenWith(t *testing.T, h http.Handler, rules, body string) string {
+	t.Helper()
 	if rec := send(t, h, http.MethodPut, "/v1/policies/dev", `{"rules":`+rules+`}`); rec.Code != http.StatusNoContent {
 		t.Fatalf("put policy: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
 	}
@@ -399,9 +406,19 @@ func entityToken(t *testing.T, h http.Handler, rules string) string {
 	}
 	entityID := decode[createEntityBody](t, rec).ID
 
-	rec = send(t, h, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+	rec = send(t, h, http.MethodPost, "/v1/entities/"+entityID+"/tokens", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("issue token: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	return decode[tokenBody](t, rec).Token
+}
+
+// rotateToken rotates the token h sends and returns the new one.
+func rotateToken(t *testing.T, h http.Handler) string {
+	t.Helper()
+	rec := send(t, h, http.MethodPost, "/v1/auth/token/rotate", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("rotate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
 	}
 	return decode[tokenBody](t, rec).Token
 }
@@ -599,6 +616,78 @@ func TestSealLifecycle(t *testing.T) {
 		want := "c2VjcmV0" // "secret"
 		putSecret(t, router, "dev/a", want)
 		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a token issued with a ttl stops working after it", func(t *testing.T) {
+		router, clock := clockedUnsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		// A minute, so a token given the hour-long default would still work.
+		token := entityTokenWith(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`, `{"ttl":60}`)
+		clock.advance(time.Minute)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a token is refused once the clock passes its expiry", func(t *testing.T) {
+		router, clock := clockedUnsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+		if rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/dev/a", ""); rec.Code != http.StatusOK {
+			t.Fatalf("read before expiry: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		clock.advance(time.Hour)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a revoked token gets 401 at once", func(t *testing.T) {
+		router := unsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		token := withToken(router, entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`))
+		getSecret(t, token, "dev/a")
+		if rec := send(t, token, http.MethodPost, "/v1/auth/token/revoke", ""); rec.Code != http.StatusNoContent {
+			t.Fatalf("revoke: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		rec := send(t, token, http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a rotated token's old value gets 401", func(t *testing.T) {
+		router := unsealed(t)
+		putSecret(t, router, "dev/a", "c2VjcmV0")
+		old := withToken(router, entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`))
+		rotateToken(t, old)
+
+		rec := send(t, old, http.MethodGet, "/v1/secrets/dev/a", "")
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
+		}
+	})
+
+	t.Run("a rotated token's new value works", func(t *testing.T) {
+		router := unsealed(t)
+		want := "c2VjcmV0" // "secret"
+		putSecret(t, router, "dev/a", want)
+		old := withToken(router, entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`))
+
+		token := rotateToken(t, old)
 
 		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
 			t.Errorf("got %q, want %q", got, want)
@@ -903,6 +992,24 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("after a tick past its expiry, a token is gone from storage", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Hour)
+		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+		raw, err := base64.StdEncoding.DecodeString(token)
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+		hash := sha256.Sum256(raw)
+		clock.advance(time.Hour)
+
+		i.services.worker.Tick(t.Context())
+
+		// The API already refuses an expired token; only storage shows the purge deleted it.
+		if _, err := i.backend.Get(t.Context(), "tokens/"+hex.EncodeToString(hash[:])); !errors.Is(err, storage.ErrNotFound) {
+			t.Errorf("got %v, want %v", err, storage.ErrNotFound)
+		}
+	})
+
 	t.Run("a tick's actions are in the audit file", func(t *testing.T) {
 		i, router, clock := unsealedInstance(t, time.Hour)
 		rec := send(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
@@ -915,6 +1022,29 @@ func TestSealLifecycle(t *testing.T) {
 		}
 		clock.advance(time.Hour)
 		want := map[string]string{"secrets/db/password": "rotate secret", "secrets/db/user": "expire secret"}
+
+		i.services.worker.Tick(t.Context())
+
+		written, err := os.ReadFile(i.auditPath)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		got := make(map[string]string)
+		for _, line := range auditLines(t, written) {
+			if line.Kind == "lifecycle" {
+				got[line.Path] = line.Route
+			}
+		}
+		if !maps.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a tick's token purge is in the audit file without the token", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Hour)
+		entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+		clock.advance(time.Hour)
+		want := map[string]string{"": "expire token"}
 
 		i.services.worker.Tick(t.Context())
 
@@ -960,11 +1090,11 @@ func TestSealLifecycle(t *testing.T) {
 			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
 		}
 
-		// A tick while sealed fails its sweep on the missing key, and logs it.
+		// A tick while sealed fails its jobs on the missing key, and logs it.
 		time.Sleep(20 * time.Millisecond)
 
-		if got := i.log.String(); strings.Contains(got, "lifecycle sweep failed") {
-			t.Errorf("got %q, want no sweep after seal", got)
+		if got := i.log.String(); strings.Contains(got, "lifecycle job failed") {
+			t.Errorf("got %q, want no job after seal", got)
 		}
 	})
 

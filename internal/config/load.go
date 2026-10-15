@@ -31,5 +31,9 @@ func Load() (*Config, error) {
 		Lifecycle: LifecycleConfig{
 			Interval: time.Minute,
 		},
+		Token: TokenConfig{
+			DefaultTTL: time.Hour,
+			MaxTTL:     24 * time.Hour,
+		},
 	}, nil
 }

@@ -12,13 +12,17 @@ var (
 	// ErrUnreadableEntity reports a stored entity that does not decode, or whose policies or groups are invalid.
 	ErrUnreadableEntity = errors.New("identity: unreadable entity")
 	ErrSealed           = errors.New("identity: sealed")
-	// ErrInvalidToken reports a token that is missing, unknown, or names a deleted entity; callers cannot tell which.
+	// ErrInvalidToken reports a token that is missing, unknown, expired, or names a deleted entity; callers cannot tell which.
 	ErrInvalidToken = errors.New("identity: invalid token")
 	// ErrUnreadableToken reports a stored token record that does not decode or names an invalid entity ID.
 	ErrUnreadableToken = errors.New("identity: unreadable token")
 	ErrGroupNotFound   = errors.New("identity: group not found")
+	// ErrInvalidTTL reports a token TTL that is negative or above the configured maximum.
+	ErrInvalidTTL = errors.New("identity: invalid TTL")
 	// ErrUnreadableGroup reports a stored group that does not decode, or whose policy names are invalid.
 	ErrUnreadableGroup = errors.New("identity: unreadable group")
+	// ErrRootToken reports a revoke or rotate of the root token, which is never stored and so can be neither.
+	ErrRootToken = errors.New("identity: root token cannot be revoked or rotated")
 )
 
 // ours reports the sentinels a repository may return, which pass up unwrapped so their prefix is not doubled.

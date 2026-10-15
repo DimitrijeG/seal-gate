@@ -123,7 +123,7 @@ func TestAuthorization(t *testing.T) {
 		s, entities, _, _, authorizer := newAuthorizedTokenService(t)
 		entities.entities[hexID] = identity.Entity{ID: hexID}
 
-		_, _ = s.CreateToken(t.Context(), principal, hexID)
+		_, _, _ = s.CreateToken(t.Context(), principal, hexID, 0)
 
 		if want := "system/entities/" + hexID + "/tokens"; authorizer.resource != want {
 			t.Errorf("resource: got %q, want %q", authorizer.resource, want)
@@ -138,7 +138,7 @@ func TestAuthorization(t *testing.T) {
 		entities.entities[hexID] = identity.Entity{ID: hexID}
 		authorizer.err = authorization.ErrDenied
 
-		_, err := s.CreateToken(t.Context(), principal, hexID)
+		_, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
 
 		if !errors.Is(err, authorization.ErrDenied) {
 			t.Errorf("err: got %v, want %v", err, authorization.ErrDenied)
@@ -156,7 +156,7 @@ func TestAuthorization(t *testing.T) {
 		want := identity.Entity{ID: hexID}
 		entities.entities[hexID] = want
 		token := bytes.Repeat([]byte{1}, 32)
-		tokens.tokens[sha256.Sum256(token)] = hexID
+		tokens.tokens[sha256.Sum256(token)] = liveToken(hexID)
 		// Resolve runs before any principal exists, so no decision may stand in its way.
 		authorizer.err = authorization.ErrDenied
 
@@ -314,7 +314,7 @@ func TestAuthorization(t *testing.T) {
 			call func(ctx context.Context, entities *identity.EntityService, tokens *identity.TokenService) error
 		}{
 			{"issue token", func(ctx context.Context, _ *identity.EntityService, tokens *identity.TokenService) error {
-				_, err := tokens.CreateToken(ctx, principal, "../dev")
+				_, _, err := tokens.CreateToken(ctx, principal, "../dev", 0)
 				return err
 			}},
 			{"get", func(ctx context.Context, entities *identity.EntityService, _ *identity.TokenService) error {
@@ -332,7 +332,7 @@ func TestAuthorization(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				entities, _, _, authorizer := newAuthorizedEntityService(t)
-				tokens := identity.NewTokenService(&fakeTokens{}, entities, &fakeRandom{}, authorizer)
+				tokens := identity.NewTokenService(&fakeTokens{}, entities, fakeRoot{}, &fakeRandom{}, authorizer, newFakeClock(), tokenLimits)
 				authorizer.err = authorization.ErrDenied
 
 				err := tt.call(t.Context(), entities, tokens)

@@ -11,6 +11,7 @@ type Config struct {
 	HTTP      HTTPConfig
 	Audit     AuditConfig
 	Lifecycle LifecycleConfig
+	Token     TokenConfig
 }
 
 // LoggerConfig sets the level, as slog.Level parses it ("info", "warn+2"), and the format ("text", else JSON).
@@ -55,4 +56,10 @@ type AuditSinkConfig struct {
 // LifecycleConfig is how often the lifecycle worker sweeps for secrets to rotate or expire.
 type LifecycleConfig struct {
 	Interval time.Duration
+}
+
+// TokenConfig is how long an issued token lives when no TTL is asked for, and the longest TTL that may be.
+type TokenConfig struct {
+	DefaultTTL time.Duration
+	MaxTTL     time.Duration
 }

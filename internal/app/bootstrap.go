@@ -83,7 +83,7 @@ func buildRepositories(backend storage.Backend, infra *infrastructure) *reposito
 	}
 }
 
-func buildServices(infra *infrastructure, repositories *repositories, auditor lifecycle.Recorder, interval time.Duration) (*services, error) {
+func buildServices(infra *infrastructure, repositories *repositories, auditor lifecycle.Recorder, interval time.Duration, tokens config.TokenConfig) (*services, error) {
 	keyring := system.NewKeyring(
 		repositories.set.System,
 		infra.shamir,
@@ -94,13 +94,17 @@ func buildServices(infra *infrastructure, repositories *repositories, auditor li
 
 	policy := authorization.New(repositories.set.Policy)
 	sec := secret.New(repositories.set.Secret, infra.random, policy, infra.clock)
-	worker, err := lifecycle.New(interval, sec, auditor, infra.clock, infra.logger)
+	entity := identity.NewEntityService(repositories.set.Entity, infra.random, policy)
+	// The worker purges tokens, the token service asks sys about the root token, and sys activates the worker. sys is
+	// assigned below, safely: IsRoot is only called on a request, after this returns.
+	var sys *system.Service
+	root := rootCheckerFunc(func(token []byte) bool { return sys.IsRoot(token) })
+	token := identity.NewTokenService(repositories.set.Token, entity, root, infra.random, policy, infra.clock, identity.TokenTTL{Default: tokens.DefaultTTL, Max: tokens.MaxTTL})
+	worker, err := lifecycle.New(interval, []lifecycle.Job{secretSweep{sec}, tokenPurge{token}}, auditor, infra.clock, infra.logger)
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
-	sys := system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
-	entity := identity.NewEntityService(repositories.set.Entity, infra.random, policy)
-	token := identity.NewTokenService(repositories.set.Token, entity, infra.random, policy)
+	sys = system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)
 
 	return &services{

@@ -275,18 +275,35 @@ func (f *fakeEntity) DeleteEntity(ctx context.Context, principal authorization.P
 type fakeToken struct {
 	principal authorization.Principal
 	entityID  string
+	ttl       time.Duration
 	token     []byte
+	expiresAt time.Time
+	revoked   []byte // a copy of the token RevokeToken got
+	rotated   []byte // a copy of the token RotateToken got
 	err       error
 }
 
-func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Principal, entityID string) ([]byte, error) {
+func (f *fakeToken) RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error) {
+	f.rotated = bytes.Clone(token)
+	f.ttl = ttl
+	return f.token, f.expiresAt, f.err
+}
+
+func (f *fakeToken) CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error) {
 	f.principal = principal
 	f.entityID = entityID
-	return f.token, f.err
+	f.ttl = ttl
+	return f.token, f.expiresAt, f.err
+}
+
+func (f *fakeToken) RevokeToken(ctx context.Context, token []byte) error {
+	f.revoked = bytes.Clone(token)
+	return f.err
 }
 
 type tokenBody struct {
-	Token string `json:"token"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type groupBody struct {
@@ -337,6 +354,22 @@ const bearer = "Bearer AQID"
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	return doWithAuthorization(t, h, bearer, method, path, body)
+}
+
+// sender is do or one of its variants, for tables that vary how a request is sent.
+type sender func(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder
+
+// doUnknownLength is do with the body's length unknown, as a chunked or HTTP/2 request without Content-Length arrives.
+func doUnknownLength(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", contentTypeJSON)
+	req.Header.Set("Authorization", bearer)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
 }
 
 // doWithAuthorization sends authorization as the Authorization header, or none if it is empty.
