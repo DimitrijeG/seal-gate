@@ -12,7 +12,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
 )
 
-func newRootKey(t *testing.T) []byte {
+func newRootKey(t testing.TB) []byte {
 	t.Helper()
 	key, err := cryptography.CryptoRandom{}.Bytes(32)
 	if err != nil {
@@ -21,7 +21,7 @@ func newRootKey(t *testing.T) []byte {
 	return key
 }
 
-func newBarrier(t *testing.T, rootKey []byte) (*barrier.AEADBarrier, storage.Backend, *cryptography.KeyHolder) {
+func newBarrier(t testing.TB, rootKey []byte) (*barrier.AEADBarrier, storage.Backend, *cryptography.KeyHolder) {
 	t.Helper()
 
 	if rootKey == nil {
@@ -42,7 +42,7 @@ func newBarrier(t *testing.T, rootKey []byte) (*barrier.AEADBarrier, storage.Bac
 	return barrier.NewAEADBarrier(physical, keys, cipher), physical, keys
 }
 
-func mustGet(t *testing.T, b *barrier.AEADBarrier, key string) []byte {
+func mustGet(t testing.TB, b *barrier.AEADBarrier, key string) []byte {
 	t.Helper()
 
 	got, err := b.Get(t.Context(), key)
@@ -52,7 +52,7 @@ func mustGet(t *testing.T, b *barrier.AEADBarrier, key string) []byte {
 	return got
 }
 
-func mustPut(t *testing.T, b *barrier.AEADBarrier, key string, value []byte) {
+func mustPut(t testing.TB, b *barrier.AEADBarrier, key string, value []byte) {
 	t.Helper()
 
 	if err := b.Put(t.Context(), key, value); err != nil {
@@ -362,6 +362,38 @@ func TestBarrier(t *testing.T) {
 
 		if !errors.Is(err, cryptography.ErrDecryptionFailed) {
 			t.Errorf("Get: got %v, want %v", err, cryptography.ErrDecryptionFailed)
+		}
+	})
+}
+
+// BenchmarkBarrier runs over memory, so the difference from memory's own benchmark is the barrier's cost.
+func BenchmarkBarrier(b *testing.B) {
+	key := "bench/key"
+	value := bytes.Repeat([]byte{0xab}, 1<<10)
+
+	b.Run("Put", func(b *testing.B) {
+		br, _, _ := newBarrier(b, nil)
+		b.ReportAllocs()
+
+		for b.Loop() {
+			if err := br.Put(b.Context(), key, value); err != nil {
+				b.Fatalf("Put: %v", err)
+			}
+		}
+	})
+
+	b.Run("Get", func(b *testing.B) {
+		br, _, _ := newBarrier(b, nil)
+		mustPut(b, br, key, value)
+		if got := mustGet(b, br, key); !bytes.Equal(got, value) {
+			b.Fatalf("Get: got %x, want %x", got, value)
+		}
+		b.ReportAllocs()
+
+		for b.Loop() {
+			if _, err := br.Get(b.Context(), key); err != nil {
+				b.Fatalf("Get: %v", err)
+			}
 		}
 	})
 }
