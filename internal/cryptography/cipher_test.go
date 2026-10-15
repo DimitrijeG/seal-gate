@@ -9,7 +9,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/cryptography"
 )
 
-func newCipher(t *testing.T) cryptography.Cipher {
+func newCipher(t testing.TB) cryptography.Cipher {
 	t.Helper()
 	c, err := cryptography.NewAEADCipher("aes-256-gcm")
 	if err != nil {
@@ -18,7 +18,7 @@ func newCipher(t *testing.T) cryptography.Cipher {
 	return c
 }
 
-func newKey(t *testing.T) []byte {
+func newKey(t testing.TB) []byte {
 	t.Helper()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -210,6 +210,59 @@ func TestAES256GCM(t *testing.T) {
 		_, err := cryptography.NewAEADCipher("unsupported")
 		if !errors.Is(err, cryptography.ErrUnsupportedAlgorithm) {
 			t.Errorf("got %v, want %v", err, cryptography.ErrUnsupportedAlgorithm)
+		}
+	})
+}
+
+// cipherSizes are a wrapped key, a typical secret, and the largest secret value.
+var cipherSizes = []struct {
+	name string
+	size int
+}{
+	{"32B", 32},
+	{"1KiB", 1 << 10},
+	{"64KiB", 64 << 10},
+}
+
+func BenchmarkAES256GCM(b *testing.B) {
+	ad := []byte("secret/db/password")
+
+	b.Run("Encrypt", func(b *testing.B) {
+		for _, tt := range cipherSizes {
+			b.Run(tt.name, func(b *testing.B) {
+				c := newCipher(b)
+				key := newKey(b)
+				plaintext := make([]byte, tt.size)
+				b.SetBytes(int64(tt.size))
+				b.ReportAllocs()
+
+				for b.Loop() {
+					if _, err := c.Encrypt(key, plaintext, ad); err != nil {
+						b.Fatalf("Encrypt: %v", err)
+					}
+				}
+			})
+		}
+	})
+
+	b.Run("Decrypt", func(b *testing.B) {
+		for _, tt := range cipherSizes {
+			b.Run(tt.name, func(b *testing.B) {
+				c := newCipher(b)
+				key := newKey(b)
+				ciphertext, err := c.Encrypt(key, make([]byte, tt.size), ad)
+				if err != nil {
+					b.Fatalf("Encrypt: %v", err)
+				}
+				b.SetBytes(int64(tt.size))
+				b.ReportAllocs()
+
+				for b.Loop() {
+					if _, err := c.Decrypt(key, ciphertext, ad); err != nil {
+						b.Fatalf("Decrypt: %v", err)
+					}
+				}
+			})
 		}
 	})
 }

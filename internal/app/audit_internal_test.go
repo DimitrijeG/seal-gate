@@ -14,7 +14,7 @@ import (
 )
 
 // newAuditApplication returns an Application whose closers run at cleanup, and a directory for its sinks.
-func newAuditApplication(t *testing.T) (*Application, string) {
+func newAuditApplication(t testing.TB) (*Application, string) {
 	t.Helper()
 	// Made first: cleanups run in reverse, and an open file blocks its removal on Windows.
 	dir := t.TempDir()

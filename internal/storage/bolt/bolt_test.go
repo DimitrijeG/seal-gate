@@ -15,6 +15,10 @@ func TestConformance(t *testing.T) {
 	conformance.Run(t, openBackend)
 }
 
+func BenchmarkBackend(b *testing.B) {
+	conformance.Benchmark(b, openBackend)
+}
+
 func TestBackend(t *testing.T) {
 	t.Run("the backend names itself bolt", func(t *testing.T) {
 		b := openBackend(t)
@@ -58,13 +62,13 @@ func TestBackend(t *testing.T) {
 	})
 }
 
-func openBackend(t *testing.T) storage.Backend {
+func openBackend(t testing.TB) storage.Backend {
 	t.Helper()
 	return openBackendAt(t, filepath.Join(t.TempDir(), "test.db"))
 }
 
 // openBackendAt closes the backend on cleanup; closing it earlier is harmless.
-func openBackendAt(t *testing.T, path string) storage.Backend {
+func openBackendAt(t testing.TB, path string) storage.Backend {
 	t.Helper()
 	b, err := bolt.Open(path)
 	if err != nil {
