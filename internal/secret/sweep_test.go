@@ -24,15 +24,18 @@ func storedEntry(expiresAt time.Time) secret.Entry {
 	return secret.Entry{Value: []byte("secret"), TTL: time.Hour, ExpiresAt: expiresAt}
 }
 
-// sweep runs one sweep that is expected to succeed and returns its report.
+// sweep runs one sweep that is expected to succeed and returns what it reported.
 func sweep(t *testing.T, s *secret.Service) []secret.Action {
 	t.Helper()
-	actions, err := s.Sweep(t.Context())
-	if err != nil {
+	var actions []secret.Action
+	if err := s.Sweep(t.Context(), func(a secret.Action) { actions = append(actions, a) }); err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
 	return actions
 }
+
+// ignore is a report for sweeps whose actions the test does not check.
+func ignore(secret.Action) {}
 
 func TestSweep(t *testing.T) {
 	t.Run("a due generated secret is rotated", func(t *testing.T) {
@@ -151,7 +154,7 @@ func TestSweep(t *testing.T) {
 		}
 	})
 
-	t.Run("the report lists each path with its action", func(t *testing.T) {
+	t.Run("each path is reported with its action", func(t *testing.T) {
 		f := newFixture(t)
 		past := f.clock.now.Add(-time.Minute)
 		f.repo.secrets["api/key"] = generatedEntry(past)
@@ -166,6 +169,55 @@ func TestSweep(t *testing.T) {
 		}
 		if !slices.Equal(got, want) {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a path is reported before the next is swept", func(t *testing.T) {
+		f := newFixture(t)
+		past := f.clock.now.Add(-time.Minute)
+		f.repo.secrets["api/key"] = storedEntry(past)
+		f.repo.secrets["db/password"] = storedEntry(past)
+
+		var reported, pending bool
+		err := f.service.Sweep(t.Context(), func(a secret.Action) {
+			if a.Path == "api/key" {
+				reported = true
+				_, pending = f.repo.secrets["db/password"]
+			}
+		})
+		if err != nil {
+			t.Fatalf("Sweep: %v", err)
+		}
+
+		if !reported {
+			t.Fatal("got no report for api/key")
+		}
+		if !pending {
+			t.Error("got db/password swept before api/key was reported")
+		}
+	})
+
+	t.Run("a report does not hold up writes", func(t *testing.T) {
+		f := newFixture(t)
+		f.repo.secrets["db/password"] = storedEntry(f.clock.now.Add(-time.Minute))
+		ctx := t.Context()
+
+		done := make(chan error, 1)
+		go func() {
+			done <- f.service.Sweep(ctx, func(secret.Action) {
+				if err := f.service.Put(ctx, principal, "api/key", []byte("new"), 0); err != nil {
+					t.Errorf("Put: %v", err)
+				}
+			})
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Sweep: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("put still waiting, want the report made outside the lock")
 		}
 	})
 
@@ -185,7 +237,7 @@ func TestSweep(t *testing.T) {
 		listErr := errors.New("disk failed")
 		f.repo.err = listErr
 
-		_, err := f.service.Sweep(t.Context())
+		err := f.service.Sweep(t.Context(), ignore)
 
 		if !errors.Is(err, listErr) {
 			t.Errorf("got %v, want %v", err, listErr)
@@ -198,7 +250,7 @@ func TestSweep(t *testing.T) {
 		getErr := errors.New("disk failed")
 		f.repo.getErr = getErr
 
-		_, err := f.service.Sweep(t.Context())
+		err := f.service.Sweep(t.Context(), ignore)
 
 		if !errors.Is(err, getErr) {
 			t.Errorf("got %v, want %v", err, getErr)
@@ -223,7 +275,7 @@ func TestSweep(t *testing.T) {
 				f.repo.secrets["db/password"] = tt.entry(f.clock.now.Add(-time.Minute))
 				tt.fail(f)
 
-				_, err := f.service.Sweep(t.Context())
+				err := f.service.Sweep(t.Context(), ignore)
 
 				if !errors.Is(err, failure) {
 					t.Errorf("got %v, want %v", err, failure)
@@ -240,7 +292,7 @@ func TestSweep(t *testing.T) {
 		repo.secrets["db/password"] = storedEntry(past)
 		s := secret.New(repo, f.random, f.authorizer, f.clock)
 
-		_, _ = s.Sweep(t.Context())
+		_ = s.Sweep(t.Context(), ignore)
 
 		if _, ok := repo.secrets["db/password"]; ok {
 			t.Error("db/password still stored")
@@ -264,7 +316,7 @@ func TestSweep(t *testing.T) {
 				f.repo.secrets["db/password"] = tt.entry(f.clock.now.Add(-time.Minute))
 				tt.fail(f)
 
-				_, err := f.service.Sweep(t.Context())
+				err := f.service.Sweep(t.Context(), ignore)
 
 				if err == nil || !strings.Contains(err.Error(), "db/password") {
 					t.Errorf("got %v, want the path named", err)
@@ -278,7 +330,7 @@ func TestSweep(t *testing.T) {
 		repo := &ghostRepository{fakeRepository: f.repo, ghost: "db/gone"}
 		s := secret.New(repo, f.random, f.authorizer, f.clock)
 
-		if _, err := s.Sweep(t.Context()); err != nil {
+		if err := s.Sweep(t.Context(), ignore); err != nil {
 			t.Errorf("got %v, want nil", err)
 		}
 	})
@@ -301,7 +353,7 @@ func TestSweep(t *testing.T) {
 				f.repo.secrets["db/password"] = tt.entry(f.clock.now.Add(-time.Minute))
 				tt.seal(f)
 
-				_, err := f.service.Sweep(t.Context())
+				err := f.service.Sweep(t.Context(), ignore)
 
 				if !errors.Is(err, secret.ErrSealed) {
 					t.Errorf("got %v, want %v", err, secret.ErrSealed)
@@ -317,7 +369,7 @@ func TestSweep(t *testing.T) {
 		f.repo.secrets["db/password"] = storedEntry(past)
 		f.repo.getErr = secret.ErrSealed
 
-		_, _ = f.service.Sweep(t.Context())
+		_ = f.service.Sweep(t.Context(), ignore)
 
 		// One list, then one read: the second path is never tried.
 		if f.repo.calls != 2 {
@@ -331,7 +383,7 @@ func TestSweep(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		_, _ = f.service.Sweep(ctx)
+		_ = f.service.Sweep(ctx, ignore)
 
 		if _, ok := f.repo.secrets["db/password"]; !ok {
 			t.Error("secret deleted after cancellation")
@@ -344,7 +396,7 @@ func TestSweep(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		_, err := f.service.Sweep(ctx)
+		err := f.service.Sweep(ctx, ignore)
 
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("got %v, want %v", err, context.Canceled)
@@ -371,7 +423,7 @@ func TestSweep(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Go(func() {
-					if _, err := s.Sweep(ctx); err != nil {
+					if err := s.Sweep(ctx, ignore); err != nil {
 						t.Errorf("Sweep: %v", err)
 					}
 				})

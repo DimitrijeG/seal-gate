@@ -17,8 +17,8 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/secret"
 )
 
-// fakeSweeper returns actions and err from every sweep and counts them; swept, when set, is sent each sweep's
-// context without blocking. Locked: the worker sweeps from its own goroutine.
+// fakeSweeper reports actions and returns err from every sweep and counts them; swept, when set, is sent each
+// sweep's context without blocking. Locked: the worker sweeps from its own goroutine.
 type fakeSweeper struct {
 	mu      sync.Mutex
 	actions []secret.Action
@@ -27,7 +27,7 @@ type fakeSweeper struct {
 	swept   chan context.Context
 }
 
-func (s *fakeSweeper) Sweep(ctx context.Context) ([]secret.Action, error) {
+func (s *fakeSweeper) Sweep(ctx context.Context, report func(secret.Action)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
@@ -35,7 +35,10 @@ func (s *fakeSweeper) Sweep(ctx context.Context) ([]secret.Action, error) {
 	case s.swept <- ctx:
 	default:
 	}
-	return s.actions, s.err
+	for _, action := range s.actions {
+		report(action)
+	}
+	return s.err
 }
 
 func (s *fakeSweeper) sweeps() int {
@@ -219,6 +222,22 @@ func TestWorker(t *testing.T) {
 		f.worker.Tick(ctx)
 
 		if got := len(f.recorder.events); got != 1 {
+			t.Errorf("got %d events, want 1", got)
+		}
+	})
+
+	t.Run("a cancel during a record stops the sweep after it", func(t *testing.T) {
+		f := newFixture(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		recorder := &cancellingRecorder{cancel: cancel}
+		worker, err := lifecycle.New(time.Minute, &cancellableSweeper{actions: twoActions}, recorder, f.clock, slog.New(slog.DiscardHandler))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+
+		worker.Tick(ctx)
+
+		if got := len(recorder.events); got != 1 {
 			t.Errorf("got %d events, want 1", got)
 		}
 	})
@@ -407,7 +426,7 @@ type blockingSweeper struct {
 	finished atomic.Bool
 }
 
-func (s *blockingSweeper) Sweep(ctx context.Context) ([]secret.Action, error) {
+func (s *blockingSweeper) Sweep(ctx context.Context, _ func(secret.Action)) error {
 	first := false
 	s.once.Do(func() {
 		first = true
@@ -419,7 +438,7 @@ func (s *blockingSweeper) Sweep(ctx context.Context) ([]secret.Action, error) {
 		time.Sleep(10 * time.Millisecond)
 		s.finished.Store(true)
 	}
-	return nil, ctx.Err()
+	return ctx.Err()
 }
 
 // newWorkerOver returns a worker on a 1 ms interval over sweeper.
@@ -462,6 +481,32 @@ func awaitSweep(t *testing.T, sweeper *fakeSweeper) context.Context {
 		t.Fatal("got no sweep, want one")
 		return nil
 	}
+}
+
+// cancellableSweeper reports its actions one at a time, stopping at the first one its context is done before.
+type cancellableSweeper struct {
+	actions []secret.Action
+}
+
+func (s *cancellableSweeper) Sweep(ctx context.Context, report func(secret.Action)) error {
+	for _, action := range s.actions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		report(action)
+	}
+	return nil
+}
+
+// cancellingRecorder keeps every event and calls cancel on each, as a deactivate arriving mid-record would.
+type cancellingRecorder struct {
+	fakeRecorder
+	cancel context.CancelFunc
+}
+
+func (r *cancellingRecorder) Record(ctx context.Context, event audit.Event) error {
+	defer r.cancel()
+	return r.fakeRecorder.Record(ctx, event)
 }
 
 // failFirstRecorder fails its first record and keeps the rest.

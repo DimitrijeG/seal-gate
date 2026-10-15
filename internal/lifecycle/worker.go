@@ -26,9 +26,9 @@ var operations = map[secret.ActionKind]string{
 	secret.ActionExpired: "expire secret",
 }
 
-// Sweeper rotates and expires what is due, reporting what it did even beside an error.
+// Sweeper rotates and expires what is due, reporting each action it took even if it then fails.
 type Sweeper interface {
-	Sweep(ctx context.Context) ([]secret.Action, error)
+	Sweep(ctx context.Context, report func(secret.Action)) error
 }
 
 // Recorder writes one audit event; Tick logs a failure rather than retrying, as the action already happened.
@@ -63,12 +63,12 @@ func New(interval time.Duration, sweeper Sweeper, recorder Recorder, clock Clock
 
 // Tick runs one sweep and records an event per action; failures are logged, since no caller is waiting on a tick.
 func (w *Worker) Tick(ctx context.Context) {
-	actions, err := w.sweeper.Sweep(ctx)
 	// Not cancelled with the sweep: what it did before a deactivate still happened. Each sink bounds its own write.
 	recordCtx := context.WithoutCancel(ctx)
 	// One ID per tick, so the trail groups what one sweep did.
 	id := rand.Text()
-	for _, action := range actions {
+	// Recorded as each action happens, so a deactivate waits on one record at most, not on the whole sweep's.
+	err := w.sweeper.Sweep(ctx, func(action secret.Action) {
 		event := audit.Event{
 			Time:      w.clock.Now(),
 			RequestID: id,
@@ -81,8 +81,7 @@ func (w *Worker) Tick(ctx context.Context) {
 		if err := w.recorder.Record(recordCtx, event); err != nil {
 			w.logger.Error("lifecycle audit failed", "route", event.Route, "path", event.Path, "error", err)
 		}
-	}
-	// After the records: what the sweep did before failing still happened.
+	})
 	if err != nil {
 		w.logger.Error("lifecycle sweep failed", "error", err)
 	}

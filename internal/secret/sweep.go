@@ -21,37 +21,37 @@ type Action struct {
 	Kind ActionKind
 }
 
-// Sweep rotates every generated secret that is due and deletes every expired stored one. A failed path does not stop
-// it: failures return joined beside what was done, except ErrSealed, which ends the sweep at once.
-func (s *Service) Sweep(ctx context.Context) ([]Action, error) {
+// Sweep rotates every generated secret that is due and deletes every expired stored one, reporting each as it is done.
+// A failed path does not stop it: failures return joined, except ErrSealed, which ends the sweep at once.
+func (s *Service) Sweep(ctx context.Context, report func(Action)) error {
 	now := s.clock.Now()
 	paths, err := s.repo.List(ctx, "")
 	switch {
 	case errors.Is(err, ErrSealed):
-		return nil, err
+		return err
 	case err != nil:
-		return nil, fmt.Errorf("secret: %w", err)
+		return fmt.Errorf("secret: %w", err)
 	}
 
-	var actions []Action
 	var failures []error
 	for _, path := range paths {
 		if err := ctx.Err(); err != nil {
-			return actions, fmt.Errorf("secret: %w", err)
+			return fmt.Errorf("secret: %w", err)
 		}
 		action, acted, err := s.sweepPath(ctx, path, now)
 		if errors.Is(err, ErrSealed) {
-			return actions, err
+			return err
 		}
 		if err != nil {
 			failures = append(failures, err)
 			continue
 		}
+		// After sweepPath has unlocked, so a slow report never blocks writes.
 		if acted {
-			actions = append(actions, action)
+			report(action)
 		}
 	}
-	return actions, errors.Join(failures...)
+	return errors.Join(failures...)
 }
 
 // sweepPath rotates or deletes path if it is due, reporting whether it did; a path gone since List is skipped.
