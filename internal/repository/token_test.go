@@ -23,6 +23,15 @@ var (
 	tokenExpiry = time.Date(2026, 10, 1, 13, 30, 0, 0, time.UTC)
 )
 
+// sameHashes reports whether got and want hold the same hashes, in any order.
+func sameHashes(got, want [][sha256.Size]byte) bool {
+	byBytes := func(a, b [sha256.Size]byte) int { return bytes.Compare(a[:], b[:]) }
+	got, want = slices.Clone(got), slices.Clone(want)
+	slices.SortFunc(got, byBytes)
+	slices.SortFunc(want, byBytes)
+	return slices.Equal(got, want)
+}
+
 func TestTokenRepository(t *testing.T) {
 	t.Run("a stored token reads back as its entity ID", func(t *testing.T) {
 		f := newBarrierFixture(t)
@@ -166,6 +175,79 @@ func TestTokenRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("every stored token's hash is listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Token
+		other := sha256.Sum256([]byte("other token"))
+		want := [][sha256.Size]byte{tokenHash, other}
+		for _, hash := range want {
+			if err := repo.Put(t.Context(), hash, identity.StoredToken{EntityID: entityID}); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+		}
+
+		got, err := repo.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !sameHashes(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
+	t.Run("keys that are not tokens are not listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		want := [][sha256.Size]byte{tokenHash}
+		if err := f.set.Token.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := f.encrypted.Put(t.Context(), "entities/"+entityID, []byte("{}")); err != nil {
+			t.Fatalf("barrier Put: %v", err)
+		}
+
+		got, err := f.set.Token.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !sameHashes(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
+	t.Run("a key under tokens/ that is not a hash is skipped", func(t *testing.T) {
+		tests := []struct {
+			name string
+			key  string
+		}{
+			{"not hex", "tokens/not-a-hash"},
+			{"hex of the wrong length", "tokens/abcd"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				f := newBarrierFixture(t)
+				want := [][sha256.Size]byte{tokenHash}
+				if err := f.set.Token.Put(t.Context(), tokenHash, identity.StoredToken{EntityID: entityID}); err != nil {
+					t.Fatalf("Put: %v", err)
+				}
+				if err := f.encrypted.Put(t.Context(), tt.key, []byte("{}")); err != nil {
+					t.Fatalf("barrier Put: %v", err)
+				}
+
+				got, err := f.set.Token.List(t.Context())
+				if err != nil {
+					t.Fatalf("List: %v", err)
+				}
+
+				if !sameHashes(got, want) {
+					t.Errorf("got %x, want %x", got, want)
+				}
+			})
+		}
+	})
+
 	t.Run("a tampered token is not reported as missing", func(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Token
@@ -257,6 +339,10 @@ func TestTokenRepository(t *testing.T) {
 			}},
 			{"delete", func(t *testing.T, set *repository.Set) error {
 				return set.Token.Delete(t.Context(), tokenHash)
+			}},
+			{"list", func(t *testing.T, set *repository.Set) error {
+				_, err := set.Token.List(t.Context())
+				return err
 			}},
 		}
 

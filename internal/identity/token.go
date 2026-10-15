@@ -17,6 +17,10 @@ type StoredToken struct {
 	ExpiresAt time.Time
 }
 
+func (t StoredToken) expired(now time.Time) bool {
+	return !now.Before(t.ExpiresAt)
+}
+
 // TokenRepository stores tokens by their hashes; it never sees a token. Get returns ErrInvalidToken
 // for a missing hash and ErrUnreadableToken for a corrupt record; Delete of a missing hash is nil; every method
 // returns ErrSealed while sealed.
@@ -24,6 +28,7 @@ type TokenRepository interface {
 	Put(ctx context.Context, hash [sha256.Size]byte, stored StoredToken) error
 	Get(ctx context.Context, hash [sha256.Size]byte) (StoredToken, error)
 	Delete(ctx context.Context, hash [sha256.Size]byte) error
+	List(ctx context.Context) ([][sha256.Size]byte, error)
 }
 
 // TokenService issues tokens to entities and resolves them back; it stores only their hashes.
@@ -148,6 +153,63 @@ func (s *TokenService) RotateToken(ctx context.Context, token []byte, ttl time.D
 	return rotated, expiresAt, nil
 }
 
+// PurgeExpired deletes every token expired at the clock's time, calling report once per token deleted. A failed token
+// does not stop it: failures return joined, except ErrSealed and a cancelled ctx, which end it at once.
+func (s *TokenService) PurgeExpired(ctx context.Context, report func()) error {
+	now := s.clock.Now()
+	hashes, err := s.tokens.List(ctx)
+	switch {
+	case err != nil && !ours(err):
+		return fmt.Errorf("identity: %w", err)
+	case err != nil:
+		return err
+	}
+
+	var failures []error
+	for _, hash := range hashes {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("identity: %w", err)
+		}
+		purged, err := s.purgeToken(ctx, hash, now)
+		if errors.Is(err, ErrSealed) {
+			return err
+		}
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if purged {
+			report()
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// purgeToken deletes the token stored under hash if it expired by now, reporting whether it did; one gone since List is skipped.
+func (s *TokenService) purgeToken(ctx context.Context, hash [sha256.Size]byte, now time.Time) (bool, error) {
+	stored, err := s.tokens.Get(ctx, hash)
+	switch {
+	case errors.Is(err, ErrInvalidToken):
+		return false, nil
+	case err != nil && !ours(err):
+		return false, fmt.Errorf("identity: %w", err)
+	case err != nil:
+		return false, err
+	}
+	if !stored.expired(now) {
+		return false, nil
+	}
+
+	err = s.tokens.Delete(ctx, hash)
+	switch {
+	case err != nil && !ours(err):
+		return false, fmt.Errorf("identity: %w", err)
+	case err != nil:
+		return false, err
+	}
+	return true, nil
+}
+
 // Resolve returns the entity a token authenticates as; a missing, unknown, expired or orphaned token is ErrInvalidToken alike.
 func (s *TokenService) Resolve(ctx context.Context, token []byte) (Entity, error) {
 	if len(token) != tokenBytes {
@@ -165,7 +227,7 @@ func (s *TokenService) Resolve(ctx context.Context, token []byte) (Entity, error
 	if !validID(stored.EntityID) {
 		return Entity{}, ErrUnreadableToken
 	}
-	if !s.clock.Now().Before(stored.ExpiresAt) {
+	if stored.expired(s.clock.Now()) {
 		return Entity{}, ErrInvalidToken
 	}
 

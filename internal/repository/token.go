@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/barrier"
@@ -82,6 +83,27 @@ func (r *tokenRepository) Get(ctx context.Context, hash [sha256.Size]byte) (iden
 		return identity.StoredToken{}, identity.ErrUnreadableToken
 	}
 	return identity.StoredToken{EntityID: record.EntityID, ExpiresAt: record.ExpiresAt}, nil
+}
+
+func (r *tokenRepository) List(ctx context.Context) ([][sha256.Size]byte, error) {
+	keys, err := r.encrypted.List(ctx, tokenPrefix)
+	if errors.Is(err, barrier.ErrSealed) {
+		return nil, identity.ErrSealed
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository: %w", err)
+	}
+
+	hashes := make([][sha256.Size]byte, 0, len(keys))
+	for _, key := range keys {
+		raw, err := hex.DecodeString(strings.TrimPrefix(key, tokenPrefix))
+		// A key that is not a hash is skipped: no Put writes one, and failing List on it would block every purge.
+		if err != nil || len(raw) != sha256.Size {
+			continue
+		}
+		hashes = append(hashes, [sha256.Size]byte(raw))
+	}
+	return hashes, nil
 }
 
 func (r *tokenRepository) Delete(ctx context.Context, hash [sha256.Size]byte) error {
