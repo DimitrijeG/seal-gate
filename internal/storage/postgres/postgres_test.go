@@ -98,6 +98,30 @@ func TestBackend(t *testing.T) {
 		}
 	})
 
+	t.Run("opening an unparseable URL fails as invalid", func(t *testing.T) {
+		b, err := postgres.Open(t.Context(), "postgres://seal@127.0.0.1:notaport/db")
+		if err == nil {
+			b.Close()
+		}
+		if !errors.Is(err, postgres.ErrInvalidURL) {
+			t.Errorf("got %v, want %v", err, postgres.ErrInvalidURL)
+		}
+	})
+
+	t.Run("opening an unreachable server fails as unable to connect", func(t *testing.T) {
+		// Bounded: a refused dial can be slow, and this must not hang CI.
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
+		b, err := postgres.Open(ctx, "postgres://seal@127.0.0.1:1/db?sslmode=disable")
+		if err == nil {
+			b.Close()
+		}
+		if !errors.Is(err, postgres.ErrConnect) {
+			t.Errorf("got %v, want %v", err, postgres.ErrConnect)
+		}
+	})
+
 	t.Run("the password in the URL is not in the error", func(t *testing.T) {
 		// Random, so no literal looks like a committed credential.
 		password := rand.Text()
@@ -107,6 +131,9 @@ func TestBackend(t *testing.T) {
 		}{
 			{"an unparseable URL", "postgres://seal:" + password + "@127.0.0.1:notaport/db?sslmode=disable"},
 			{"an unreachable server", "postgres://seal:" + password + "@127.0.0.1:1/db?sslmode=disable"},
+			{"a URL cut off after the password", "postgres://seal:" + password},
+			// The parser splits at the last @, so the password's tail becomes the host.
+			{"an unescaped @ in the password", "postgres://seal:head@" + password + "@127.0.0.1:1/db?sslmode=disable"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

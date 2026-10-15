@@ -207,6 +207,14 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 				[]string{"\xfe", "\xff", "\xff\x01"},
 				[]string{"\xff", "\xff\x01"},
 			},
+			{"a prefix ending in an invalid UTF-8 byte", "a\xfe",
+				[]string{"a\xfe", "a\xfe\x00", "a\xff", "b"},
+				[]string{"a\xfe", "a\xfe\x00"},
+			},
+			{"a prefix ending in U+FFFD", "a�",
+				[]string{"a�", "a�\x00", "a\xef\xbf\xbe", "b"},
+				[]string{"a�", "a�\x00"},
+			},
 		}
 
 		for _, tt := range tests {

@@ -25,7 +25,8 @@ func SchemaURL(t *testing.T) string {
 
 	conn, err := pgx.Connect(t.Context(), server)
 	if err != nil {
-		t.Fatalf("Connect: %v", err)
+		// Not err: pgx's redaction misses malformed URLs, so it can print the password.
+		t.Fatalf("Connect: cannot reach the server %s names", variable)
 	}
 	defer conn.Close(context.Background())
 
@@ -54,7 +55,7 @@ func dropSchema(t *testing.T, server, schema string) {
 
 	conn, err := pgx.Connect(ctx, server)
 	if err != nil {
-		t.Errorf("Connect: %v", err)
+		t.Errorf("Connect: cannot reach the server %s names to drop %s", variable, schema)
 		return
 	}
 	defer conn.Close(ctx)

@@ -12,6 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var (
+	ErrInvalidURL = errors.New("postgres: invalid connection URL")
+	ErrConnect    = errors.New("postgres: cannot connect or create the table")
+)
+
 // Backend is a storage.Backend over one Postgres table.
 type Backend struct {
 	pool *pgxpool.Pool
@@ -21,15 +26,19 @@ var _ storage.Backend = (*Backend)(nil)
 
 // Open connects to the server at connString and creates the table if it is missing.
 func Open(ctx context.Context, connString string) (*Backend, error) {
+	// pgx's errors are dropped here: its redaction misses malformed URLs, which then leak the password.
 	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
-		return nil, fmt.Errorf("postgres: %w", err)
+		return nil, ErrInvalidURL
 	}
 
 	_, err = pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS seal_gate (key bytea PRIMARY KEY, value bytea NOT NULL)`)
 	if err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("postgres: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("postgres: %w", ctxErr)
+		}
+		return nil, ErrConnect
 	}
 	return &Backend{pool: pool}, nil
 }
@@ -101,7 +110,11 @@ func (b *Backend) List(ctx context.Context, prefix string) ([]string, error) {
 // successor returns the first byte string after every key starting with prefix, or nil when no such bound exists.
 func successor(prefix []byte) []byte {
 	// A trailing 0xff cannot be incremented, so it is dropped and the byte before it carries.
-	end := bytes.TrimRight(prefix, "\xff")
+	// Not bytes.TrimRight: it trims runes, so "\xff" would also match any invalid byte and U+FFFD.
+	end := prefix
+	for len(end) > 0 && end[len(end)-1] == 0xff {
+		end = end[:len(end)-1]
+	}
 	if len(end) == 0 {
 		return nil
 	}
