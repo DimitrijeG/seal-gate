@@ -28,5 +28,8 @@ func Load() (*Config, error) {
 				{Type: "file", Path: "seal-gate-audit.log", Required: true, Timeout: time.Second},
 			},
 		},
+		Lifecycle: LifecycleConfig{
+			Interval: time.Minute,
+		},
 	}, nil
 }

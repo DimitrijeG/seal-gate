@@ -15,12 +15,14 @@ var (
 	ErrInvalidTimeout = errors.New("audit: destination timeout must be positive")
 )
 
-// Kind says whether an event records a request before it runs or its response after.
+// Kind says whether an event records a request before it runs, its response after, or an action the lifecycle
+// worker took with no request behind it.
 type Kind string
 
 const (
-	KindRequest  Kind = "request"
-	KindResponse Kind = "response"
+	KindRequest   Kind = "request"
+	KindResponse  Kind = "response"
+	KindLifecycle Kind = "lifecycle"
 )
 
 // Event is one audit record. Its fields are request metadata only, so no secret, token or share can be put in one.

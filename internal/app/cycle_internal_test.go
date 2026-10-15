@@ -2,10 +2,13 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -14,10 +17,12 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/audit"
+	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/config"
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
@@ -75,10 +80,23 @@ type createGroupBody struct {
 	ID string `json:"id"`
 }
 
-// fakeClock reads as now; tests move time by assigning it.
-type fakeClock struct{ now time.Time }
+// fakeClock reads as now; tests move it with advance. Locked, as the worker's ticker reads it from its own goroutine.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
 
-func (c *fakeClock) Now() time.Time { return c.now }
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
 
 func newFakeClock() *fakeClock {
 	return &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
@@ -112,6 +130,23 @@ func auditedRouterOver(t *testing.T, backend storage.Backend) (http.Handler, str
 // clockedRouterOver is auditedRouterOver on a clock the caller holds.
 func clockedRouterOver(t *testing.T, backend storage.Backend, clock *fakeClock) (http.Handler, string) {
 	t.Helper()
+	i := newInstance(t, backend, clock, time.Hour)
+	return i.router, i.auditPath
+}
+
+// instance is one wired service: its router, the file it audits to, its services, and what it logged.
+type instance struct {
+	router    http.Handler
+	auditPath string
+	services  *services
+	backend   storage.Backend
+	log       *bytes.Buffer
+}
+
+// newInstance wires the real components over backend and clock, sweeping every interval while unsealed.
+// The cycle tests that drive Tick pass an hour, so the ticker never runs beside them.
+func newInstance(t *testing.T, backend storage.Backend, clock *fakeClock, interval time.Duration) instance {
+	t.Helper()
 	infra, err := buildInfrastructure(&config.Config{
 		Logger: config.LoggerConfig{Level: "error", Format: "text"},
 		Crypto: config.CryptoConfig{AEADAlgorithm: "aes-256-gcm"},
@@ -119,10 +154,38 @@ func clockedRouterOver(t *testing.T, backend storage.Backend, clock *fakeClock) 
 	if err != nil {
 		t.Fatalf("buildInfrastructure: %v", err)
 	}
+	log := &bytes.Buffer{}
+	infra.logger = slog.New(slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelError}))
 	infra.clock = clock
-	services := buildServices(infra, buildRepositories(backend, infra))
 
-	// A real file sink, so every cycle test is audited as production is.
+	auditor, path := fileAuditor(t, infra.logger)
+	services, err := buildServices(infra, buildRepositories(backend, infra), auditor, interval)
+	if err != nil {
+		t.Fatalf("buildServices: %v", err)
+	}
+	// Registered after the sink's, so it runs first: the worker stops before its audit file closes.
+	t.Cleanup(func() {
+		if err := services.system.Seal(context.Background(), authorization.NewRootPrincipal()); err != nil {
+			t.Errorf("Seal: %v", err)
+		}
+	})
+	return instance{router: buildRouter(services, infra, auditor), auditPath: path, services: services, backend: backend, log: log}
+}
+
+// unsealedInstance is newInstance over a fresh memory backend, initialized and unsealed, with a router sending
+// its root token.
+func unsealedInstance(t *testing.T, interval time.Duration) (instance, http.Handler, *fakeClock) {
+	t.Helper()
+	clock := newFakeClock()
+	i := newInstance(t, memory.New(), clock, interval)
+	body := initialize(t, i.router)
+	unsealAll(t, i.router, body.Shares)
+	return i, withToken(i.router, body.RootToken), clock
+}
+
+// fileAuditor records to a real file sink, so every cycle test is audited as production is, and returns its path.
+func fileAuditor(t *testing.T, logger *slog.Logger) (*audit.FanOut, string) {
+	t.Helper()
 	a, dir := newAuditApplication(t)
 	path := filepath.Join(dir, "audit.log")
 	destinations, err := a.auditDestinations(auditConfig(config.AuditSinkConfig{
@@ -131,11 +194,11 @@ func clockedRouterOver(t *testing.T, backend storage.Backend, clock *fakeClock) 
 	if err != nil {
 		t.Fatalf("auditDestinations: %v", err)
 	}
-	auditor, err := audit.New(infra.logger, destinations...)
+	auditor, err := audit.New(logger, destinations...)
 	if err != nil {
 		t.Fatalf("audit.New: %v", err)
 	}
-	return buildRouter(services, infra, auditor), path
+	return auditor, path
 }
 
 // auditLine is one line of the audit file, as an operator reads it.
@@ -144,6 +207,7 @@ type auditLine struct {
 	Kind      string `json:"kind"`
 	Principal string `json:"principal"`
 	Route     string `json:"route"`
+	Path      string `json:"path"`
 	Status    int    `json:"status"`
 }
 
@@ -778,7 +842,7 @@ func TestSealLifecycle(t *testing.T) {
 			t.Fatalf("put: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
 		}
 		getSecret(t, router, "db/password")
-		clock.now = clock.now.Add(time.Hour)
+		clock.advance(time.Hour)
 
 		rec = send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
 
@@ -793,8 +857,8 @@ func TestSealLifecycle(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("generate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
 		}
-		clock.now = clock.now.Add(90 * time.Minute)
-		want := clock.now.Add(time.Hour).Format(time.RFC3339)
+		clock.advance(90 * time.Minute)
+		want := clock.Now().Add(time.Hour).Format(time.RFC3339)
 		rotateSecret(t, router, "db/password")
 
 		rec = send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
@@ -804,6 +868,103 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got := decode[secretBody](t, rec).ExpiresAt; got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("after a tick past its expiry, a generated secret reads a new value", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Hour)
+		rec := send(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("generate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		generated := decode[secretBody](t, rec).Value
+		clock.advance(time.Hour)
+
+		i.services.worker.Tick(t.Context())
+
+		if got := getSecret(t, router, "db/password"); got == generated {
+			t.Errorf("got %q, want a value other than %q", got, generated)
+		}
+	})
+
+	t.Run("after a tick past its expiry, a stored secret is gone from storage", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Hour)
+		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0","ttl":3600}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		clock.advance(time.Hour)
+
+		i.services.worker.Tick(t.Context())
+
+		// The API already reads an expired secret as not found; only storage shows the sweep deleted it.
+		if _, err := i.backend.Get(t.Context(), "secrets/db/password"); !errors.Is(err, storage.ErrNotFound) {
+			t.Errorf("got %v, want %v", err, storage.ErrNotFound)
+		}
+	})
+
+	t.Run("a tick's actions are in the audit file", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Hour)
+		rec := send(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("generate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		rec = send(t, router, http.MethodPut, "/v1/secrets/db/user", `{"value":"c2VjcmV0","ttl":3600}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		clock.advance(time.Hour)
+		want := map[string]string{"secrets/db/password": "rotate secret", "secrets/db/user": "expire secret"}
+
+		i.services.worker.Tick(t.Context())
+
+		written, err := os.ReadFile(i.auditPath)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		got := make(map[string]string)
+		for _, line := range auditLines(t, written) {
+			if line.Kind == "lifecycle" {
+				got[line.Path] = line.Route
+			}
+		}
+		if !maps.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("the worker ticks on its own while unsealed", func(t *testing.T) {
+		i, router, clock := unsealedInstance(t, time.Millisecond)
+		rec := send(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"c2VjcmV0","ttl":3600}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("put: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		clock.advance(time.Hour)
+
+		deadline := time.Now().Add(time.Second)
+		for {
+			_, err := i.backend.Get(t.Context(), "secrets/db/password")
+			if errors.Is(err, storage.ErrNotFound) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("got %v after a second, want %v", err, storage.ErrNotFound)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	})
+
+	t.Run("after seal, no tick runs", func(t *testing.T) {
+		i, router, _ := unsealedInstance(t, time.Millisecond)
+		if rec := send(t, router, http.MethodPost, "/v1/sys/seal", ""); rec.Code != http.StatusNoContent {
+			t.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		// A tick while sealed fails its sweep on the missing key, and logs it.
+		time.Sleep(20 * time.Millisecond)
+
+		if got := i.log.String(); strings.Contains(got, "lifecycle sweep failed") {
+			t.Errorf("got %q, want no sweep after seal", got)
 		}
 	})
 

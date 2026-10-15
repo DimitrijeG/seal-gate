@@ -39,6 +39,13 @@ type ActiveKeyController interface {
 	IsInstalled() bool
 }
 
+// UnsealedResource runs only while the key is installed; ctx bounds activation alone. Both methods run under Service's
+// lock, so nothing they start or wait for may call back into Service.
+type UnsealedResource interface {
+	Activate(ctx context.Context) error
+	Deactivate()
+}
+
 // Clock is the service's time source, so tests can fix it.
 type Clock interface {
 	Now() time.Time

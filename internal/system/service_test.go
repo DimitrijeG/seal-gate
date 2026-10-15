@@ -79,11 +79,11 @@ var (
 func newService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.KeyHolder) {
 	t.Helper()
 	repo := &fakeRepository{}
-	s, keys := newServiceWith(t, repo, &fakeAuthorizer{})
+	s, keys := newServiceWith(t, repo, &fakeAuthorizer{}, &fakeResource{})
 	return s, repo, keys
 }
 
-func newServiceWith(t *testing.T, repo system.Repository, authorizer authorization.Authorizer) (*system.Service, *cryptography.KeyHolder) {
+func newServiceWith(t *testing.T, repo system.Repository, authorizer authorization.Authorizer, resource *fakeResource) (*system.Service, *cryptography.KeyHolder) {
 	t.Helper()
 	keys := cryptography.NewKeyHolder()
 	random := cryptography.CryptoRandom{}
@@ -95,8 +95,9 @@ func newServiceWith(t *testing.T, repo system.Repository, authorizer authorizati
 	wrapper := cryptography.NewKeyWrapper(cipher)
 
 	keyring := system.NewKeyring(repo, sharing, wrapper, random, keys)
+	resource.active = keys
 	clock := fakeClock{now: initTime}
-	return system.NewService(keyring, clock, authorizer), keys
+	return system.NewService(keyring, clock, authorizer, resource), keys
 }
 
 func initialize(t *testing.T, s *system.Service) system.InitResult {
@@ -122,7 +123,7 @@ func newUnsealedService(t *testing.T) (*system.Service, *cryptography.KeyHolder)
 
 func newUnsealedServiceWith(t *testing.T, authorizer authorization.Authorizer) (*system.Service, *cryptography.KeyHolder) {
 	t.Helper()
-	s, keys := newServiceWith(t, &fakeRepository{}, authorizer)
+	s, keys := newServiceWith(t, &fakeRepository{}, authorizer, &fakeResource{})
 	unsealWith(t, s, initialize(t, s).Shares[:sealConfig.Threshold])
 	return s, keys
 }
@@ -204,7 +205,7 @@ func TestService(t *testing.T) {
 
 	t.Run("two concurrent inits: one succeeds, the other is refused", func(t *testing.T) {
 		repo := newRacingRepository()
-		s, _ := newServiceWith(t, repo, &fakeAuthorizer{})
+		s, _ := newServiceWith(t, repo, &fakeAuthorizer{}, &fakeResource{})
 
 		var errs [2]error
 		var wg sync.WaitGroup
