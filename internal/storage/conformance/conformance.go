@@ -1,9 +1,11 @@
-// Package conformance defines what a working storage backend is: every backend runs its suite.
+// Package conformance defines what a working storage backend is and how one is measured:
+// every backend runs its suite and its benchmarks.
 package conformance
 
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -12,7 +14,7 @@ import (
 
 // Run checks a backend against the storage contract; a backend that passes it is supported.
 // open is called for every subtest, table rows included; it returns an empty backend and owns its cleanup, through t.Cleanup.
-func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
+func Run(t *testing.T, open func(t testing.TB) storage.Backend) {
 	t.Run("getting a key that was never put returns ErrNotFound", func(t *testing.T) {
 		key := "non-existent"
 		b := open(t)
@@ -275,7 +277,64 @@ func Run(t *testing.T, open func(t *testing.T) storage.Backend) {
 	})
 }
 
-func mustPut(t *testing.T, b storage.Backend, key string, value []byte) {
+// Benchmark measures Put, Get and List on a backend with a 1 KiB value; open is Run's factory.
+func Benchmark(b *testing.B, open func(t testing.TB) storage.Backend) {
+	key := "bench/key"
+	value := bytes.Repeat([]byte{0xab}, 1<<10)
+
+	b.Run("Put", func(b *testing.B) {
+		s := open(b)
+		b.ReportAllocs()
+
+		// One key rewritten, so the store does not grow across iterations.
+		for b.Loop() {
+			if err := s.Put(b.Context(), key, value); err != nil {
+				b.Fatalf("Put: %v", err)
+			}
+		}
+	})
+
+	b.Run("Get", func(b *testing.B) {
+		s := open(b)
+		mustPut(b, s, key, value)
+		if got := mustGet(b, s, key); !bytes.Equal(got, value) {
+			b.Fatalf("Get: got %x, want %x", got, value)
+		}
+		b.ReportAllocs()
+
+		for b.Loop() {
+			if _, err := s.Get(b.Context(), key); err != nil {
+				b.Fatalf("Get: %v", err)
+			}
+		}
+	})
+
+	b.Run("List", func(b *testing.B) {
+		s := open(b)
+		// As many keys outside the prefix as in it, so the backend must filter.
+		const listed = 100
+		for i := range listed {
+			mustPut(b, s, fmt.Sprintf("bench/%03d", i), []byte("v"))
+			mustPut(b, s, fmt.Sprintf("other/%03d", i), []byte("v"))
+		}
+		keys, err := s.List(b.Context(), "bench/")
+		if err != nil {
+			b.Fatalf("List: %v", err)
+		}
+		if len(keys) != listed {
+			b.Fatalf("List: got %d keys, want %d", len(keys), listed)
+		}
+		b.ReportAllocs()
+
+		for b.Loop() {
+			if _, err := s.List(b.Context(), "bench/"); err != nil {
+				b.Fatalf("List: %v", err)
+			}
+		}
+	})
+}
+
+func mustPut(t testing.TB, b storage.Backend, key string, value []byte) {
 	t.Helper()
 
 	if err := b.Put(t.Context(), key, value); err != nil {
@@ -283,7 +342,7 @@ func mustPut(t *testing.T, b storage.Backend, key string, value []byte) {
 	}
 }
 
-func mustGet(t *testing.T, b storage.Backend, key string) []byte {
+func mustGet(t testing.TB, b storage.Backend, key string) []byte {
 	t.Helper()
 
 	got, err := b.Get(t.Context(), key)

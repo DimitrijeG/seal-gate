@@ -9,9 +9,11 @@ import (
 )
 
 func TestConformance(t *testing.T) {
-	conformance.Run(t, func(*testing.T) storage.Backend {
-		return memory.New()
-	})
+	conformance.Run(t, openBackend)
+}
+
+func BenchmarkBackend(b *testing.B) {
+	conformance.Benchmark(b, openBackend)
 }
 
 func TestBackend(t *testing.T) {
@@ -22,4 +24,8 @@ func TestBackend(t *testing.T) {
 			t.Errorf("got %q, want %q", got, "memory")
 		}
 	})
+}
+
+func openBackend(testing.TB) storage.Backend {
+	return memory.New()
 }

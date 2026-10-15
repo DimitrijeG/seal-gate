@@ -16,7 +16,7 @@ import (
 const variable = "SEAL_GATE_POSTGRES_URL"
 
 // SchemaURL gives each test an empty schema of its own, since packages run in parallel against one server.
-func SchemaURL(t *testing.T) string {
+func SchemaURL(t testing.TB) string {
 	t.Helper()
 	server := os.Getenv(variable)
 	if server == "" {
@@ -49,7 +49,7 @@ func SchemaURL(t *testing.T) string {
 }
 
 // dropSchema runs in cleanup, after t.Context() is cancelled.
-func dropSchema(t *testing.T, server, schema string) {
+func dropSchema(t testing.TB, server, schema string) {
 	t.Helper()
 	ctx := context.Background()
 
