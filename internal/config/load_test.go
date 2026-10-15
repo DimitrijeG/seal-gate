@@ -10,6 +10,9 @@ import (
 
 func TestLoad(t *testing.T) {
 	t.Run("the default config stores in bolt", func(t *testing.T) {
+		// Cleared, so a deployment's variables in the developer's shell cannot change the defaults.
+		t.Setenv("SEAL_GATE_STORAGE_TYPE", "")
+		t.Setenv("SEAL_GATE_STORAGE_URL", "")
 		want := config.StorageConfig{Type: "bolt", Path: "seal-gate.db"}
 
 		cfg, err := config.Load()
@@ -19,6 +22,33 @@ func TestLoad(t *testing.T) {
 
 		if got := cfg.Storage; got != want {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("the environment overrides the storage type", func(t *testing.T) {
+		t.Setenv("SEAL_GATE_STORAGE_TYPE", "postgres")
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		if got, want := cfg.Storage.Type, "postgres"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the environment sets the storage URL", func(t *testing.T) {
+		want := "postgres://seal@db.example/seal"
+		t.Setenv("SEAL_GATE_STORAGE_URL", want)
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		if got := cfg.Storage.URL; got != want {
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 
