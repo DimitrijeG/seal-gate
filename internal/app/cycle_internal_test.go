@@ -147,7 +147,7 @@ type instance struct {
 
 // newInstance wires the real components over backend and clock, sweeping every interval while unsealed.
 // The cycle tests that drive Tick pass an hour, so the ticker never runs beside them.
-func newInstance(t *testing.T, backend storage.Backend, clock *fakeClock, interval time.Duration) instance {
+func newInstance(t testing.TB, backend storage.Backend, clock *fakeClock, interval time.Duration) instance {
 	t.Helper()
 	infra, err := buildInfrastructure(&config.Config{
 		Logger: config.LoggerConfig{Level: "error", Format: "text"},
@@ -186,7 +186,7 @@ func unsealedInstance(t *testing.T, interval time.Duration) (instance, http.Hand
 }
 
 // fileAuditor records to a real file sink, so every cycle test is audited as production is, and returns its path.
-func fileAuditor(t *testing.T, logger *slog.Logger) (*audit.FanOut, string) {
+func fileAuditor(t testing.TB, logger *slog.Logger) (*audit.FanOut, string) {
 	t.Helper()
 	a, dir := newAuditApplication(t)
 	path := filepath.Join(dir, "audit.log")
@@ -263,7 +263,7 @@ func unreadableRecord(t *testing.T, value string) (http.Handler, storage.Backend
 	return routerOver(t, backend), backend
 }
 
-func send(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+func send(t testing.TB, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -273,7 +273,7 @@ func send(t *testing.T, h http.Handler, method, path, body string) *httptest.Res
 	return rec
 }
 
-func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
+func decode[T any](t testing.TB, rec *httptest.ResponseRecorder) T {
 	t.Helper()
 	var v T
 	if err := json.NewDecoder(rec.Body).Decode(&v); err != nil {
@@ -283,7 +283,7 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 // initialize makes a 3-of-5 instance and returns its shares and root token.
-func initialize(t *testing.T, h http.Handler) initBody {
+func initialize(t testing.TB, h http.Handler) initBody {
 	t.Helper()
 	rec := send(t, h, http.MethodPost, "/v1/sys/init", `{"shares":5,"threshold":3}`)
 	if rec.Code != http.StatusOK {
@@ -292,7 +292,7 @@ func initialize(t *testing.T, h http.Handler) initBody {
 	return decode[initBody](t, rec)
 }
 
-func unseal(t *testing.T, h http.Handler, share string) statusBody {
+func unseal(t testing.TB, h http.Handler, share string) statusBody {
 	t.Helper()
 	rec := send(t, h, http.MethodPost, "/v1/sys/unseal", fmt.Sprintf(`{"share":%q}`, share))
 	if rec.Code != http.StatusOK {
@@ -302,7 +302,7 @@ func unseal(t *testing.T, h http.Handler, share string) statusBody {
 }
 
 // unsealAll submits the threshold's worth of shares from initialize.
-func unsealAll(t *testing.T, h http.Handler, shares []string) {
+func unsealAll(t testing.TB, h http.Handler, shares []string) {
 	t.Helper()
 	for _, share := range shares[:3] {
 		unseal(t, h, share)
@@ -336,7 +336,7 @@ func clockedUnsealed(t *testing.T) (http.Handler, *fakeClock) {
 	return withToken(router, body.RootToken), clock
 }
 
-func putSecret(t *testing.T, h http.Handler, path, value string) {
+func putSecret(t testing.TB, h http.Handler, path, value string) {
 	t.Helper()
 	rec := send(t, h, http.MethodPut, "/v1/secrets/"+path, `{"value":"`+value+`"}`)
 	if rec.Code != http.StatusNoContent {
@@ -344,7 +344,7 @@ func putSecret(t *testing.T, h http.Handler, path, value string) {
 	}
 }
 
-func getSecret(t *testing.T, h http.Handler, path string) string {
+func getSecret(t testing.TB, h http.Handler, path string) string {
 	t.Helper()
 	rec := send(t, h, http.MethodGet, "/v1/secrets/"+path, "")
 	if rec.Code != http.StatusOK {
@@ -383,13 +383,13 @@ func createEntity(t *testing.T, h http.Handler) string {
 
 // entityToken has root write policy dev with rules, a group holding it, an entity in the group,
 // and returns a token for that entity.
-func entityToken(t *testing.T, h http.Handler, rules string) string {
+func entityToken(t testing.TB, h http.Handler, rules string) string {
 	t.Helper()
 	return entityTokenWith(t, h, rules, "")
 }
 
 // entityTokenWith is entityToken that sends body with the token request.
-func entityTokenWith(t *testing.T, h http.Handler, rules, body string) string {
+func entityTokenWith(t testing.TB, h http.Handler, rules, body string) string {
 	t.Helper()
 	if rec := send(t, h, http.MethodPut, "/v1/policies/dev", `{"rules":`+rules+`}`); rec.Code != http.StatusNoContent {
 		t.Fatalf("put policy: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
@@ -1311,4 +1311,63 @@ func TestSealLifecycle(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+}
+
+// BenchmarkSecretRead reads a 1 KiB secret through the real router, auth and file audit, over memory.
+func BenchmarkSecretRead(b *testing.B) {
+	i := newInstance(b, memory.New(), newFakeClock(), time.Hour)
+	body := initialize(b, i.router)
+	unsealAll(b, i.router, body.Shares)
+	root := withToken(i.router, body.RootToken)
+	want := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x5a}, 1024))
+	putSecret(b, root, "bench/a", want)
+	// Root skips policy evaluation; the entity's token pays for it.
+	readers := []struct {
+		name   string
+		router http.Handler
+	}{
+		{"root", root},
+		{"entity", withToken(i.router, entityToken(b, root, `[{"path":"secrets/bench/*","capabilities":["read"]}]`))},
+	}
+
+	for _, reader := range readers {
+		b.Run(reader.name, func(b *testing.B) {
+			b.ReportAllocs()
+			if got := getSecret(b, reader.router, "bench/a"); got != want {
+				b.Fatalf("got %q, want %q", got, want)
+			}
+
+			for b.Loop() {
+				if rec := send(b, reader.router, http.MethodGet, "/v1/secrets/bench/a", ""); rec.Code != http.StatusOK {
+					b.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkUnseal times the threshold of unseal requests; the seal before each is untimed setup.
+func BenchmarkUnseal(b *testing.B) {
+	i := newInstance(b, memory.New(), newFakeClock(), time.Hour)
+	body := initialize(b, i.router)
+	// Unsealed first: a sealed instance cannot check the root token, so the first seal would be refused.
+	unsealAll(b, i.router, body.Shares)
+	root := withToken(i.router, body.RootToken)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		b.StopTimer()
+		if rec := send(b, root, http.MethodPost, "/v1/sys/seal", ""); rec.Code != http.StatusNoContent {
+			b.Fatalf("seal: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		b.StartTimer()
+
+		var got statusBody
+		for _, share := range body.Shares[:3] {
+			got = unseal(b, i.router, share)
+		}
+		if got.Sealed {
+			b.Fatalf("got %+v, want unsealed", got)
+		}
+	}
 }

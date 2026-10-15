@@ -85,6 +85,15 @@ docker run -d --name seal-gate-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.
 export SEAL_GATE_POSTGRES_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable'
 ```
 
+### Benchmarks
+
+`go test ./...` never runs them. Each one reports allocations; the postgres
+rows need `SEAL_GATE_POSTGRES_URL`, as its tests do, and skip without it:
+
+```sh
+go test -run '^$' -bench . ./...
+```
+
 ### Before opening a PR
 
 ```sh
