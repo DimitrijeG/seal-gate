@@ -8,6 +8,7 @@ import (
 	"github.com/dimitrijegasic/seal-gate/internal/storage"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/bolt"
 	"github.com/dimitrijegasic/seal-gate/internal/storage/memory"
+	"github.com/dimitrijegasic/seal-gate/internal/storage/postgres"
 )
 
 type backendFactory func(ctx context.Context, cfg *config.Config) (storage.Backend, error)
@@ -15,8 +16,9 @@ type backendFactory func(ctx context.Context, cfg *config.Config) (storage.Backe
 // backendFactories keeps backend selection to one lookup instead of a switch
 // repeated wherever a backend is named.
 var backendFactories = map[string]backendFactory{
-	"memory": openMemory,
-	"bolt":   openBolt,
+	"memory":   openMemory,
+	"bolt":     openBolt,
+	"postgres": openPostgres,
 }
 
 func buildStorage(ctx context.Context, cfg *config.Config) (storage.Backend, error) {
@@ -38,6 +40,14 @@ func openMemory(context.Context, *config.Config) (storage.Backend, error) {
 
 func openBolt(_ context.Context, cfg *config.Config) (storage.Backend, error) {
 	backend, err := bolt.Open(cfg.Storage.Path)
+	if err != nil {
+		return nil, err
+	}
+	return backend, nil
+}
+
+func openPostgres(ctx context.Context, cfg *config.Config) (storage.Backend, error) {
+	backend, err := postgres.Open(ctx, cfg.Storage.URL)
 	if err != nil {
 		return nil, err
 	}

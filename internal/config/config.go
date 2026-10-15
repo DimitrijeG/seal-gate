@@ -1,4 +1,4 @@
-// Package config loads and validates typed configuration; it never holds keys, shares, secrets or tokens.
+// Package config loads and validates typed configuration; beyond the storage URL's password, it holds no keys, shares, secrets or tokens.
 package config
 
 import "time"
@@ -20,10 +20,12 @@ type LoggerConfig struct {
 	Format string
 }
 
-// StorageConfig picks the backend ("memory" or "bolt") and, for bolt, its file.
+// StorageConfig picks the backend ("memory", "bolt" or "postgres"), and bolt's file or postgres's connection URL.
 type StorageConfig struct {
 	Type string
 	Path string
+	// URL may carry the database password, so it is never logged or put in an error.
+	URL string
 }
 
 // CryptoConfig names the AEAD that encrypts stored records and wraps the barrier key ("aes-256-gcm").
