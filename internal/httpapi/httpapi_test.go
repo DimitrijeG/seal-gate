@@ -348,6 +348,28 @@ func (f *fakeGroup) DeleteGroup(ctx context.Context, principal authorization.Pri
 	return f.err
 }
 
+type fakeUser struct {
+	principal authorization.Principal // the last principal any method got
+	name      string                  // the last name any method got
+	entityID  string
+	password  string // a copy of the password SetUser got
+	err       error
+}
+
+func (f *fakeUser) SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error {
+	f.principal = principal
+	f.name = name
+	f.entityID = entityID
+	f.password = string(password)
+	return f.err
+}
+
+func (f *fakeUser) DeleteUser(ctx context.Context, principal authorization.Principal, name string) error {
+	f.principal = principal
+	f.name = name
+	return f.err
+}
+
 // bearer authenticates as whatever the router's authenticator decides; AQID is {1, 2, 3}.
 const bearer = "Bearer AQID"
 

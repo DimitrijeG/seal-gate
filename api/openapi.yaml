@@ -38,6 +38,10 @@ tags:
       Operations on the token presented with the request. Holding it is the
       proof, so none needs a capability. Every operation needs the instance
       unsealed.
+  - name: users
+    description: >
+      Usernames with passwords, each logging in as an entity. Every operation
+      needs the instance unsealed.
 
 paths:
   /sys/init:
@@ -738,6 +742,78 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /auth/users/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: >
+          The username: one segment of `[a-z0-9._-]`, not `.` or `..`, at most
+          128 bytes. Lowercase only, so two users cannot differ by case.
+        schema:
+          type: string
+          pattern: "^(?!\\.\\.?$)[a-z0-9._-]+$"
+          maxLength: 128
+        example: alice
+
+    put:
+      operationId: setUser
+      tags: [users]
+      summary: Store a user, replacing any user already under the name.
+      description: >
+        Creates or replaces, password included; the response is the same
+        either way. The name is taken from the path only. Only the password's
+        hash is stored, and it is never returned. Needs `update` on
+        `system/users/<name>`, whether or not the user exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserRequest"
+      responses:
+        "204":
+          description: Stored.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+          description: No entity has the given ID.
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 8192 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete a user.
+      description: >
+        Idempotent: deleting a missing user also succeeds. The entity and its
+        tokens are left as they are. Needs `delete` on `system/users/<name>`.
+      responses:
+        "204":
+          description: Deleted, or there was nothing to delete.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /groups:
     post:
       operationId: createGroup
@@ -1229,6 +1305,22 @@ components:
       properties:
         id:
           $ref: "#/components/schemas/ID"
+      additionalProperties: false
+
+    UserRequest:
+      type: object
+      required: [entity_id, password]
+      properties:
+        entity_id:
+          $ref: "#/components/schemas/ID"
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          description: >
+            As typed, not base64. 1 to 1024 bytes once UTF-8 encoded; the
+            length bounds count bytes, not characters.
       additionalProperties: false
 
     ErrorResponse:

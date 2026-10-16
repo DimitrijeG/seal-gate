@@ -186,6 +186,27 @@ func TestAuthentication(t *testing.T) {
 		}
 	})
 
+	t.Run("a user route without a token is unauthorized", func(t *testing.T) {
+		tests := []struct{ name, method, body string }{
+			{"set", http.MethodPut, aliceJSON},
+			{"delete", http.MethodDelete, ""},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeUser{}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: fake})
+
+				rec := doWithAuthorization(t, router, "", tt.method, "/v1/auth/users/alice", tt.body)
+
+				assertError(t, rec, http.StatusUnauthorized, "missing or invalid token")
+				if fake.name != "" {
+					t.Errorf("got name %q, want none", fake.name)
+				}
+			})
+		}
+	})
+
 	t.Run("the scheme is matched in any case", func(t *testing.T) {
 		fake := &fakeAuthenticator{}
 		router := newRouter(&httpapi.Handlers{Authenticator: fake, Secret: &fakeSecret{}})
