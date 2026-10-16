@@ -48,13 +48,33 @@ jobs:
             exit 1
           fi
 
+      # An explicit bash adds pipefail, so a failing test still fails the step through tee.
       - name: Build, vet and test
+        shell: bash
         env:
           SEAL_GATE_POSTGRES_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
         run: |
           go build ./...
           go vet ./...
-          go test -race ./...
+          go test -race -coverprofile=coverage.out ./... | tee test.out
+
+      # A number to read, not a gate: nothing here compares it to anything.
+      # Each package counts only its own tests, so one without any reads 0%.
+      - name: Coverage summary
+        run: |
+          {
+            echo '| package | coverage |'
+            echo '|---|---|'
+            awk -F'\t' -v module="$(go list -m)/" '/coverage: / {
+              pkg = $2
+              if (index(pkg, module) == 1) pkg = substr(pkg, length(module) + 1)
+              pct = $0
+              sub(/.*coverage: /, "", pct)
+              sub(/ of statements.*/, "", pct)
+              print "| `" pkg "` | " pct " |"
+            }' test.out
+            go tool cover -func=coverage.out | awk '/^total:/ { print "| **total** | **" $NF "** |" }'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Once each, so a broken benchmark fails here; `go test` never runs them.
       - name: Benchmarks
