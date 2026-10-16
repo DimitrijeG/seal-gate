@@ -49,7 +49,7 @@ type EntityService interface {
 	GetEntity(ctx context.Context, principal authorization.Principal, id string) (identity.Entity, error)
 	UpdateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) error
 	DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error
-	ListEntities(ctx context.Context, principal authorization.Principal) ([]string, error)
+	ListEntities(ctx context.Context, principal authorization.Principal) ([]identity.EntitySummary, error)
 }
 
 // TokenService is token issuing, revoking and rotating as the handlers use it.
@@ -65,14 +65,14 @@ type GroupService interface {
 	GetGroup(ctx context.Context, principal authorization.Principal, id string) (identity.Group, error)
 	UpdateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) error
 	DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error
-	ListGroups(ctx context.Context, principal authorization.Principal) ([]string, error)
+	ListGroups(ctx context.Context, principal authorization.Principal) ([]identity.GroupSummary, error)
 }
 
 // UserService is user storage and password login as the handlers use it.
 type UserService interface {
 	SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error
 	DeleteUser(ctx context.Context, principal authorization.Principal, name string) error
-	ListUsers(ctx context.Context, principal authorization.Principal) ([]string, error)
+	ListUsers(ctx context.Context, principal authorization.Principal) ([]identity.UserSummary, error)
 	Login(ctx context.Context, name string, password []byte) ([]byte, time.Time, error)
 }
 

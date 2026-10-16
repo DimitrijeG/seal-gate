@@ -108,6 +108,17 @@ func (r *racingGroups) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// vanishingGroups lists gone as well as what it holds, as if gone were deleted between the List and its Get.
+type vanishingGroups struct {
+	fakeGroups
+	gone string
+}
+
+func (r *vanishingGroups) List(ctx context.Context) ([]string, error) {
+	ids, err := r.fakeGroups.List(ctx)
+	return append(ids, r.gone), err
+}
+
 // racingGroupLists holds the first List, after it has read, until a second List has run or 100 ms pass,
 // so two unguarded creates both scan before either writes.
 type racingGroupLists struct {
@@ -171,12 +182,50 @@ func newAuthorizedGroupService(t *testing.T) (*identity.GroupService, *fakeGroup
 }
 
 func TestGroup(t *testing.T) {
-	t.Run("every stored group's ID is listed", func(t *testing.T) {
+	t.Run("every stored group is listed with its alias", func(t *testing.T) {
 		s, groups, _ := newGroupService(t)
 		other := strings.Repeat("01", 16)
-		groups.groups[hexID] = identity.Group{ID: hexID}
+		groups.groups[hexID] = identity.Group{ID: hexID, Alias: "ops", Policies: []string{"dev"}}
 		groups.groups[other] = identity.Group{ID: other}
-		want := []string{other, hexID}
+		want := []identity.GroupSummary{{ID: other}, {ID: hexID, Alias: "ops"}}
+
+		got, err := s.ListGroups(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListGroups: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("an unreadable group fails the listing", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID, Policies: []string{"dev/ops"}}
+
+		_, err := s.ListGroups(t.Context(), principal)
+
+		if !errors.Is(err, identity.ErrUnreadableGroup) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+		}
+	})
+
+	t.Run("a stored key that is not a group ID fails the listing as unreadable", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups["not-an-id"] = identity.Group{ID: "not-an-id"}
+
+		_, err := s.ListGroups(t.Context(), principal)
+
+		if !errors.Is(err, identity.ErrUnreadableGroup) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+		}
+	})
+
+	t.Run("a group deleted while listed is left out", func(t *testing.T) {
+		groups := &vanishingGroups{fakeGroups: fakeGroups{groups: make(map[string]identity.Group)}, gone: strings.Repeat("01", 16)}
+		groups.groups[hexID] = identity.Group{ID: hexID}
+		s := identity.NewGroupService(groups, &fakeRandom{}, &fakeAuthorizer{})
+		want := []identity.GroupSummary{{ID: hexID}}
 
 		got, err := s.ListGroups(t.Context(), principal)
 		if err != nil {

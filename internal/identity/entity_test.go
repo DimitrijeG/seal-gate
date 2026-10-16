@@ -110,6 +110,17 @@ func (r *racingEntities) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// vanishingEntities lists gone as well as what it holds, as if gone were deleted between the List and its Get.
+type vanishingEntities struct {
+	fakeEntities
+	gone string
+}
+
+func (r *vanishingEntities) List(ctx context.Context) ([]string, error) {
+	ids, err := r.fakeEntities.List(ctx)
+	return append(ids, r.gone), err
+}
+
 // racingLists holds the first List, after it has read, until a second List has run or 100 ms pass,
 // so two unguarded creates both scan before either writes.
 type racingLists struct {
@@ -198,12 +209,50 @@ func newAuthorizedEntityService(t *testing.T) (*identity.EntityService, *fakeEnt
 }
 
 func TestEntity(t *testing.T) {
-	t.Run("every stored entity's ID is listed", func(t *testing.T) {
+	t.Run("every stored entity is listed with its alias", func(t *testing.T) {
 		s, entities, _ := newEntityService(t)
 		other := strings.Repeat("01", 16)
-		entities.entities[hexID] = identity.Entity{ID: hexID}
+		entities.entities[hexID] = identity.Entity{ID: hexID, Alias: "ci", Policies: []string{"dev"}}
 		entities.entities[other] = identity.Entity{ID: other}
-		want := []string{other, hexID}
+		want := []identity.EntitySummary{{ID: other}, {ID: hexID, Alias: "ci"}}
+
+		got, err := s.ListEntities(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListEntities: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("an unreadable entity fails the listing", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID, Policies: []string{"dev/ops"}}
+
+		_, err := s.ListEntities(t.Context(), principal)
+
+		if !errors.Is(err, identity.ErrUnreadableEntity) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
+		}
+	})
+
+	t.Run("a stored key that is not an entity ID fails the listing as unreadable", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		entities.entities["not-an-id"] = identity.Entity{ID: "not-an-id"}
+
+		_, err := s.ListEntities(t.Context(), principal)
+
+		if !errors.Is(err, identity.ErrUnreadableEntity) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
+		}
+	})
+
+	t.Run("an entity deleted while listed is left out", func(t *testing.T) {
+		entities := &vanishingEntities{fakeEntities: fakeEntities{entities: make(map[string]identity.Entity)}, gone: strings.Repeat("01", 16)}
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		s := identity.NewEntityService(entities, &fakeRandom{}, &fakeAuthorizer{})
+		want := []identity.EntitySummary{{ID: hexID}}
 
 		got, err := s.ListEntities(t.Context(), principal)
 		if err != nil {

@@ -19,6 +19,12 @@ type Entity struct {
 	Groups   []string
 }
 
+// EntitySummary is what a listing shows of an entity: never its policies or groups, which only a read of the entity reveals.
+type EntitySummary struct {
+	ID    string
+	Alias string
+}
+
 // entitiesResource is the resource policies name the entity collection by; each entity is beneath it by ID.
 const entitiesResource = "system/entities"
 
@@ -112,8 +118,18 @@ func (s *EntityService) getEntity(ctx context.Context, id string) (Entity, error
 	return entity, nil
 }
 
-// ListEntities returns every entity's ID in byte order if principal may list the entity collection.
-func (s *EntityService) ListEntities(ctx context.Context, principal authorization.Principal) ([]string, error) {
+// getListed reads an ID the repository listed, so one that is not an ID is a corrupt store, not the caller's mistake.
+func (s *EntityService) getListed(ctx context.Context, id string) (Entity, error) {
+	entity, err := s.getEntity(ctx, id)
+	if errors.Is(err, ErrInvalidEntityID) {
+		return Entity{}, ErrUnreadableEntity
+	}
+	return entity, err
+}
+
+// ListEntities returns every entity's summary in ID byte order if principal may list the entity collection. One unreadable
+// entity fails the listing; one deleted while listed is left out.
+func (s *EntityService) ListEntities(ctx context.Context, principal authorization.Principal) ([]EntitySummary, error) {
 	if err := s.authorizer.Authorize(ctx, principal, entitiesResource, authorization.CapabilityList); err != nil {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
@@ -122,7 +138,23 @@ func (s *EntityService) ListEntities(ctx context.Context, principal authorizatio
 	if err != nil && !ours(err) {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
-	return ids, err
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]EntitySummary, 0, len(ids))
+	for _, id := range ids {
+		entity, err := s.getListed(ctx, id)
+		// Deleted since the List: leaving it out is the right answer, and the listing takes no lock to prevent it.
+		if errors.Is(err, ErrEntityNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, EntitySummary{ID: entity.ID, Alias: entity.Alias})
+	}
+	return summaries, nil
 }
 
 // DeleteEntity removes the entity with id if principal may delete it; a missing ID is not an error.
@@ -194,11 +226,7 @@ func (s *EntityService) checkAlias(ctx context.Context, id, alias string) error 
 		if other == id {
 			continue
 		}
-		entity, err := s.getEntity(ctx, other)
-		// A stored key that is not an ID is a corrupt store, not the caller's mistake.
-		if errors.Is(err, ErrInvalidEntityID) {
-			return ErrUnreadableEntity
-		}
+		entity, err := s.getListed(ctx, other)
 		if err != nil {
 			return err
 		}

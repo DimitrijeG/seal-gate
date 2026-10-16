@@ -18,6 +18,12 @@ type Group struct {
 	Policies []string
 }
 
+// GroupSummary is what a listing shows of a group: never its policies, which only a read of the group reveals.
+type GroupSummary struct {
+	ID    string
+	Alias string
+}
+
 // groupsResource is the resource policies name the group collection by; each group is beneath it by ID.
 const groupsResource = "system/groups"
 
@@ -111,8 +117,18 @@ func (s *GroupService) getGroup(ctx context.Context, id string) (Group, error) {
 	return group, nil
 }
 
-// ListGroups returns every group's ID in byte order if principal may list the group collection.
-func (s *GroupService) ListGroups(ctx context.Context, principal authorization.Principal) ([]string, error) {
+// getListed reads an ID the repository listed, so one that is not an ID is a corrupt store, not the caller's mistake.
+func (s *GroupService) getListed(ctx context.Context, id string) (Group, error) {
+	group, err := s.getGroup(ctx, id)
+	if errors.Is(err, ErrInvalidGroupID) {
+		return Group{}, ErrUnreadableGroup
+	}
+	return group, err
+}
+
+// ListGroups returns every group's summary in ID byte order if principal may list the group collection. One unreadable
+// group fails the listing; one deleted while listed is left out.
+func (s *GroupService) ListGroups(ctx context.Context, principal authorization.Principal) ([]GroupSummary, error) {
 	if err := s.authorizer.Authorize(ctx, principal, groupsResource, authorization.CapabilityList); err != nil {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
@@ -121,7 +137,23 @@ func (s *GroupService) ListGroups(ctx context.Context, principal authorization.P
 	if err != nil && !ours(err) {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
-	return ids, err
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]GroupSummary, 0, len(ids))
+	for _, id := range ids {
+		group, err := s.getListed(ctx, id)
+		// Deleted since the List: leaving it out is the right answer, and the listing takes no lock to prevent it.
+		if errors.Is(err, ErrGroupNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, GroupSummary{ID: group.ID, Alias: group.Alias})
+	}
+	return summaries, nil
 }
 
 // DeleteGroup removes the group with id if principal may delete it; a missing ID is not an error.
@@ -193,11 +225,7 @@ func (s *GroupService) checkAlias(ctx context.Context, id, alias string) error {
 		if other == id {
 			continue
 		}
-		group, err := s.getGroup(ctx, other)
-		// A stored key that is not an ID is a corrupt store, not the caller's mistake.
-		if errors.Is(err, ErrInvalidGroupID) {
-			return ErrUnreadableGroup
-		}
+		group, err := s.getListed(ctx, other)
 		if err != nil {
 			return err
 		}

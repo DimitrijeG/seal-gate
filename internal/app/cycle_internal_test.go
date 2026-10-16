@@ -70,6 +70,21 @@ type createEntityBody struct {
 	ID string `json:"id"`
 }
 
+type entitySummaryBody struct {
+	ID    string `json:"id"`
+	Alias string `json:"alias"`
+}
+
+type groupSummaryBody struct {
+	ID    string `json:"id"`
+	Alias string `json:"alias"`
+}
+
+type userSummaryBody struct {
+	Name     string `json:"name"`
+	EntityID string `json:"entity_id"`
+}
+
 type tokenBody struct {
 	Token string `json:"token"`
 }
@@ -788,21 +803,68 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("a token lists entities where its policy grants list on the collection", func(t *testing.T) {
+	t.Run("a token lists entities with their aliases where its policy grants list on the collection", func(t *testing.T) {
 		router := unsealed(t)
-		entityID := createEntity(t, router)
+		rec := send(t, router, http.MethodPost, "/v1/entities", `{"alias":"ci"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create entity: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		want := entitySummaryBody{ID: decode[createEntityBody](t, rec).ID, Alias: "ci"}
 		token := entityToken(t, router, `[{"path":"system/entities","capabilities":["list"]}]`)
 
-		rec := send(t, withToken(router, token), http.MethodGet, "/v1/entities", "")
+		rec = send(t, withToken(router, token), http.MethodGet, "/v1/entities", "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
 		}
 		got := decode[struct {
-			IDs []string `json:"ids"`
-		}](t, rec).IDs
+			Entities []entitySummaryBody `json:"entities"`
+		}](t, rec).Entities
 
-		if !slices.Contains(got, entityID) {
-			t.Errorf("got %v, want it to hold %q", got, entityID)
+		if !slices.Contains(got, want) {
+			t.Errorf("got %+v, want it to hold %+v", got, want)
+		}
+	})
+
+	t.Run("groups are listed with their aliases", func(t *testing.T) {
+		router := unsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/groups", `{"alias":"ops"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create group: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		want := groupSummaryBody{ID: decode[createGroupBody](t, rec).ID, Alias: "ops"}
+
+		rec = send(t, router, http.MethodGet, "/v1/groups", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[struct {
+			Groups []groupSummaryBody `json:"groups"`
+		}](t, rec).Groups
+
+		if !slices.Contains(got, want) {
+			t.Errorf("got %+v, want it to hold %+v", got, want)
+		}
+	})
+
+	t.Run("users are listed with the entity each logs in as", func(t *testing.T) {
+		router := unsealed(t)
+		entityID := createEntity(t, router)
+		rec := send(t, router, http.MethodPut, "/v1/auth/users/alice", `{"entity_id":"`+entityID+`","password":"correct horse"}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("set user: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+		want := []userSummaryBody{{Name: "alice", EntityID: entityID}}
+
+		rec = send(t, router, http.MethodGet, "/v1/auth/users", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[struct {
+			Users []userSummaryBody `json:"users"`
+		}](t, rec).Users
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
 

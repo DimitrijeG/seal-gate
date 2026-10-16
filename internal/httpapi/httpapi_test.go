@@ -240,7 +240,7 @@ type createEntityBody struct {
 }
 
 type fakeEntity struct {
-	list      []string
+	list      []identity.EntitySummary
 	principal authorization.Principal // the last principal any method got
 	id        string                  // the last ID Get or Delete got
 	created   identity.Entity
@@ -317,7 +317,7 @@ type createGroupBody struct {
 }
 
 type fakeGroup struct {
-	list      []string
+	list      []identity.GroupSummary
 	principal authorization.Principal // the last principal any method got
 	id        string                  // the last ID Get or Delete got
 	created   identity.Group
@@ -352,7 +352,7 @@ func (f *fakeGroup) DeleteGroup(ctx context.Context, principal authorization.Pri
 }
 
 type fakeUser struct {
-	list           []string
+	list           []identity.UserSummary
 	principal      authorization.Principal // the last principal any method got
 	name           string                  // the last name any method got
 	entityID       string
@@ -448,17 +448,17 @@ func (f *fakePolicy) List(ctx context.Context, principal authorization.Principal
 	return f.list, f.err
 }
 
-func (f *fakeEntity) ListEntities(ctx context.Context, principal authorization.Principal) ([]string, error) {
+func (f *fakeEntity) ListEntities(ctx context.Context, principal authorization.Principal) ([]identity.EntitySummary, error) {
 	f.principal = principal
 	return f.list, f.err
 }
 
-func (f *fakeGroup) ListGroups(ctx context.Context, principal authorization.Principal) ([]string, error) {
+func (f *fakeGroup) ListGroups(ctx context.Context, principal authorization.Principal) ([]identity.GroupSummary, error) {
 	f.principal = principal
 	return f.list, f.err
 }
 
-func (f *fakeUser) ListUsers(ctx context.Context, principal authorization.Principal) ([]string, error) {
+func (f *fakeUser) ListUsers(ctx context.Context, principal authorization.Principal) ([]identity.UserSummary, error) {
 	f.principal = principal
 	return f.list, f.err
 }

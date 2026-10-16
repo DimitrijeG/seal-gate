@@ -534,19 +534,21 @@ paths:
     get:
       operationId: listEntities
       tags: [entities]
-      summary: List the IDs of stored entities.
+      summary: List stored entities by ID and alias.
       description: >
-        Returns entity IDs only, never their records, sorted by byte order;
-        reading one is a separate request with its own check. Needs `list`
-        on `system/entities`; a grant on `system/entities/*` does not reach the
+        Returns each entity's ID and alias only, never its policies or groups,
+        so a listing never reveals what an entity is granted; reading one is a
+        separate request with its own check. Sorted by ID in byte order. One
+        unreadable entity fails the whole listing. Needs `list` on
+        `system/entities`; a grant on `system/entities/*` does not reach the
         collection.
       responses:
         "200":
-          description: Every stored entity ID.
+          description: Every stored entity.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IdsResponse"
+                $ref: "#/components/schemas/EntityListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -850,18 +852,19 @@ paths:
     get:
       operationId: listUsers
       tags: [users]
-      summary: List the names of stored users.
+      summary: List stored users by name and entity.
       description: >
-        Returns usernames only, never their entity IDs or password hashes,
-        sorted by byte order. Needs `list` on `system/users`; a grant on
-        `system/users/*` does not reach the collection.
+        Returns each username and the entity it logs in as, never a password
+        hash, sorted by name in byte order. One unreadable user fails the whole
+        listing. Needs `list` on `system/users`; a grant on `system/users/*`
+        does not reach the collection.
       responses:
         "200":
-          description: Every stored username.
+          description: Every stored user.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NamesResponse"
+                $ref: "#/components/schemas/UserListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -947,19 +950,20 @@ paths:
     get:
       operationId: listGroups
       tags: [groups]
-      summary: List the IDs of stored groups.
+      summary: List stored groups by ID and alias.
       description: >
-        Returns group IDs only, never their records, sorted by byte order;
-        reading one is a separate request with its own check. Needs `list`
-        on `system/groups`; a grant on `system/groups/*` does not reach the
-        collection.
+        Returns each group's ID and alias only, never its policies, so a
+        listing never reveals what a group grants; reading one is a separate
+        request with its own check. Sorted by ID in byte order. One unreadable
+        group fails the whole listing. Needs `list` on `system/groups`; a grant
+        on `system/groups/*` does not reach the collection.
       responses:
         "200":
-          description: Every stored group ID.
+          description: Every stored group.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IdsResponse"
+                $ref: "#/components/schemas/GroupListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1327,15 +1331,58 @@ components:
             type: string
       additionalProperties: false
 
-    IdsResponse:
+    Summary:
       type: object
-      required: [ids]
+      required: [id]
       properties:
-        ids:
+        id:
+          $ref: "#/components/schemas/ID"
+        alias:
+          type: string
+          description: Absent when there is none.
+      additionalProperties: false
+
+    EntityListResponse:
+      type: object
+      required: [entities]
+      properties:
+        entities:
           type: array
-          description: Sorted by byte order. Empty when there are none, never null.
+          description: Sorted by ID in byte order. Empty when there are none, never null.
           items:
-            $ref: "#/components/schemas/ID"
+            $ref: "#/components/schemas/Summary"
+      additionalProperties: false
+
+    GroupListResponse:
+      type: object
+      required: [groups]
+      properties:
+        groups:
+          type: array
+          description: Sorted by ID in byte order. Empty when there are none, never null.
+          items:
+            $ref: "#/components/schemas/Summary"
+      additionalProperties: false
+
+    UserListResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          description: Sorted by name in byte order. Empty when there are none, never null.
+          items:
+            $ref: "#/components/schemas/UserSummary"
+      additionalProperties: false
+
+    UserSummary:
+      type: object
+      required: [name, entity_id]
+      properties:
+        name:
+          type: string
+        entity_id:
+          $ref: "#/components/schemas/ID"
       additionalProperties: false
 
     PolicyRequest:
