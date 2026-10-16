@@ -3,7 +3,9 @@ package identity_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +50,14 @@ func (r *fakeGroups) Delete(_ context.Context, id string) error {
 	}
 	delete(r.groups, id)
 	return nil
+}
+
+func (r *fakeGroups) List(_ context.Context) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return slices.Sorted(maps.Keys(r.groups)), nil
 }
 
 // racingGroups holds the first Get, after it has read, until a Delete has run
@@ -98,6 +108,65 @@ func (r *racingGroups) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// vanishingGroups lists gone as well as what it holds, as if gone were deleted between the List and its Get.
+type vanishingGroups struct {
+	fakeGroups
+	gone string
+}
+
+func (r *vanishingGroups) List(ctx context.Context) ([]string, error) {
+	ids, err := r.fakeGroups.List(ctx)
+	return append(ids, r.gone), err
+}
+
+// racingGroupLists holds the first List, after it has read, until a second List has run or 100 ms pass,
+// so two unguarded creates both scan before either writes.
+type racingGroupLists struct {
+	fakeGroups
+	mu     sync.Mutex
+	lists  atomic.Int32
+	listed chan struct{}
+	second chan struct{}
+}
+
+func newRacingGroupLists() *racingGroupLists {
+	return &racingGroupLists{
+		fakeGroups: fakeGroups{groups: make(map[string]identity.Group)},
+		listed:     make(chan struct{}),
+		second:     make(chan struct{}),
+	}
+}
+
+func (r *racingGroupLists) Put(ctx context.Context, group identity.Group) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakeGroups.Put(ctx, group)
+}
+
+func (r *racingGroupLists) Get(ctx context.Context, id string) (identity.Group, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakeGroups.Get(ctx, id)
+}
+
+func (r *racingGroupLists) List(ctx context.Context) ([]string, error) {
+	r.mu.Lock()
+	ids, err := r.fakeGroups.List(ctx)
+	r.mu.Unlock()
+
+	switch r.lists.Add(1) {
+	case 1:
+		close(r.listed)
+		select {
+		case <-r.second:
+		case <-time.After(100 * time.Millisecond):
+		}
+	case 2:
+		close(r.second)
+	}
+	return ids, err
+}
+
 func newGroupService(t *testing.T) (*identity.GroupService, *fakeGroups, *fakeRandom) {
 	t.Helper()
 	s, groups, random, _ := newAuthorizedGroupService(t)
@@ -113,6 +182,61 @@ func newAuthorizedGroupService(t *testing.T) (*identity.GroupService, *fakeGroup
 }
 
 func TestGroup(t *testing.T) {
+	t.Run("every stored group is listed with its alias", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		other := strings.Repeat("01", 16)
+		groups.groups[hexID] = identity.Group{ID: hexID, Alias: "ops", Policies: []string{"dev"}}
+		groups.groups[other] = identity.Group{ID: other}
+		want := []identity.GroupSummary{{ID: other}, {ID: hexID, Alias: "ops"}}
+
+		got, err := s.ListGroups(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListGroups: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("an unreadable group fails the listing", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID, Policies: []string{"dev/ops"}}
+
+		_, err := s.ListGroups(t.Context(), principal)
+
+		if !errors.Is(err, identity.ErrUnreadableGroup) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+		}
+	})
+
+	t.Run("a stored key that is not a group ID fails the listing as unreadable", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups["not-an-id"] = identity.Group{ID: "not-an-id"}
+
+		_, err := s.ListGroups(t.Context(), principal)
+
+		if !errors.Is(err, identity.ErrUnreadableGroup) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+		}
+	})
+
+	t.Run("a group deleted while listed is left out", func(t *testing.T) {
+		groups := &vanishingGroups{fakeGroups: fakeGroups{groups: make(map[string]identity.Group)}, gone: strings.Repeat("01", 16)}
+		groups.groups[hexID] = identity.Group{ID: hexID}
+		s := identity.NewGroupService(groups, &fakeRandom{}, &fakeAuthorizer{})
+		want := []identity.GroupSummary{{ID: hexID}}
+
+		got, err := s.ListGroups(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListGroups: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("a created group reads back with its policies", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 		group := identity.Group{Policies: []string{"dev"}}
@@ -129,6 +253,24 @@ func TestGroup(t *testing.T) {
 		group.ID = id
 		if !reflect.DeepEqual(got, group) {
 			t.Errorf("got %+v, want %+v", got, group)
+		}
+	})
+
+	t.Run("a created group keeps its alias", func(t *testing.T) {
+		s, _, _ := newGroupService(t)
+		want := "ops"
+
+		id, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: want})
+		if err != nil {
+			t.Fatalf("CreateGroup: %v", err)
+		}
+		got, err := s.GetGroup(t.Context(), principal, id)
+		if err != nil {
+			t.Fatalf("GetGroup: %v", err)
+		}
+
+		if got.Alias != want {
+			t.Errorf("got %q, want %q", got.Alias, want)
 		}
 	})
 
@@ -367,6 +509,184 @@ func TestGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("an invalid group alias is refused", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			alias string
+		}{
+			{"uppercase", "OPS"},
+			{"too long", strings.Repeat("a", 129)},
+			{"dot", "."},
+			{"dot-dot", ".."},
+			{"slash", "dev/ops"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, _ := newGroupService(t)
+
+				_, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: tt.alias})
+
+				if !errors.Is(err, identity.ErrInvalidAlias) {
+					t.Errorf("got %v, want %v", err, identity.ErrInvalidAlias)
+				}
+			})
+		}
+	})
+
+	t.Run("a group alias of the longest length is accepted", func(t *testing.T) {
+		s, _, _ := newGroupService(t)
+
+		_, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: strings.Repeat("a", 128)})
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("creating with an alias another group holds is refused", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID, Alias: "ops"}
+
+		_, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: "ops"})
+
+		if !errors.Is(err, identity.ErrGroupAliasTaken) {
+			t.Errorf("got %v, want %v", err, identity.ErrGroupAliasTaken)
+		}
+	})
+
+	t.Run("updating to an alias another group holds is refused", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		other := strings.Repeat("01", 16)
+		groups.groups[hexID] = identity.Group{ID: hexID, Alias: "ops"}
+		groups.groups[other] = identity.Group{ID: other}
+
+		err := s.UpdateGroup(t.Context(), principal, identity.Group{ID: other, Alias: "ops"})
+
+		if !errors.Is(err, identity.ErrGroupAliasTaken) {
+			t.Errorf("got %v, want %v", err, identity.ErrGroupAliasTaken)
+		}
+	})
+
+	t.Run("an update keeping the group's own alias is accepted", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID, Alias: "ops"}
+
+		err := s.UpdateGroup(t.Context(), principal, identity.Group{ID: hexID, Alias: "ops", Policies: []string{"dev"}})
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("groups without an alias never clash", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID}
+
+		_, err := s.CreateGroup(t.Context(), principal, identity.Group{})
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("an unreadable group refuses an alias rather than risk a duplicate", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID, Policies: []string{"dev/ops"}}
+
+		_, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: "ops"})
+
+		if !errors.Is(err, identity.ErrUnreadableGroup) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+		}
+	})
+
+	t.Run("a stored key that is not a group ID refuses an alias as unreadable", func(t *testing.T) {
+		tests := []struct {
+			name string
+			key  string
+		}{
+			{"not hex", "not-an-id"},
+			// A create has no ID of its own yet, so an empty key must not pass for it.
+			{"empty", ""},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, groups, _ := newGroupService(t)
+				groups.groups[tt.key] = identity.Group{ID: tt.key}
+
+				_, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: "ops"})
+
+				if !errors.Is(err, identity.ErrUnreadableGroup) {
+					t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+				}
+			})
+		}
+	})
+
+	t.Run("two creates racing for one group alias cannot both claim it", func(t *testing.T) {
+		groups := newRacingGroupLists()
+		s := identity.NewGroupService(groups, &fakeRandom{}, &fakeAuthorizer{})
+		ctx := t.Context()
+
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			_, errs[0] = s.CreateGroup(ctx, principal, identity.Group{Alias: "ops"})
+		})
+		// The second starts only once the first has scanned.
+		<-groups.listed
+		wg.Go(func() {
+			_, errs[1] = s.CreateGroup(ctx, principal, identity.Group{Alias: "ops"})
+		})
+		wg.Wait()
+
+		taken := 0
+		for _, err := range errs {
+			if errors.Is(err, identity.ErrGroupAliasTaken) {
+				taken++
+			} else if err != nil {
+				t.Fatalf("CreateGroup: %v", err)
+			}
+		}
+		if taken != 1 {
+			t.Errorf("got %d refused, want 1", taken)
+		}
+	})
+
+	t.Run("an invalid group alias never reaches the repository", func(t *testing.T) {
+		bad := identity.Group{ID: hexID, Alias: "OPS"}
+
+		tests := []struct {
+			name string
+			call func(ctx context.Context, s *identity.GroupService) error
+		}{
+			{"create", func(ctx context.Context, s *identity.GroupService) error {
+				_, err := s.CreateGroup(ctx, principal, bad)
+				return err
+			}},
+			{"update", func(ctx context.Context, s *identity.GroupService) error {
+				return s.UpdateGroup(ctx, principal, bad)
+			}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, groups, _ := newGroupService(t)
+
+				err := tt.call(t.Context(), s)
+
+				if !errors.Is(err, identity.ErrInvalidAlias) {
+					t.Errorf("err: got %v, want %v", err, identity.ErrInvalidAlias)
+				}
+				if groups.calls != 0 {
+					t.Errorf("calls: got %d, want 0", groups.calls)
+				}
+			})
+		}
+	})
+
 	t.Run("an invalid policy name never reaches the repository", func(t *testing.T) {
 		bad := identity.Group{ID: hexID, Policies: []string{"dev/ops"}}
 
@@ -423,6 +743,17 @@ func TestGroup(t *testing.T) {
 		s, groups, _ := newGroupService(t)
 		// Seeded past create, as a record from a faulty encoder would arrive.
 		groups.groups[hexID] = identity.Group{ID: hexID, Policies: []string{"dev/ops"}}
+
+		_, err := s.GetGroup(t.Context(), principal, hexID)
+
+		if !errors.Is(err, identity.ErrUnreadableGroup) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+		}
+	})
+
+	t.Run("a stored group with an invalid alias is unreadable", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		groups.groups[hexID] = identity.Group{ID: hexID, Alias: "OPS"}
 
 		_, err := s.GetGroup(t.Context(), principal, hexID)
 
@@ -520,5 +851,9 @@ var groupOperations = []struct {
 	}},
 	{"delete", func(ctx context.Context, s *identity.GroupService) error {
 		return s.DeleteGroup(ctx, principal, hexID)
+	}},
+	{"list", func(ctx context.Context, s *identity.GroupService) error {
+		_, err := s.ListGroups(ctx, principal)
+		return err
 	}},
 }

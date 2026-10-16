@@ -36,6 +36,66 @@ func TestEntity(t *testing.T) {
 		}
 	})
 
+	t.Run("a created entity's alias reaches the service", func(t *testing.T) {
+		fake := &fakeEntity{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
+		want := "ci"
+
+		rec := do(t, router, http.MethodPost, "/v1/entities", `{"alias":"ci"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if fake.created.Alias != want {
+			t.Errorf("got %q, want %q", fake.created.Alias, want)
+		}
+	})
+
+	t.Run("an updated entity's alias reaches the service", func(t *testing.T) {
+		fake := &fakeEntity{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: fake})
+		want := "ci"
+
+		rec := do(t, router, http.MethodPut, "/v1/entities/"+entityID, `{"alias":"ci"}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if fake.updated.Alias != want {
+			t.Errorf("got %q, want %q", fake.updated.Alias, want)
+		}
+	})
+
+	t.Run("a stored entity is returned with its alias", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{getEntity: identity.Entity{ID: entityID, Alias: "ci"}}})
+		want := `{"alias":"ci","policies":[],"groups":[]}`
+
+		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("an entity without an alias is returned without one", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{getEntity: identity.Entity{ID: entityID}}})
+		want := `{"policies":[],"groups":[]}`
+
+		rec := do(t, router, http.MethodGet, "/v1/entities/"+entityID, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
 	t.Run("a create answers with the new ID", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Entity: &fakeEntity{createID: entityID}})
 
@@ -241,6 +301,8 @@ func TestEntity(t *testing.T) {
 			{"invalid entity ID", identity.ErrInvalidEntityID, http.StatusBadRequest, "invalid entity ID"},
 			{"invalid policy name", identity.ErrInvalidPolicyName, http.StatusBadRequest, "invalid policy name"},
 			{"invalid group ID", identity.ErrInvalidGroupID, http.StatusBadRequest, "invalid group ID"},
+			{"invalid alias", identity.ErrInvalidAlias, http.StatusBadRequest, "invalid alias"},
+			{"alias taken", identity.ErrAliasTaken, http.StatusConflict, "alias already in use"},
 			{"not found", identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
 			// A corrupt record is the server's fault, not the client's.
 			{"unreadable entity", identity.ErrUnreadableEntity, http.StatusInternalServerError, "internal error"},

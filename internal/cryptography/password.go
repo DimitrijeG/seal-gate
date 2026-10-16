@@ -59,6 +59,12 @@ func (a *Argon2id) Verify(password []byte, encoded string) (bool, error) {
 	return subtle.ConstantTimeCompare(key, stored.key) == 1, nil
 }
 
+// Check returns ErrInvalidPasswordHash for any encoded Verify would refuse, parsing it without deriving a key.
+func (a *Argon2id) Check(encoded string) error {
+	_, err := parseArgon2id(encoded)
+	return err
+}
+
 // argon2idHash is a parsed PHC string: what Verify derives with, and the key it must match.
 type argon2idHash struct {
 	memory, time uint32

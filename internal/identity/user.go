@@ -15,20 +15,33 @@ type StoredUser struct {
 	PasswordHash string
 }
 
+func (u StoredUser) readable() bool {
+	return validID(u.EntityID) && u.PasswordHash != ""
+}
+
+// UserSummary is what a listing shows of a user: never its password hash.
+type UserSummary struct {
+	Name     string
+	EntityID string
+}
+
 // usersResource is the resource policies name the user collection by; each user is beneath it by name.
 const usersResource = "system/users"
 
-// UserRepository stores users by name. Delete does not fail on a missing name; every method returns ErrSealed while sealed.
+// UserRepository stores users by name. Delete does not fail on a missing name; List returns every name in byte order;
+// every method returns ErrSealed while sealed.
 type UserRepository interface {
 	Put(ctx context.Context, name string, user StoredUser) error
 	Get(ctx context.Context, name string) (StoredUser, error)
 	Delete(ctx context.Context, name string) error
+	List(ctx context.Context) ([]string, error)
 }
 
 // PasswordHasher hashes passwords into strings that carry their own parameters.
 type PasswordHasher interface {
 	Hash(password []byte) (string, error)
 	Verify(password []byte, encoded string) (bool, error)
+	Check(encoded string) error
 }
 
 // UserService manages users, each a username mapped to an entity and a password hash.
@@ -72,7 +85,7 @@ func (s *UserService) Login(ctx context.Context, name string, password []byte) (
 	case err != nil:
 		return nil, time.Time{}, err
 	// Checked here, not by getEntity: a bad stored ID is a corrupt record, not the caller's mistake.
-	case !validID(user.EntityID) || user.PasswordHash == "":
+	case !user.readable():
 		return nil, time.Time{}, ErrUnreadableUser
 	}
 
@@ -125,6 +138,47 @@ func (s *UserService) SetUser(ctx context.Context, principal authorization.Princ
 		return fmt.Errorf("identity: %w", err)
 	}
 	return err
+}
+
+// ListUsers returns every user's summary in name byte order if principal may list the user collection. One unreadable
+// user fails the listing; one deleted while listed is left out.
+func (s *UserService) ListUsers(ctx context.Context, principal authorization.Principal) ([]UserSummary, error) {
+	if err := s.authorizer.Authorize(ctx, principal, usersResource, authorization.CapabilityList); err != nil {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+
+	names, err := s.users.List(ctx)
+	if err != nil && !ours(err) {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]UserSummary, 0, len(names))
+	for _, name := range names {
+		// A listed key that is not a username is a corrupt store, not the caller's mistake.
+		if !validUsername(name) {
+			return nil, ErrUnreadableUser
+		}
+		user, err := s.users.Get(ctx, name)
+		// Deleted since the List: leaving it out is the right answer, and the listing takes no lock to prevent it.
+		if errors.Is(err, ErrUserNotFound) {
+			continue
+		}
+		if err != nil && !ours(err) {
+			return nil, fmt.Errorf("identity: %w", err)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// Check, not Verify: a parse is enough to find a hash Login would refuse, without a derivation per user.
+		if !user.readable() || s.hasher.Check(user.PasswordHash) != nil {
+			return nil, ErrUnreadableUser
+		}
+		summaries = append(summaries, UserSummary{Name: name, EntityID: user.EntityID})
+	}
+	return summaries, nil
 }
 
 // DeleteUser removes the user name if principal may delete it; a missing user is not an error.

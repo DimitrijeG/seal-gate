@@ -17,6 +17,10 @@ const (
 
 // validateLists leaves out the ID: create checks the entity before it has one.
 func validateLists(entity Entity) error {
+	// Aliases follow the username rule, lowercase only, so two cannot differ by case alone.
+	if entity.Alias != "" && !validUsername(entity.Alias) {
+		return ErrInvalidAlias
+	}
 	for _, policy := range entity.Policies {
 		if !authorization.ValidPolicyName(policy) {
 			return ErrInvalidPolicyName
@@ -32,6 +36,9 @@ func validateLists(entity Entity) error {
 
 // validateGroup leaves out the ID, as validateLists does.
 func validateGroup(group Group) error {
+	if group.Alias != "" && !validUsername(group.Alias) {
+		return ErrInvalidAlias
+	}
 	for _, policy := range group.Policies {
 		if !authorization.ValidPolicyName(policy) {
 			return ErrInvalidPolicyName

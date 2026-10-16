@@ -7,6 +7,13 @@ var (
 	// ErrInvalidEntityID reports an ID that is not 32 lowercase hex characters.
 	ErrInvalidEntityID   = errors.New("identity: invalid entity ID")
 	ErrInvalidPolicyName = errors.New("identity: invalid policy name")
+	// ErrInvalidAlias reports an alias that is not empty and not 1 to 128 bytes of lowercase letters, digits, '.', '_' or '-',
+	// or is "." or "..".
+	ErrInvalidAlias = errors.New("identity: invalid alias")
+	// ErrAliasTaken reports an alias another entity already holds.
+	ErrAliasTaken = errors.New("identity: alias taken")
+	// ErrGroupAliasTaken reports an alias another group already holds.
+	ErrGroupAliasTaken = errors.New("identity: group alias taken")
 	// ErrInvalidGroupID reports a group ID that is not 32 lowercase hex characters.
 	ErrInvalidGroupID = errors.New("identity: invalid group ID")
 	// ErrUnreadableEntity reports a stored entity that does not decode, or whose policies or groups are invalid.

@@ -66,6 +66,10 @@ func TestAuthorization(t *testing.T) {
 			{"update", func(ctx context.Context, s *identity.EntityService) error {
 				return s.UpdateEntity(ctx, principal, identity.Entity{ID: hexID})
 			}, "system/entities/" + hexID, authorization.CapabilityUpdate},
+			{"list", func(ctx context.Context, s *identity.EntityService) error {
+				_, err := s.ListEntities(ctx, principal)
+				return err
+			}, "system/entities", authorization.CapabilityList},
 		}
 
 		for _, tt := range tests {
@@ -206,6 +210,10 @@ func TestAuthorization(t *testing.T) {
 			{"update", func(ctx context.Context, s *identity.GroupService) error {
 				return s.UpdateGroup(ctx, principal, identity.Group{ID: hexID})
 			}, "system/groups/" + hexID, authorization.CapabilityUpdate},
+			{"list", func(ctx context.Context, s *identity.GroupService) error {
+				_, err := s.ListGroups(ctx, principal)
+				return err
+			}, "system/groups", authorization.CapabilityList},
 		}
 
 		for _, tt := range tests {
@@ -312,14 +320,19 @@ func TestAuthorization(t *testing.T) {
 		tests := []struct {
 			name           string
 			call           func(ctx context.Context, s *identity.UserService) error
+			wantResource   string
 			wantCapability authorization.Capability
 		}{
 			{"set", func(ctx context.Context, s *identity.UserService) error {
 				return s.SetUser(ctx, principal, "alice", hexID, password)
-			}, authorization.CapabilityUpdate},
+			}, "system/users/alice", authorization.CapabilityUpdate},
 			{"delete", func(ctx context.Context, s *identity.UserService) error {
 				return s.DeleteUser(ctx, principal, "alice")
-			}, authorization.CapabilityDelete},
+			}, "system/users/alice", authorization.CapabilityDelete},
+			{"list", func(ctx context.Context, s *identity.UserService) error {
+				_, err := s.ListUsers(ctx, principal)
+				return err
+			}, "system/users", authorization.CapabilityList},
 		}
 
 		for _, tt := range tests {
@@ -328,8 +341,8 @@ func TestAuthorization(t *testing.T) {
 
 				_ = tt.call(t.Context(), s)
 
-				if want := "system/users/alice"; authorizer.resource != want {
-					t.Errorf("resource: got %q, want %q", authorizer.resource, want)
+				if authorizer.resource != tt.wantResource {
+					t.Errorf("resource: got %q, want %q", authorizer.resource, tt.wantResource)
 				}
 				if authorizer.capability != tt.wantCapability {
 					t.Errorf("capability: got %q, want %q", authorizer.capability, tt.wantCapability)

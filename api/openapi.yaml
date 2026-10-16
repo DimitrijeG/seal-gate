@@ -410,6 +410,32 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /policies:
+    get:
+      operationId: listPolicies
+      tags: [policies]
+      summary: List the names of stored policies.
+      description: >
+        Returns policy names only, never their records, sorted by byte order;
+        reading one is a separate request with its own check. Needs `list`
+        on `system/policies`; a grant on `system/policies/*` does not reach the
+        collection.
+      responses:
+        "200":
+          description: Every stored policy name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NamesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /policies/{name}:
     parameters:
       - name: name
@@ -505,6 +531,32 @@ paths:
           $ref: "#/components/responses/InternalError"
 
   /entities:
+    get:
+      operationId: listEntities
+      tags: [entities]
+      summary: List stored entities by ID and alias.
+      description: >
+        Returns each entity's ID and alias only, never its policies or groups,
+        so a listing never reveals what an entity is granted; reading one is a
+        separate request with its own check. Sorted by ID in byte order. One
+        unreadable entity fails the whole listing. Needs `list` on
+        `system/entities`; a grant on `system/entities/*` does not reach the
+        collection.
+      responses:
+        "200":
+          description: Every stored entity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
     post:
       operationId: createEntity
       tags: [entities]
@@ -532,6 +584,9 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Another entity holds the alias.
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -580,7 +635,7 @@ paths:
     put:
       operationId: updateEntity
       tags: [entities]
-      summary: Replace an existing entity's policies and groups.
+      summary: Replace an existing entity's alias, policies and groups.
       description: >
         Never creates: an ID that does not exist is not found. The ID is taken
         from the path only. Needs `update` on `system/entities/<id>`.
@@ -601,6 +656,9 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Another entity holds the alias.
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -790,6 +848,32 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /auth/users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List stored users by name and entity.
+      description: >
+        Returns each username and the entity it logs in as, never a password
+        hash, sorted by name in byte order. One unreadable user fails the whole
+        listing. Needs `list` on `system/users`; a grant on `system/users/*`
+        does not reach the collection.
+      responses:
+        "200":
+          description: Every stored user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /auth/users/{name}:
     parameters:
       - name: name
@@ -863,6 +947,31 @@ paths:
           $ref: "#/components/responses/InternalError"
 
   /groups:
+    get:
+      operationId: listGroups
+      tags: [groups]
+      summary: List stored groups by ID and alias.
+      description: >
+        Returns each group's ID and alias only, never its policies, so a
+        listing never reveals what a group grants; reading one is a separate
+        request with its own check. Sorted by ID in byte order. One unreadable
+        group fails the whole listing. Needs `list` on `system/groups`; a grant
+        on `system/groups/*` does not reach the collection.
+      responses:
+        "200":
+          description: Every stored group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
     post:
       operationId: createGroup
       tags: [groups]
@@ -890,6 +999,9 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Another group holds the alias.
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -917,7 +1029,7 @@ paths:
         Needs `read` on `system/groups/<id>`.
       responses:
         "200":
-          description: The group's policies.
+          description: The group's alias and policies.
           content:
             application/json:
               schema:
@@ -938,7 +1050,7 @@ paths:
     put:
       operationId: updateGroup
       tags: [groups]
-      summary: Replace an existing group's policies.
+      summary: Replace an existing group's alias and policies.
       description: >
         Never creates: an ID that does not exist is not found. The ID is taken
         from the path only. Needs `update` on `system/groups/<id>`.
@@ -959,6 +1071,9 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Another group holds the alias.
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -1205,6 +1320,71 @@ components:
             type: string
       additionalProperties: false
 
+    NamesResponse:
+      type: object
+      required: [names]
+      properties:
+        names:
+          type: array
+          description: Sorted by byte order. Empty when there are none, never null.
+          items:
+            type: string
+      additionalProperties: false
+
+    Summary:
+      type: object
+      required: [id]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        alias:
+          type: string
+          description: Absent when there is none.
+      additionalProperties: false
+
+    EntityListResponse:
+      type: object
+      required: [entities]
+      properties:
+        entities:
+          type: array
+          description: Sorted by ID in byte order. Empty when there are none, never null.
+          items:
+            $ref: "#/components/schemas/Summary"
+      additionalProperties: false
+
+    GroupListResponse:
+      type: object
+      required: [groups]
+      properties:
+        groups:
+          type: array
+          description: Sorted by ID in byte order. Empty when there are none, never null.
+          items:
+            $ref: "#/components/schemas/Summary"
+      additionalProperties: false
+
+    UserListResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          description: Sorted by name in byte order. Empty when there are none, never null.
+          items:
+            $ref: "#/components/schemas/UserSummary"
+      additionalProperties: false
+
+    UserSummary:
+      type: object
+      required: [name, entity_id]
+      properties:
+        name:
+          type: string
+        entity_id:
+          $ref: "#/components/schemas/ID"
+      additionalProperties: false
+
     PolicyRequest:
       type: object
       properties:
@@ -1259,6 +1439,13 @@ components:
     EntityRequest:
       type: object
       properties:
+        alias:
+          type: string
+          description: >
+            An optional name for the entity, unique across entities. Absent or
+            empty holds none; an update without it clears it.
+          pattern: "^(?!\\.\\.?$)[a-z0-9._-]*$"
+          maxLength: 128
         policies:
           type: array
           description: Policy names. Absent holds none. A name need not exist yet; one that does not grants nothing.
@@ -1277,6 +1464,9 @@ components:
       type: object
       required: [policies, groups]
       properties:
+        alias:
+          type: string
+          description: Absent when the entity has none.
         policies:
           type: array
           description: Empty when the entity holds none, never null.
@@ -1327,6 +1517,13 @@ components:
     GroupRequest:
       type: object
       properties:
+        alias:
+          type: string
+          description: >
+            An optional name for the group, unique across groups. Absent or
+            empty holds none; an update without it clears it.
+          pattern: "^(?!\\.\\.?$)[a-z0-9._-]*$"
+          maxLength: 128
         policies:
           type: array
           description: Policy names. Absent holds none. A name need not exist yet; one that does not grants nothing.
@@ -1340,6 +1537,9 @@ components:
       type: object
       required: [policies]
       properties:
+        alias:
+          type: string
+          description: Absent when the group has none.
         policies:
           type: array
           description: Empty when the group holds none, never null.

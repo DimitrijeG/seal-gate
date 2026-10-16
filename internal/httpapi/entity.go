@@ -14,11 +14,13 @@ import (
 const entityBodyLimit = 64 << 10
 
 type entityRequest struct {
+	Alias    string   `json:"alias"`
 	Policies []string `json:"policies"`
 	Groups   []string `json:"groups"`
 }
 
 type entityResponse struct {
+	Alias    string   `json:"alias,omitempty"`
 	Policies []string `json:"policies"`
 	Groups   []string `json:"groups"`
 }
@@ -175,6 +177,7 @@ func (h *Handlers) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 func (req entityRequest) entity(id string) identity.Entity {
 	return identity.Entity{
 		ID:       id,
+		Alias:    req.Alias,
 		Policies: req.Policies,
 		Groups:   req.Groups,
 	}
@@ -188,5 +191,5 @@ func newEntityResponse(entity identity.Entity) entityResponse {
 	groups := make([]string, len(entity.Groups))
 	copy(groups, entity.Groups)
 
-	return entityResponse{Policies: policies, Groups: groups}
+	return entityResponse{Alias: entity.Alias, Policies: policies, Groups: groups}
 }
