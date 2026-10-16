@@ -68,7 +68,7 @@ curl -s -X PUT http://127.0.0.1:8080/v1/secrets/app/db-password \
 
 curl -s http://127.0.0.1:8080/v1/secrets/app/db-password \
   -H "Authorization: Bearer $TOKEN"
-# {"value":"aHVudGVyMg=="}
+# {"value":"aHVudGVyMg==","generated":false}
 
 echo 'aHVudGVyMg==' | base64 -d
 # hunter2

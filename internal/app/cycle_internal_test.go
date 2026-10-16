@@ -45,6 +45,8 @@ type initBody struct {
 
 type secretBody struct {
 	Value     string `json:"value"`
+	Generated bool   `json:"generated"`
+	TTL       int64  `json:"ttl"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -1167,6 +1169,37 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got := getSecret(t, router, "db/password"); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a generated secret reads back as generated", func(t *testing.T) {
+		router := unsealed(t)
+		generateSecret(t, router, "db/password", 32)
+
+		rec := send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[secretBody](t, rec).Generated; !got {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+
+	t.Run("a secret's TTL reads back in seconds", func(t *testing.T) {
+		router := unsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("generate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		rec = send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[secretBody](t, rec).TTL; got != 3600 {
+			t.Errorf("got %d, want 3600", got)
 		}
 	})
 

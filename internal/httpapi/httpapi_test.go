@@ -131,6 +131,8 @@ func (f *fakeSystem) Seal(ctx context.Context, principal authorization.Principal
 
 type secretBody struct {
 	Value     string `json:"value"`
+	Generated bool   `json:"generated"`
+	TTL       int64  `json:"ttl"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -145,6 +147,8 @@ type fakeSecret struct {
 	putTTL       time.Duration
 	getValue     []byte
 	getExpiresAt time.Time
+	getGenerated bool
+	getTTL       time.Duration
 	listPrefix   string
 	listPaths    []string
 	genLength    int
@@ -179,7 +183,7 @@ func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal,
 func (f *fakeSecret) Get(ctx context.Context, principal authorization.Principal, path string) (secret.Entry, error) {
 	f.principal = principal
 	f.path = path
-	return secret.Entry{Value: f.getValue, ExpiresAt: f.getExpiresAt}, f.err
+	return secret.Entry{Value: f.getValue, ExpiresAt: f.getExpiresAt, Generated: f.getGenerated, TTL: f.getTTL}, f.err
 }
 
 func (f *fakeSecret) Delete(ctx context.Context, principal authorization.Principal, path string) error {
