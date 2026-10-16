@@ -11,243 +11,200 @@ Once unsealed, it stores and generates secrets, controls access to them with
 path-based policies over entities, groups and tokens, expires and rotates them
 on a schedule, and writes an audit record of every request to an API route.
 
-## Quick start
+Built test-first: every behaviour began as a failing test, and code and its
+tests landed together.
 
-Needs Go (the version in `go.mod`), `curl` and a POSIX shell.
+## Requirements
 
-Build into an empty directory and start the server there. It listens on
-`127.0.0.1:8080` and stays in the foreground:
+- Go, the version in [go.mod](go.mod).
+- Optional: a PostgreSQL server, for the `postgres` storage backend and its
+  tests. The default backend, bolt, is an embedded file and needs nothing.
 
-```sh
-DEMO=$(mktemp -d)
-go build -o "$DEMO/" ./cmd/seal-gate
-cd "$DEMO" && ./seal-gate
-```
+## Running
 
-In a second terminal, check the status. A new server is neither initialized
-nor unsealed:
+Build and start the server. It listens on `127.0.0.1:8080`, stays in the
+foreground, and writes its database and audit log to the working directory:
 
 ```sh
-curl -s http://127.0.0.1:8080/v1/sys/status
-# {"initialized":false,"sealed":true,"progress":0}
+go build -o seal-gate ./cmd/seal-gate
+./seal-gate
 ```
 
-Initialize it with three shares, any two of which unseal it. The response is
-the only time the shares and the root token are shown:
+A new server is uninitialized and sealed. `POST /v1/sys/init` returns the
+unseal shares and the root token, once; `POST /v1/sys/unseal` takes the shares
+one at a time. The whole HTTP API is in [api/openapi.yaml](api/openapi.yaml).
 
-```sh
-curl -s -X POST http://127.0.0.1:8080/v1/sys/init \
-  -H 'Content-Type: application/json' -d '{"shares":3,"threshold":2}'
-# {"shares":["<share 1>","<share 2>","<share 3>"],"root_token":"<root token>"}
-```
-
-Copy two of the shares and the token into variables, then unseal with one
-share at a time. `progress` counts the shares so far:
-
-```sh
-SHARE1='<share 1>'
-SHARE2='<share 2>'
-TOKEN='<root token>'
-
-curl -s -X POST http://127.0.0.1:8080/v1/sys/unseal \
-  -H 'Content-Type: application/json' -d "{\"share\":\"$SHARE1\"}"
-# {"initialized":true,"sealed":true,"shares":3,"threshold":2,"progress":1}
-
-curl -s -X POST http://127.0.0.1:8080/v1/sys/unseal \
-  -H 'Content-Type: application/json' -d "{\"share\":\"$SHARE2\"}"
-# {"initialized":true,"sealed":false,"shares":3,"threshold":2,"progress":0}
-```
-
-Write a secret and read it back. Values travel as base64, and the token is
-sent as it was returned:
-
-```sh
-curl -s -X PUT http://127.0.0.1:8080/v1/secrets/app/db-password \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d "{\"value\":\"$(printf 'hunter2' | base64)\"}"
-
-curl -s http://127.0.0.1:8080/v1/secrets/app/db-password \
-  -H "Authorization: Bearer $TOKEN"
-# {"value":"aHVudGVyMg==","generated":false}
-
-echo 'aHVudGVyMg==' | base64 -d
-# hunter2
-```
-
-Seal it again. The key is dropped from memory, and the same read is refused
-until the service is unsealed again:
-
-```sh
-curl -s -X POST http://127.0.0.1:8080/v1/sys/seal -H "Authorization: Bearer $TOKEN"
-
-curl -s http://127.0.0.1:8080/v1/secrets/app/db-password \
-  -H "Authorization: Bearer $TOKEN"
-# {"errors":["the system is sealed"]}
-```
-
-Stop the server with Ctrl+C. The demo directory now holds the encrypted
-database, `seal-gate.db`, and the audit log, `seal-gate-audit.log`. Started
-again in the same directory, the server comes back sealed, with the secret
-still there.
-
-The full HTTP API (policies, entities, groups, tokens, password login,
-generated secrets and rotation) is described in
-[api/openapi.yaml](api/openapi.yaml).
-
-## Configuration
+### Configuration
 
 All settings live in one YAML file. Without `-config`, the server runs with
 [internal/config/default.yaml](internal/config/default.yaml), built into the
-binary; it lists every field, with a comment where the value needs one. A
-file passed with `-config` replaces it whole:
+binary; it lists every field. A file passed with `-config` replaces it whole,
+and is strict: a missing or unknown field, a wrong type or a missing file stops
+the server at startup.
 
 ```sh
 cp internal/config/default.yaml seal-gate.yaml   # then edit
-seal-gate -config seal-gate.yaml
+./seal-gate -config seal-gate.yaml
 ```
 
-The file is the whole configuration, so it is strict: a missing or empty
-field, an unknown field, a value of the wrong type, a duration written as a
-bare number instead of text (`5s`, `1m`, `24h`), a YAML alias or merge key,
-more than one document, or a missing file stops the server at startup. Logs go to stdout.
-
-One setting comes from the environment instead: `SEAL_GATE_STORAGE_URL`, the
-Postgres connection URL, used only when `storage.type` is `postgres`. It may
-carry the database password, so the file refuses a `url` field and the
-password never sits in a file. `memory` keeps nothing across a restart, so it
-suits tests and trying the API out. To store in Postgres, set `storage.type:
-postgres` in the file and the URL in the environment:
+The Postgres connection URL comes from the environment instead,
+`SEAL_GATE_STORAGE_URL`, so the database password never sits in a file. It is
+read only when `storage.type` is `postgres`:
 
 ```sh
 SEAL_GATE_STORAGE_URL='postgres://seal:<password>@db.example:5432/seal'
 ```
 
-The backend keeps one table, `seal_gate`, created on start. Run one instance
-per database: Postgres, unlike bolt's file lock, does not stop a second one.
-
-## Layout
-
-```text
-cmd/seal-gate/          the binary; main() stays small
-internal/
-├── app/                composition root — builds the graph, holds no rules
-├── config/             typed configuration and the built-in default.yaml
-├── system/             seal/unseal/init state machine, active-key lifetime
-├── identity/           entities, groups, credentials, tokens — who is calling
-├── authorization/      path-based ACL policies — what they may do
-├── secret/             secret CRUD, generation and rotation; takes no cipher
-├── lifecycle/          the worker: when secrets and tokens expire or rotate
-├── cryptography/       primitives: AEAD, Shamir, key wrapping, password hashing
-├── barrier/            the encryption boundary; everything below is ciphertext
-├── repository/         the one implementation of every domain repository
-├── storage/            four-method physical backends
-│   ├── memory/         tests and development
-│   ├── bolt/           embedded B+tree, the local default
-│   ├── postgres/       SQL used deliberately as dumb KV
-│   │   └── postgrestest/  per-test schemas for tests
-│   └── conformance/    the definition of backend support
-├── audit/              events and the fan-out recorder
-│   └── file/           the file sink
-└── httpapi/            routing, JSON, auth middleware, error mapping
-api/openapi.yaml        the HTTP contract
-tools/graphd/           live package graph + import rule enforcement
-```
-
-### Planned, not built
-
-These were in the design and were cut for time. Nothing in the code depends
-on them:
-
-- **An etcd backend.** Postgres already shows a networked backend behind the
-  same four-method contract.
-- **In-memory indexes.** Every lookup is a direct read by key, and listing is
-  a prefix scan, which is enough at this project's scale.
-- **Rekey**, replacing the unseal shares without re-encrypting what is stored.
-- **Locking key memory** and suppressing core dumps. Linux only, and not
-  developed on Linux.
-
-Running more than one instance (failover, standby) was left out by design,
-not for time.
-
-## How it was built
-
-Test-first throughout: each behaviour starts as a failing test, and code and
-its tests land in the same pull request. An issue is never split into one
-that writes an implementation and a later one that tests it: merged behaviour
-that nothing asserts is not finished work, and a test written a milestone
-later gets written against the code instead of the requirement.
-
-The exception is a test no red-green cycle can drive. `-race` needs a C
-compiler, which the development machine did not have, so it runs only in CI,
-on every pull request.
-
-## Checks
-
-### On save — automatic
-
-The VS Code Go extension formats the file (gofmt, imports) and underlines
-`go vet` and staticcheck findings. Fix what is underlined.
-
-### Before committing
+### Tests and benchmarks
 
 ```sh
-gofmt -l .                                   # must print nothing
-go build ./...
-go vet ./...
 go test ./...
-cd tools/graphd && go test -count=1 ./...    # import rules
+go test -run '^$' -bench . -benchmem ./...
 ```
 
-`-count=1` is not optional: graphd runs `go list` on another directory tree,
-which the test cache cannot see, so a cached pass can be stale.
-
-The postgres backend's tests need a server, named by `SEAL_GATE_POSTGRES_URL`;
-without it they skip. Each test gets a schema of its own, so one database
-serves every package at once:
+The Postgres tests and benchmarks need a server, named by
+`SEAL_GATE_POSTGRES_URL`, and skip without it. Each test gets its own schema,
+so one database serves them all:
 
 ```sh
 docker run -d --name seal-gate-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:5432:5432 postgres:18
 export SEAL_GATE_POSTGRES_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable'
 ```
 
-### Benchmarks
+## Architecture
 
-`go test ./...` never runs them. Each one reports allocations; the postgres
-rows need `SEAL_GATE_POSTGRES_URL`, as its tests do, and skip without it:
+The code is split into domain modules, which hold the rules, and
+infrastructure, which they reach only through interfaces they declare
+themselves. Infrastructure may import a domain module, never the reverse.
 
-```sh
-go test -run '^$' -bench . ./...
-```
+**Domain** (under `internal/`):
 
-### Coverage
+- `system`: init, seal and unseal, and the lifetime of the active key.
+- `identity`: entities, groups, users, passwords and tokens; who is calling.
+- `authorization`: path-based policies; what the caller may do.
+- `secret`: storing, generating and rotating secrets.
+- `lifecycle`: the background worker that expires and rotates on schedule.
 
-A number to read, not a gate. Each package counts only its own tests, so one
-without any reads 0%. CI writes the same numbers as a table to the job summary:
+**Infrastructure:**
 
-```sh
-go test -coverprofile=coverage.out ./...
-go tool cover -func=coverage.out | tail -1     # total
-go tool cover -html=coverage.out               # per line, in the browser
-```
+- `httpapi`: routing, JSON, authentication middleware and error mapping.
+- `barrier`: the encryption boundary; everything below it is ciphertext.
+- `repository`: the one implementation of every domain repository.
+- `storage`: the key-value contract, with `bolt`, `postgres` and `memory`
+  backends.
+- `cryptography`: AEAD, Shamir, key wrapping, the key holder and password
+  hashing.
+- `audit`: events, the fan-out recorder, and the file sink.
+- `config`, and `app`, the composition root that wires everything together.
 
-### Before opening a PR
+> **Diagram: modules and their dependencies.** _To be added._
 
-```sh
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
-go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
-```
-
-Use the versions pinned in `.github/workflows/ci.yml`. CI also runs the tests
-with `-race`, which needs cgo and a C compiler locally.
-
-### On the PR — automatic
-
-CI repeats all of the above, with `-race` and against a Postgres server, and
-runs each benchmark once so a broken one fails. Then CodeQL and Copilot
-review run. Merging needs the `Test` and `Architecture` checks to pass.
+> **Diagram: the key hierarchy.** Shares → root key → barrier key → stored
+> values. _To be added._
 
 ### Live package graph
+
+[tools/graphd](tools/graphd) is a small tool written alongside the service. It
+serves the module's package graph in the browser and rebuilds it as files
+change, checking the import rules on every rebuild: a domain module importing
+storage or crypto, the HTTP layer reaching past the services, a cycle. A
+violation shows on the graph as soon as the import is saved. The same rules
+run as its tests, so a break cannot be merged.
 
 ```sh
 cd tools/graphd && go run . -dir ../..       # http://127.0.0.1:7717
 ```
+
+## Communication
+
+Who calls whom, and in what order, for the main flows. Each diagram follows
+one request from the HTTP layer down to storage and back.
+
+> **Diagram: initialization and unsealing.** _To be added._
+
+> **Diagram: writing a secret.** _To be added._
+
+> **Diagram: reading a secret.** _To be added._
+
+> **Diagram: generating and rotating a secret,** by request and by the
+> lifecycle worker. _To be added._
+
+> **Diagram: login and token issuing.** _To be added._
+
+## Algorithms
+
+| Purpose | Algorithm | Notes |
+|---|---|---|
+| Splitting the root key | Shamir's secret sharing over GF(2⁸) | Written by hand. One polynomial per byte; field multiplication is branch-free and table-free, so its timing does not depend on the key. |
+| Encrypting stored values | AES-256-GCM | Each ciphertext is bound to its storage key and format version as additional data, so it cannot be moved or relabelled. |
+| Wrapping the barrier key | AES-256-GCM under the root key | The seal configuration and root token hash are bound as additional data. |
+| Hashing passwords | argon2id, m = 19 MiB, t = 2, p = 1 | Stored as PHC strings, which carry their own parameters. An unknown user is checked against a dummy hash, so it costs the same as a wrong password. |
+| Storing tokens | SHA-256 | Tokens are 32 random bytes; only their hash is stored. |
+
+## Extension points
+
+Each one is an interface with a conformance test or a registry, chosen in the
+composition root or the configuration file:
+
+- **Storage backends** implement `storage.Backend` (get, put, delete, list by
+  prefix) and pass the shared conformance suite in `storage/conformance`. The
+  backend never sees plaintext, so it needs no security of its own.
+- **Ciphers** are registered by name in `cryptography` and chosen with
+  `crypto.aead_algorithm`. Stored values carry a format version byte.
+- **Audit sinks** implement `audit.Sink`. Each is listed in `audit.sinks`,
+  either required (a failed write refuses the request) or best effort, with
+  its own timeout.
+- **Password hash parameters** can change without invalidating stored hashes,
+  since each hash records the parameters it was made with.
+- **Login methods** issue tokens through the same token service as password
+  login, so a new method only has to prove an identity.
+
+### What the benchmarks say
+
+Measured on an AMD Ryzen 7 7800X3D under Windows 11, Postgres running locally:
+
+| Operation | Time | Memory |
+|---|---|---|
+| Login (any outcome) | 13.0 ms | 19 MB |
+| Unseal, end to end | 79 µs | 38 KB |
+| Read a secret as root, end to end | 27 µs | 17 KB |
+| Read a secret as an entity, end to end | 35 µs | 25 KB |
+| Barrier put / get (memory backend) | 0.88 / 0.81 µs | 4.8 / 3.6 KB |
+| AES-256-GCM, 64 KiB | 13.5 µs (4.9 GB/s) | — |
+| Shamir split / combine, 3 shares, threshold 2 | 3.4 / 1.2 µs | — |
+| Shamir split / combine, 255 shares, threshold 128 | 20.8 / 1.5 ms | — |
+| bolt put / get | 1.7 ms / 0.42 µs | — |
+| postgres put / get | 1.4 / 0.30 ms | — |
+
+What they point to:
+
+- **Encryption is not the bottleneck.** The barrier adds under a microsecond
+  over the backend, and storage dominates everything else: a durable write
+  costs about 1.5 ms on either disk-backed backend, three orders of magnitude
+  more than encrypting it. Batching writes would be the first improvement for
+  write-heavy use.
+- **Policy evaluation is the cost of not being root.** An entity's read takes
+  a third longer and twice the allocations, because its policies and groups
+  are read and decrypted from storage on every request. An in-memory cache
+  of policies, invalidated on write, would close most of that gap.
+- **Login is deliberately expensive.** Almost all of its 13 ms and 19 MB is
+  argon2id, and an unknown user costs the same as a known one, so timing does
+  not reveal which usernames exist. The memory is the risk: concurrent logins
+  multiply it. Rate limiting or a cap on concurrent hashes would be the
+  extension here.
+- **Shamir costs nothing at realistic sizes.** Unseal is far from any limit
+  even at the maximum of 255 shares; the byte-wise, constant-time field
+  arithmetic could be replaced by lookup tables for speed, at the price of
+  key-dependent memory access.
+
+## Statistics
+
+| | |
+|---|---|
+| Go packages | 20, plus graphd as a separate module |
+| Production code | about 7,100 lines |
+| Test code | about 21,400 lines, three to one against production |
+| Tests | 73 test functions, about 2,000 subtests |
+| Statement coverage | 87.3% overall |
+| HTTP operations | 34 |
+| Direct dependencies | 4: bbolt, pgx, yaml, and argon2id from `golang.org/x/crypto` |

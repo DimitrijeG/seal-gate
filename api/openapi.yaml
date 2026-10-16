@@ -6,7 +6,9 @@ info:
   summary: Secrets-management service with Shamir-based unsealing.
   description: >
     Lists only operations that are implemented. Each one is added in the same
-    change as its handler.
+    change as its handler. Every JSON response carries
+    `Cache-Control: no-store`, since a body may hold a secret, a share or a
+    token.
 
 servers:
   - url: /v1
@@ -429,6 +431,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NamesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: >
+            The path is unclean, as in `/policies/x/..`; it is refused, not
+            redirected.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -551,6 +558,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EntityListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: >
+            The path is unclean, as in `/entities/x/..`; it is refused, not
+            redirected.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -726,17 +738,17 @@ paths:
                 $ref: "#/components/schemas/CreateTokenResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-          description: The request body exceeds 1024 bytes.
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 1024 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -890,6 +902,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: >
+            The path is unclean, as in `/auth/users/x/..`; it is refused, not
+            redirected.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1017,6 +1034,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GroupListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: >
+            The path is unclean, as in `/groups/x/..`; it is refused, not
+            redirected.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1165,7 +1187,8 @@ components:
       type: http
       scheme: bearer
       description: >
-        A token as returned by init or token issuing, in standard base64.
+        A token as returned by init, login, or token issuing or rotation, in
+        standard base64.
         Every operation needs one unless it says it is open.
 
   responses:
