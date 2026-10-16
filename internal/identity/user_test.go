@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +51,14 @@ func (r *fakeUsers) Delete(_ context.Context, name string) error {
 	}
 	delete(r.users, name)
 	return nil
+}
+
+func (r *fakeUsers) List(_ context.Context) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return slices.Sorted(maps.Keys(r.users)), nil
 }
 
 // fakeHasher hashes to fakeHash, fast where argon2id is slow by design; err, when set, fails every call, and matchAll
@@ -133,6 +143,22 @@ func newUserServiceFakes(t *testing.T) (*identity.UserService, userFakes) {
 var alice = identity.StoredUser{EntityID: hexID, PasswordHash: fakeHash(password)}
 
 func TestUser(t *testing.T) {
+	t.Run("every stored user's name is listed", func(t *testing.T) {
+		s, users, _, _ := newUserService(t)
+		users.users["bob"] = alice
+		users.users["alice"] = alice
+		want := []string{"alice", "bob"}
+
+		got, err := s.ListUsers(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("a set user is stored as its entity ID and the password's hash", func(t *testing.T) {
 		s, users, _, _ := newUserService(t)
 		want := identity.StoredUser{EntityID: hexID, PasswordHash: fakeHash(password)}
@@ -331,6 +357,10 @@ var userOperations = []struct {
 	}},
 	{"delete", func(ctx context.Context, s *identity.UserService) error {
 		return s.DeleteUser(ctx, principal, "alice")
+	}},
+	{"list", func(ctx context.Context, s *identity.UserService) error {
+		_, err := s.ListUsers(ctx, principal)
+		return err
 	}},
 }
 

@@ -20,11 +20,13 @@ type Group struct {
 const groupsResource = "system/groups"
 
 // GroupRepository stores groups by ID. Get returns ErrGroupNotFound for a missing ID and ErrUnreadableGroup
-// for a corrupt record; Delete does not fail on a missing ID; every method returns ErrSealed while sealed.
+// for a corrupt record; Delete does not fail on a missing ID; List returns every ID in byte order;
+// every method returns ErrSealed while sealed.
 type GroupRepository interface {
 	Put(ctx context.Context, group Group) error
 	Get(ctx context.Context, id string) (Group, error)
 	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]string, error)
 }
 
 // GroupService manages groups, authorizing each operation's principal before the repository, and combines an entity's policies with its groups'.
@@ -97,6 +99,19 @@ func (s *GroupService) getGroup(ctx context.Context, id string) (Group, error) {
 		return Group{}, ErrUnreadableGroup
 	}
 	return group, nil
+}
+
+// ListGroups returns every group's ID in byte order if principal may list the group collection.
+func (s *GroupService) ListGroups(ctx context.Context, principal authorization.Principal) ([]string, error) {
+	if err := s.authorizer.Authorize(ctx, principal, groupsResource, authorization.CapabilityList); err != nil {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+
+	ids, err := s.groups.List(ctx)
+	if err != nil && !ours(err) {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+	return ids, err
 }
 
 // DeleteGroup removes the group with id if principal may delete it; a missing ID is not an error.

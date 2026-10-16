@@ -26,8 +26,10 @@ const (
 )
 
 // entityRecord is the stored layout; it changes only with its version. The ID is the key, not a field.
+// Alias came without a version bump, so a version 1 record without it reads as no alias.
 type entityRecord struct {
 	Version  int      `json:"version"`
+	Alias    string   `json:"alias,omitempty"`
 	Policies []string `json:"policies"`
 	Groups   []string `json:"groups"`
 }
@@ -39,6 +41,7 @@ func entityKey(id string) string {
 func (r *entityRepository) Put(ctx context.Context, entity identity.Entity) error {
 	record := entityRecord{
 		Version:  entityRecordVersion,
+		Alias:    entity.Alias,
 		Policies: entity.Policies,
 		Groups:   entity.Groups,
 	}
@@ -78,7 +81,7 @@ func (r *entityRepository) Get(ctx context.Context, id string) (identity.Entity,
 	if record.Version != entityRecordVersion {
 		return identity.Entity{}, identity.ErrUnreadableEntity
 	}
-	return identity.Entity{ID: id, Policies: record.Policies, Groups: record.Groups}, nil
+	return identity.Entity{ID: id, Alias: record.Alias, Policies: record.Policies, Groups: record.Groups}, nil
 }
 
 func (r *entityRepository) Delete(ctx context.Context, id string) error {
@@ -90,4 +93,15 @@ func (r *entityRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("repository: %w", err)
 	}
 	return nil
+}
+
+func (r *entityRepository) List(ctx context.Context) ([]string, error) {
+	names, err := listNames(ctx, r.encrypted, entityPrefix)
+	if errors.Is(err, barrier.ErrSealed) {
+		return nil, identity.ErrSealed
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository: %w", err)
+	}
+	return names, nil
 }

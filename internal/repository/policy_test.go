@@ -257,6 +257,46 @@ func TestPolicyRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("every stored policy's name is listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Policy
+		want := []string{"dev", "ops"}
+		for _, name := range want {
+			if err := repo.Put(t.Context(), authorization.Policy{Name: name}); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+		}
+
+		got, err := repo.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("keys that are not policies are not listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		want := []string{"dev"}
+		if err := f.set.Policy.Put(t.Context(), devPolicy()); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := f.encrypted.Put(t.Context(), "groups/other", []byte("{}")); err != nil {
+			t.Fatalf("barrier Put: %v", err)
+		}
+
+		got, err := f.set.Policy.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("every operation is refused while sealed", func(t *testing.T) {
 		tests := []struct {
 			name string
@@ -271,6 +311,10 @@ func TestPolicyRepository(t *testing.T) {
 			}},
 			{"delete", func(t *testing.T, set *repository.Set) error {
 				return set.Policy.Delete(t.Context(), "dev")
+			}},
+			{"list", func(t *testing.T, set *repository.Set) error {
+				_, err := set.Policy.List(t.Context())
+				return err
 			}},
 		}
 

@@ -151,12 +151,7 @@ func (h *Handlers) handleListSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A nil slice encodes as null; the spec's paths is an array.
-	if paths == nil {
-		paths = []string{}
-	}
-
 	writeJSON(w, http.StatusOK, listResponse{
-		Paths: paths,
+		Paths: orEmpty(paths),
 	})
 }

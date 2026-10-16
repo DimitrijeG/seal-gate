@@ -10,11 +10,13 @@ import (
 )
 
 // Repository stores policies by name. Get returns ErrNotFound for a missing name and ErrUnreadablePolicy
-// for a corrupt record; Delete does not fail on a missing name; every method returns ErrSealed while sealed.
+// for a corrupt record; Delete does not fail on a missing name; List returns every name in byte order;
+// every method returns ErrSealed while sealed.
 type Repository interface {
 	Put(ctx context.Context, policy Policy) error
 	Get(ctx context.Context, name string) (Policy, error)
 	Delete(ctx context.Context, name string) error
+	List(ctx context.Context) ([]string, error)
 }
 
 // Authorizer decides whether principal may use capability on resource: nil allows, ErrDenied refuses, any other error means no decision.
@@ -24,8 +26,12 @@ type Authorizer interface {
 
 var _ Authorizer = (*Service)(nil)
 
-// policyResourcePrefix turns a policy name into the resource policies name it by.
-const policyResourcePrefix = "system/policies/"
+const (
+	// policiesResource is the resource policies name the policy collection by.
+	policiesResource = "system/policies"
+	// policyResourcePrefix turns a policy name into the resource policies name it by.
+	policyResourcePrefix = policiesResource + "/"
+)
 
 // Service manages policies, validating each and authorizing its principal before the repository, and decides access from them.
 type Service struct {
@@ -107,6 +113,19 @@ func (s *Service) Delete(ctx context.Context, principal Principal, name string) 
 		return fmt.Errorf("authorization: %w", err)
 	}
 	return err
+}
+
+// List returns every policy's name in byte order if principal may list the policy collection.
+func (s *Service) List(ctx context.Context, principal Principal) ([]string, error) {
+	if err := s.Authorize(ctx, principal, policiesResource, CapabilityList); err != nil {
+		return nil, err
+	}
+
+	names, err := s.repo.List(ctx)
+	if err != nil && !errors.Is(err, ErrSealed) {
+		return nil, fmt.Errorf("authorization: %w", err)
+	}
+	return names, err
 }
 
 // Authorize returns nil if principal may use capability on resource, else ErrDenied: the root always may, others

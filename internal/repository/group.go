@@ -89,3 +89,14 @@ func (r *groupRepository) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (r *groupRepository) List(ctx context.Context) ([]string, error) {
+	names, err := listNames(ctx, r.encrypted, groupPrefix)
+	if errors.Is(err, barrier.ErrSealed) {
+		return nil, identity.ErrSealed
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository: %w", err)
+	}
+	return names, nil
+}

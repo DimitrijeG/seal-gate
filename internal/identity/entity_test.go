@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,6 +52,14 @@ func (r *fakeEntities) Delete(_ context.Context, id string) error {
 	}
 	delete(r.entities, id)
 	return nil
+}
+
+func (r *fakeEntities) List(_ context.Context) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return slices.Sorted(maps.Keys(r.entities)), nil
 }
 
 // racingEntities holds the first Get, after it has read, until a Delete has run
@@ -100,6 +110,54 @@ func (r *racingEntities) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// racingLists holds the first List, after it has read, until a second List has run or 100 ms pass,
+// so two unguarded creates both scan before either writes.
+type racingLists struct {
+	fakeEntities
+	mu     sync.Mutex
+	lists  atomic.Int32
+	listed chan struct{}
+	second chan struct{}
+}
+
+func newRacingLists() *racingLists {
+	return &racingLists{
+		fakeEntities: fakeEntities{entities: make(map[string]identity.Entity)},
+		listed:       make(chan struct{}),
+		second:       make(chan struct{}),
+	}
+}
+
+func (r *racingLists) Put(ctx context.Context, entity identity.Entity) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakeEntities.Put(ctx, entity)
+}
+
+func (r *racingLists) Get(ctx context.Context, id string) (identity.Entity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakeEntities.Get(ctx, id)
+}
+
+func (r *racingLists) List(ctx context.Context) ([]string, error) {
+	r.mu.Lock()
+	ids, err := r.fakeEntities.List(ctx)
+	r.mu.Unlock()
+
+	switch r.lists.Add(1) {
+	case 1:
+		close(r.listed)
+		select {
+		case <-r.second:
+		case <-time.After(100 * time.Millisecond):
+		}
+	case 2:
+		close(r.second)
+	}
+	return ids, err
+}
+
 // fakeRandom fills each call's bytes with the call's number, starting at 1, and keeps the last slice it returned.
 type fakeRandom struct {
 	calls byte
@@ -140,6 +198,23 @@ func newAuthorizedEntityService(t *testing.T) (*identity.EntityService, *fakeEnt
 }
 
 func TestEntity(t *testing.T) {
+	t.Run("every stored entity's ID is listed", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		other := strings.Repeat("01", 16)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		entities.entities[other] = identity.Entity{ID: other}
+		want := []string{other, hexID}
+
+		got, err := s.ListEntities(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListEntities: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("a created entity reads back with its policies and groups", func(t *testing.T) {
 		s, _, _ := newEntityService(t)
 		entity := identity.Entity{Policies: []string{"dev"}, Groups: []string{hexID}}
@@ -156,6 +231,24 @@ func TestEntity(t *testing.T) {
 		entity.ID = id
 		if !reflect.DeepEqual(got, entity) {
 			t.Errorf("got %+v, want %+v", got, entity)
+		}
+	})
+
+	t.Run("a created entity keeps its alias", func(t *testing.T) {
+		s, _, _ := newEntityService(t)
+		want := "ci-runner"
+
+		id, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: want})
+		if err != nil {
+			t.Fatalf("CreateEntity: %v", err)
+		}
+		got, err := s.GetEntity(t.Context(), principal, id)
+		if err != nil {
+			t.Fatalf("GetEntity: %v", err)
+		}
+
+		if got.Alias != want {
+			t.Errorf("got %q, want %q", got.Alias, want)
 		}
 	})
 
@@ -407,9 +500,143 @@ func TestEntity(t *testing.T) {
 		}
 	})
 
+	t.Run("an invalid alias is refused", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			alias string
+		}{
+			{"uppercase", "CI"},
+			{"too long", strings.Repeat("a", 129)},
+			{"dot", "."},
+			{"dot-dot", ".."},
+			{"slash", "ci/runner"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, _ := newEntityService(t)
+
+				_, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: tt.alias})
+
+				if !errors.Is(err, identity.ErrInvalidAlias) {
+					t.Errorf("got %v, want %v", err, identity.ErrInvalidAlias)
+				}
+			})
+		}
+	})
+
+	t.Run("an alias of the longest length is accepted", func(t *testing.T) {
+		s, _, _ := newEntityService(t)
+
+		_, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: strings.Repeat("a", 128)})
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("creating with an alias another entity holds is refused", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID, Alias: "ci"}
+
+		_, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: "ci"})
+
+		if !errors.Is(err, identity.ErrAliasTaken) {
+			t.Errorf("got %v, want %v", err, identity.ErrAliasTaken)
+		}
+	})
+
+	t.Run("updating to an alias another entity holds is refused", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		other := strings.Repeat("01", 16)
+		entities.entities[hexID] = identity.Entity{ID: hexID, Alias: "ci"}
+		entities.entities[other] = identity.Entity{ID: other}
+
+		err := s.UpdateEntity(t.Context(), principal, identity.Entity{ID: other, Alias: "ci"})
+
+		if !errors.Is(err, identity.ErrAliasTaken) {
+			t.Errorf("got %v, want %v", err, identity.ErrAliasTaken)
+		}
+	})
+
+	t.Run("an update keeping the entity's own alias is accepted", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID, Alias: "ci"}
+
+		err := s.UpdateEntity(t.Context(), principal, identity.Entity{ID: hexID, Alias: "ci", Policies: []string{"dev"}})
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("entities without an alias never clash", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+
+		_, err := s.CreateEntity(t.Context(), principal, identity.Entity{})
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("an unreadable entity refuses an alias rather than risk a duplicate", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID, Policies: []string{"dev/ops"}}
+
+		_, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: "ci"})
+
+		if !errors.Is(err, identity.ErrUnreadableEntity) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
+		}
+	})
+
+	t.Run("a stored key that is not an entity ID refuses an alias as unreadable", func(t *testing.T) {
+		s, entities, _ := newEntityService(t)
+		entities.entities["not-an-id"] = identity.Entity{ID: "not-an-id"}
+
+		_, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: "ci"})
+
+		if !errors.Is(err, identity.ErrUnreadableEntity) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
+		}
+	})
+
+	t.Run("two creates racing for one alias cannot both claim it", func(t *testing.T) {
+		entities := newRacingLists()
+		s := identity.NewEntityService(entities, &fakeRandom{}, &fakeAuthorizer{})
+		ctx := t.Context()
+
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			_, errs[0] = s.CreateEntity(ctx, principal, identity.Entity{Alias: "ci"})
+		})
+		// The second starts only once the first has scanned.
+		<-entities.listed
+		wg.Go(func() {
+			_, errs[1] = s.CreateEntity(ctx, principal, identity.Entity{Alias: "ci"})
+		})
+		wg.Wait()
+
+		taken := 0
+		for _, err := range errs {
+			if errors.Is(err, identity.ErrAliasTaken) {
+				taken++
+			} else if err != nil {
+				t.Fatalf("CreateEntity: %v", err)
+			}
+		}
+		if taken != 1 {
+			t.Errorf("got %d refused, want 1", taken)
+		}
+	})
+
 	t.Run("invalid lists never reach the repository", func(t *testing.T) {
 		badPolicy := identity.Entity{ID: hexID, Policies: []string{"dev/ops"}}
 		badGroup := identity.Entity{ID: hexID, Groups: []string{"dev"}}
+		badAlias := identity.Entity{ID: hexID, Alias: "CI"}
 
 		tests := []struct {
 			name string
@@ -430,6 +657,13 @@ func TestEntity(t *testing.T) {
 			{"update, group ID", func(ctx context.Context, s *identity.EntityService) error {
 				return s.UpdateEntity(ctx, principal, badGroup)
 			}, identity.ErrInvalidGroupID},
+			{"create, alias", func(ctx context.Context, s *identity.EntityService) error {
+				_, err := s.CreateEntity(ctx, principal, badAlias)
+				return err
+			}, identity.ErrInvalidAlias},
+			{"update, alias", func(ctx context.Context, s *identity.EntityService) error {
+				return s.UpdateEntity(ctx, principal, badAlias)
+			}, identity.ErrInvalidAlias},
 		}
 
 		for _, tt := range tests {
@@ -475,6 +709,7 @@ func TestEntity(t *testing.T) {
 		}{
 			{"policy name", identity.Entity{ID: hexID, Policies: []string{"dev/ops"}}},
 			{"group ID", identity.Entity{ID: hexID, Groups: []string{"dev"}}},
+			{"alias", identity.Entity{ID: hexID, Alias: "CI"}},
 		}
 
 		for _, tt := range tests {
@@ -606,5 +841,9 @@ var operations = []struct {
 	}},
 	{"delete", func(ctx context.Context, s *identity.EntityService) error {
 		return s.DeleteEntity(ctx, principal, hexID)
+	}},
+	{"list", func(ctx context.Context, s *identity.EntityService) error {
+		_, err := s.ListEntities(ctx, principal)
+		return err
 	}},
 }

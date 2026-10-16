@@ -788,6 +788,49 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a token lists entities where its policy grants list on the collection", func(t *testing.T) {
+		router := unsealed(t)
+		entityID := createEntity(t, router)
+		token := entityToken(t, router, `[{"path":"system/entities","capabilities":["list"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/entities", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[struct {
+			IDs []string `json:"ids"`
+		}](t, rec).IDs
+
+		if !slices.Contains(got, entityID) {
+			t.Errorf("got %v, want it to hold %q", got, entityID)
+		}
+	})
+
+	t.Run("a token is forbidden a listing granted only beneath the collection", func(t *testing.T) {
+		router := unsealed(t)
+		token := entityToken(t, router, `[{"path":"system/policies/*","capabilities":["list"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/policies", "")
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body)
+		}
+	})
+
+	t.Run("creating an entity with a taken alias is a conflict", func(t *testing.T) {
+		router := unsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/entities", `{"alias":"ci"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("first create: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		rec = send(t, router, http.MethodPost, "/v1/entities", `{"alias":"ci"}`)
+
+		if rec.Code != http.StatusConflict {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body)
+		}
+	})
+
 	t.Run("a token is forbidden a group no rule grants", func(t *testing.T) {
 		router := unsealed(t)
 		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)

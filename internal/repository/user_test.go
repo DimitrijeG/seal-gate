@@ -186,6 +186,46 @@ func TestUserRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("every stored user's name is listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.User
+		want := []string{"alice", "bob"}
+		for _, name := range want {
+			if err := repo.Put(t.Context(), name, aliceUser); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+		}
+
+		got, err := repo.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("keys that are not users are not listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		want := []string{"alice"}
+		if err := f.set.User.Put(t.Context(), "alice", aliceUser); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := f.encrypted.Put(t.Context(), "entities/"+entityID, []byte("{}")); err != nil {
+			t.Fatalf("barrier Put: %v", err)
+		}
+
+		got, err := f.set.User.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("every operation is refused while sealed", func(t *testing.T) {
 		tests := []struct {
 			name string
@@ -200,6 +240,10 @@ func TestUserRepository(t *testing.T) {
 			}},
 			{"delete", func(t *testing.T, set *repository.Set) error {
 				return set.User.Delete(t.Context(), "alice")
+			}},
+			{"list", func(t *testing.T, set *repository.Set) error {
+				_, err := set.User.List(t.Context())
+				return err
 			}},
 		}
 

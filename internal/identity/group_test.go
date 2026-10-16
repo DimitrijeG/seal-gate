@@ -3,7 +3,9 @@ package identity_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +50,14 @@ func (r *fakeGroups) Delete(_ context.Context, id string) error {
 	}
 	delete(r.groups, id)
 	return nil
+}
+
+func (r *fakeGroups) List(_ context.Context) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return slices.Sorted(maps.Keys(r.groups)), nil
 }
 
 // racingGroups holds the first Get, after it has read, until a Delete has run
@@ -113,6 +123,23 @@ func newAuthorizedGroupService(t *testing.T) (*identity.GroupService, *fakeGroup
 }
 
 func TestGroup(t *testing.T) {
+	t.Run("every stored group's ID is listed", func(t *testing.T) {
+		s, groups, _ := newGroupService(t)
+		other := strings.Repeat("01", 16)
+		groups.groups[hexID] = identity.Group{ID: hexID}
+		groups.groups[other] = identity.Group{ID: other}
+		want := []string{other, hexID}
+
+		got, err := s.ListGroups(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListGroups: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("a created group reads back with its policies", func(t *testing.T) {
 		s, _, _ := newGroupService(t)
 		group := identity.Group{Policies: []string{"dev"}}
@@ -520,5 +547,9 @@ var groupOperations = []struct {
 	}},
 	{"delete", func(ctx context.Context, s *identity.GroupService) error {
 		return s.DeleteGroup(ctx, principal, hexID)
+	}},
+	{"list", func(ctx context.Context, s *identity.GroupService) error {
+		_, err := s.ListGroups(ctx, principal)
+		return err
 	}},
 }

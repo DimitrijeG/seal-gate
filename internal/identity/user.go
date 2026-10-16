@@ -18,11 +18,13 @@ type StoredUser struct {
 // usersResource is the resource policies name the user collection by; each user is beneath it by name.
 const usersResource = "system/users"
 
-// UserRepository stores users by name. Delete does not fail on a missing name; every method returns ErrSealed while sealed.
+// UserRepository stores users by name. Delete does not fail on a missing name; List returns every name in byte order;
+// every method returns ErrSealed while sealed.
 type UserRepository interface {
 	Put(ctx context.Context, name string, user StoredUser) error
 	Get(ctx context.Context, name string) (StoredUser, error)
 	Delete(ctx context.Context, name string) error
+	List(ctx context.Context) ([]string, error)
 }
 
 // PasswordHasher hashes passwords into strings that carry their own parameters.
@@ -125,6 +127,19 @@ func (s *UserService) SetUser(ctx context.Context, principal authorization.Princ
 		return fmt.Errorf("identity: %w", err)
 	}
 	return err
+}
+
+// ListUsers returns every user's name in byte order if principal may list the user collection.
+func (s *UserService) ListUsers(ctx context.Context, principal authorization.Principal) ([]string, error) {
+	if err := s.authorizer.Authorize(ctx, principal, usersResource, authorization.CapabilityList); err != nil {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+
+	names, err := s.users.List(ctx)
+	if err != nil && !ours(err) {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+	return names, err
 }
 
 // DeleteUser removes the user name if principal may delete it; a missing user is not an error.

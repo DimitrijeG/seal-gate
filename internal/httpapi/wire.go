@@ -134,6 +134,8 @@ var domainErrors = []struct {
 	{identity.ErrInvalidEntityID, http.StatusBadRequest, "invalid entity ID"},
 	{identity.ErrInvalidPolicyName, http.StatusBadRequest, "invalid policy name"},
 	{identity.ErrInvalidGroupID, http.StatusBadRequest, "invalid group ID"},
+	{identity.ErrInvalidAlias, http.StatusBadRequest, "invalid alias"},
+	{identity.ErrAliasTaken, http.StatusConflict, "alias already in use"},
 	{identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
 	{identity.ErrGroupNotFound, http.StatusNotFound, "group not found"},
 	{identity.ErrInvalidTTL, http.StatusBadRequest, "invalid TTL"},

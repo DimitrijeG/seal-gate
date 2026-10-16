@@ -255,6 +255,46 @@ func TestGroupRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("every stored group's ID is listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Group
+		want := []string{entityID, groupID}
+		for _, id := range want {
+			if err := repo.Put(t.Context(), identity.Group{ID: id}); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+		}
+
+		got, err := repo.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("keys that are not groups are not listed", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		want := []string{groupID}
+		if err := f.set.Group.Put(t.Context(), devGroup()); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := f.encrypted.Put(t.Context(), "entities/"+entityID, []byte("{}")); err != nil {
+			t.Fatalf("barrier Put: %v", err)
+		}
+
+		got, err := f.set.Group.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("every operation is refused while sealed", func(t *testing.T) {
 		tests := []struct {
 			name string
@@ -269,6 +309,10 @@ func TestGroupRepository(t *testing.T) {
 			}},
 			{"delete", func(t *testing.T, set *repository.Set) error {
 				return set.Group.Delete(t.Context(), groupID)
+			}},
+			{"list", func(t *testing.T, set *repository.Set) error {
+				_, err := set.Group.List(t.Context())
+				return err
 			}},
 		}
 

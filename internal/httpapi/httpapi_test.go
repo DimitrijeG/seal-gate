@@ -204,6 +204,7 @@ type ruleBody struct {
 }
 
 type fakePolicy struct {
+	list      []string
 	principal authorization.Principal // the last principal any method got
 	name      string                  // the last name Get or Delete got
 	putPolicy authorization.Policy
@@ -239,6 +240,7 @@ type createEntityBody struct {
 }
 
 type fakeEntity struct {
+	list      []string
 	principal authorization.Principal // the last principal any method got
 	id        string                  // the last ID Get or Delete got
 	created   identity.Entity
@@ -315,6 +317,7 @@ type createGroupBody struct {
 }
 
 type fakeGroup struct {
+	list      []string
 	principal authorization.Principal // the last principal any method got
 	id        string                  // the last ID Get or Delete got
 	created   identity.Group
@@ -349,6 +352,7 @@ func (f *fakeGroup) DeleteGroup(ctx context.Context, principal authorization.Pri
 }
 
 type fakeUser struct {
+	list           []string
 	principal      authorization.Principal // the last principal any method got
 	name           string                  // the last name any method got
 	entityID       string
@@ -437,4 +441,24 @@ func assertError(t *testing.T, rec *httptest.ResponseRecorder, status int, messa
 	if !slices.Equal(got.Errors, want) {
 		t.Errorf("message: got %v, want %v", got.Errors, want)
 	}
+}
+
+func (f *fakePolicy) List(ctx context.Context, principal authorization.Principal) ([]string, error) {
+	f.principal = principal
+	return f.list, f.err
+}
+
+func (f *fakeEntity) ListEntities(ctx context.Context, principal authorization.Principal) ([]string, error) {
+	f.principal = principal
+	return f.list, f.err
+}
+
+func (f *fakeGroup) ListGroups(ctx context.Context, principal authorization.Principal) ([]string, error) {
+	f.principal = principal
+	return f.list, f.err
+}
+
+func (f *fakeUser) ListUsers(ctx context.Context, principal authorization.Principal) ([]string, error) {
+	f.principal = principal
+	return f.list, f.err
 }
