@@ -29,6 +29,51 @@ func TestGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("a created group's alias reaches the service", func(t *testing.T) {
+		fake := &fakeGroup{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: fake})
+		want := "ops"
+
+		rec := do(t, router, http.MethodPost, "/v1/groups", `{"alias":"ops"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if fake.created.Alias != want {
+			t.Errorf("got %q, want %q", fake.created.Alias, want)
+		}
+	})
+
+	t.Run("an updated group's alias reaches the service", func(t *testing.T) {
+		fake := &fakeGroup{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: fake})
+		want := "ops"
+
+		rec := do(t, router, http.MethodPut, "/v1/groups/"+groupID, `{"alias":"ops"}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if fake.updated.Alias != want {
+			t.Errorf("got %q, want %q", fake.updated.Alias, want)
+		}
+	})
+
+	t.Run("a stored group is returned with its alias", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{getGroup: identity.Group{ID: groupID, Alias: "ops"}}})
+		want := `{"alias":"ops","policies":[]}`
+
+		rec := do(t, router, http.MethodGet, "/v1/groups/"+groupID, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
 	t.Run("a create answers with the new ID", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Group: &fakeGroup{createID: groupID}})
 
@@ -217,6 +262,8 @@ func TestGroup(t *testing.T) {
 			{"invalid group ID", identity.ErrInvalidGroupID, http.StatusBadRequest, "invalid group ID"},
 			{"invalid policy name", identity.ErrInvalidPolicyName, http.StatusBadRequest, "invalid policy name"},
 			{"not found", identity.ErrGroupNotFound, http.StatusNotFound, "group not found"},
+			{"invalid alias", identity.ErrInvalidAlias, http.StatusBadRequest, "invalid alias"},
+			{"alias taken", identity.ErrGroupAliasTaken, http.StatusConflict, "alias already in use"},
 			// A corrupt record is the server's fault, not the client's.
 			{"unreadable group", identity.ErrUnreadableGroup, http.StatusInternalServerError, "internal error"},
 		}

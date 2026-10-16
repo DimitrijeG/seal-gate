@@ -831,6 +831,20 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("creating a group with a taken alias is a conflict", func(t *testing.T) {
+		router := unsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/groups", `{"alias":"ops"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("first create: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		rec = send(t, router, http.MethodPost, "/v1/groups", `{"alias":"ops"}`)
+
+		if rec.Code != http.StatusConflict {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body)
+		}
+	})
+
 	t.Run("a token is forbidden a group no rule grants", func(t *testing.T) {
 		router := unsealed(t)
 		token := entityToken(t, router, `[{"path":"secrets/dev/*","capabilities":["read"]}]`)

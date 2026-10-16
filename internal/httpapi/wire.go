@@ -136,6 +136,7 @@ var domainErrors = []struct {
 	{identity.ErrInvalidGroupID, http.StatusBadRequest, "invalid group ID"},
 	{identity.ErrInvalidAlias, http.StatusBadRequest, "invalid alias"},
 	{identity.ErrAliasTaken, http.StatusConflict, "alias already in use"},
+	{identity.ErrGroupAliasTaken, http.StatusConflict, "alias already in use"},
 	{identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
 	{identity.ErrGroupNotFound, http.StatusNotFound, "group not found"},
 	{identity.ErrInvalidTTL, http.StatusBadRequest, "invalid TTL"},

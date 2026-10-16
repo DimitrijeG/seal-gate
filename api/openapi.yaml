@@ -995,6 +995,9 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Another group holds the alias.
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -1022,7 +1025,7 @@ paths:
         Needs `read` on `system/groups/<id>`.
       responses:
         "200":
-          description: The group's policies.
+          description: The group's alias and policies.
           content:
             application/json:
               schema:
@@ -1043,7 +1046,7 @@ paths:
     put:
       operationId: updateGroup
       tags: [groups]
-      summary: Replace an existing group's policies.
+      summary: Replace an existing group's alias and policies.
       description: >
         Never creates: an ID that does not exist is not found. The ID is taken
         from the path only. Needs `update` on `system/groups/<id>`.
@@ -1064,6 +1067,9 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: Another group holds the alias.
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
           description: The request body exceeds 65536 bytes.
@@ -1464,6 +1470,13 @@ components:
     GroupRequest:
       type: object
       properties:
+        alias:
+          type: string
+          description: >
+            An optional name for the group, unique across groups. Absent or
+            empty holds none; an update without it clears it.
+          pattern: "^(?!\\.\\.?$)[a-z0-9._-]*$"
+          maxLength: 128
         policies:
           type: array
           description: Policy names. Absent holds none. A name need not exist yet; one that does not grants nothing.
@@ -1477,6 +1490,9 @@ components:
       type: object
       required: [policies]
       properties:
+        alias:
+          type: string
+          description: Absent when the group has none.
         policies:
           type: array
           description: Empty when the group holds none, never null.

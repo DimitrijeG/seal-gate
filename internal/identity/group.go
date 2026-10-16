@@ -11,8 +11,10 @@ import (
 )
 
 // Group assigns its policies to the entities that name it; its ID is generated and never reused, and it holds no member list.
+// Alias is an optional name for it, unique across groups; empty means none.
 type Group struct {
 	ID       string
+	Alias    string
 	Policies []string
 }
 
@@ -31,8 +33,8 @@ type GroupRepository interface {
 
 // GroupService manages groups, authorizing each operation's principal before the repository, and combines an entity's policies with its groups'.
 type GroupService struct {
-	// Held by update and delete, so no delete lands between update's existence check and its write and
-	// brings a deleted group back, re-granting its policies. Process-local: it assumes one instance.
+	// Held by create, update and delete, so no delete lands between update's existence check and its write and re-grants
+	// a deleted group's policies, and no two writes both find an alias free. Process-local: it assumes one instance.
 	mu         sync.Mutex
 	groups     GroupRepository
 	random     Random
@@ -44,13 +46,21 @@ func NewGroupService(groups GroupRepository, random Random, authorizer authoriza
 	return &GroupService{groups: groups, random: random, authorizer: authorizer}
 }
 
-// CreateGroup stores group under a newly generated ID if principal may create groups, replacing any ID it carries, and returns that ID.
+// CreateGroup stores group under a newly generated ID if principal may create groups, replacing any ID it carries,
+// and returns that ID; an alias another group holds is ErrGroupAliasTaken.
 func (s *GroupService) CreateGroup(ctx context.Context, principal authorization.Principal, group Group) (string, error) {
 	if err := validateGroup(group); err != nil {
 		return "", err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.authorizer.Authorize(ctx, principal, groupsResource, authorization.CapabilityCreate); err != nil {
 		return "", fmt.Errorf("identity: %w", err)
+	}
+
+	if err := s.checkAlias(ctx, "", group.Alias); err != nil {
+		return "", err
 	}
 
 	id, err := s.random.Bytes(idBytes)
@@ -133,7 +143,8 @@ func (s *GroupService) DeleteGroup(ctx context.Context, principal authorization.
 	return err
 }
 
-// UpdateGroup replaces an existing group's policies if principal may update it; it never creates one, so a missing ID is ErrGroupNotFound.
+// UpdateGroup replaces an existing group's alias and policies if principal may update it; it never creates one,
+// so a missing ID is ErrGroupNotFound, and an alias another group holds is ErrGroupAliasTaken.
 func (s *GroupService) UpdateGroup(ctx context.Context, principal authorization.Principal, group Group) error {
 	if !validID(group.ID) {
 		return ErrInvalidGroupID
@@ -152,12 +163,49 @@ func (s *GroupService) UpdateGroup(ctx context.Context, principal authorization.
 	if _, err := s.getGroup(ctx, group.ID); err != nil {
 		return err
 	}
+	if err := s.checkAlias(ctx, group.ID, group.Alias); err != nil {
+		return err
+	}
 
 	err := s.groups.Put(ctx, group)
 	if err != nil && !ours(err) {
 		return fmt.Errorf("identity: %w", err)
 	}
 	return err
+}
+
+// checkAlias returns ErrGroupAliasTaken if a group other than id holds alias; the caller holds mu. Every group is read,
+// so an unreadable one fails the check rather than hide a duplicate.
+func (s *GroupService) checkAlias(ctx context.Context, id, alias string) error {
+	if alias == "" {
+		return nil
+	}
+
+	ids, err := s.groups.List(ctx)
+	if err != nil && !ours(err) {
+		return fmt.Errorf("identity: %w", err)
+	}
+	if err != nil {
+		return err
+	}
+
+	for _, other := range ids {
+		if other == id {
+			continue
+		}
+		group, err := s.getGroup(ctx, other)
+		// A stored key that is not an ID is a corrupt store, not the caller's mistake.
+		if errors.Is(err, ErrInvalidGroupID) {
+			return ErrUnreadableGroup
+		}
+		if err != nil {
+			return err
+		}
+		if group.Alias == alias {
+			return ErrGroupAliasTaken
+		}
+	}
+	return nil
 }
 
 // EffectivePolicies returns the entity's own policy names, then each of its groups', each name once.

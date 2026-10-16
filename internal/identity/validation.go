@@ -36,6 +36,9 @@ func validateLists(entity Entity) error {
 
 // validateGroup leaves out the ID, as validateLists does.
 func validateGroup(group Group) error {
+	if group.Alias != "" && !validUsername(group.Alias) {
+		return ErrInvalidAlias
+	}
 	for _, policy := range group.Policies {
 		if !authorization.ValidPolicyName(policy) {
 			return ErrInvalidPolicyName

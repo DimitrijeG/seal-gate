@@ -26,8 +26,10 @@ const (
 )
 
 // groupRecord is the stored layout; it changes only with its version. The ID is the key, not a field.
+// Alias came without a version bump, so a version 1 record without it reads as no alias.
 type groupRecord struct {
 	Version  int      `json:"version"`
+	Alias    string   `json:"alias,omitempty"`
 	Policies []string `json:"policies"`
 }
 
@@ -38,6 +40,7 @@ func groupKey(id string) string {
 func (r *groupRepository) Put(ctx context.Context, group identity.Group) error {
 	record := groupRecord{
 		Version:  groupRecordVersion,
+		Alias:    group.Alias,
 		Policies: group.Policies,
 	}
 	encoded, err := json.Marshal(record)
@@ -76,7 +79,7 @@ func (r *groupRepository) Get(ctx context.Context, id string) (identity.Group, e
 	if record.Version != groupRecordVersion {
 		return identity.Group{}, identity.ErrUnreadableGroup
 	}
-	return identity.Group{ID: id, Policies: record.Policies}, nil
+	return identity.Group{ID: id, Alias: record.Alias, Policies: record.Policies}, nil
 }
 
 func (r *groupRepository) Delete(ctx context.Context, id string) error {

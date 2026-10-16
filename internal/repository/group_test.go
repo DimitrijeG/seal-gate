@@ -255,6 +255,41 @@ func TestGroupRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("a stored group's alias reads back", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Group
+		want := "ops"
+
+		if err := repo.Put(t.Context(), identity.Group{ID: groupID, Alias: want}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := repo.Get(t.Context(), groupID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if got.Alias != want {
+			t.Errorf("got %q, want %q", got.Alias, want)
+		}
+	})
+
+	t.Run("a version 1 record written without an alias reads back with none", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		record := `{"version": 1, "policies": ["dev"]}`
+		if err := f.encrypted.Put(t.Context(), "groups/"+groupID, []byte(record)); err != nil {
+			t.Fatalf("barrier Put: %v", err)
+		}
+
+		got, err := f.set.Group.Get(t.Context(), groupID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if got.Alias != "" {
+			t.Errorf("got %q, want none", got.Alias)
+		}
+	})
+
 	t.Run("every stored group's ID is listed", func(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Group
