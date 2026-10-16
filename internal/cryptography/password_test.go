@@ -156,6 +156,36 @@ func TestArgon2id(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("a hash it made passes the check", func(t *testing.T) {
+		h := cryptography.NewArgon2id(cryptography.CryptoRandom{})
+
+		if err := h.Check(defaultsAnswer); err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("a hash Verify would refuse fails the check", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			encoded string
+		}{
+			{"empty", ""},
+			{"wrong algorithm", strings.Replace(defaultsAnswer, "$argon2id$", "$argon2i$", 1)},
+			{"zero time", strings.Replace(smallAnswer, "t=1", "t=0", 1)},
+			{"memory above the cap", strings.Replace(smallAnswer, "m=64", "m=4294967295", 1)},
+		}
+
+		h := cryptography.NewArgon2id(cryptography.CryptoRandom{})
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				err := h.Check(tt.encoded)
+				if !errors.Is(err, cryptography.ErrInvalidPasswordHash) {
+					t.Errorf("got %v, want %v", err, cryptography.ErrInvalidPasswordHash)
+				}
+			})
+		}
+	})
 }
 
 // BenchmarkArgon2id times one call at the default parameters; each allocates their 19 MiB.

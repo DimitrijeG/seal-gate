@@ -99,6 +99,14 @@ func (h *fakeHasher) Verify(password []byte, encoded string) (bool, error) {
 }
 
 // fakeHash is not the password, so a stored password shows as a mismatch.
+// Check refuses any hash fakeHash could not have made.
+func (h *fakeHasher) Check(encoded string) error {
+	if !strings.HasPrefix(encoded, "hash:") {
+		return errors.New("fake: malformed hash")
+	}
+	return nil
+}
+
 func fakeHash(password []byte) string {
 	return "hash:" + hex.EncodeToString(password)
 }
@@ -179,6 +187,7 @@ func TestUser(t *testing.T) {
 		}{
 			{"invalid entity ID", "alice", identity.StoredUser{EntityID: "not-an-id", PasswordHash: fakeHash(password)}},
 			{"empty hash", "alice", identity.StoredUser{EntityID: hexID}},
+			{"malformed hash", "alice", identity.StoredUser{EntityID: hexID, PasswordHash: "not-a-hash"}},
 			{"key not a username", "Alice", alice},
 		}
 

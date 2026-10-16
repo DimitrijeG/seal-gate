@@ -41,6 +41,7 @@ type UserRepository interface {
 type PasswordHasher interface {
 	Hash(password []byte) (string, error)
 	Verify(password []byte, encoded string) (bool, error)
+	Check(encoded string) error
 }
 
 // UserService manages users, each a username mapped to an entity and a password hash.
@@ -171,7 +172,8 @@ func (s *UserService) ListUsers(ctx context.Context, principal authorization.Pri
 		if err != nil {
 			return nil, err
 		}
-		if !user.readable() {
+		// Check, not Verify: a parse is enough to find a hash Login would refuse, without a derivation per user.
+		if !user.readable() || s.hasher.Check(user.PasswordHash) != nil {
 			return nil, ErrUnreadableUser
 		}
 		summaries = append(summaries, UserSummary{Name: name, EntityID: user.EntityID})
