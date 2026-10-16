@@ -182,6 +182,67 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	t.Run("a file that leaves a field empty fails", func(t *testing.T) {
+		tests := []struct {
+			name, old, new string
+		}{
+			{"blank flag", "required: true", "required:"},
+			{"null flag", "required: true", "required: null"},
+			{"null duration", "read_timeout: 5s", "read_timeout: null"},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				path := writeConfig(t, defaultWith(t, tc.old, tc.new))
+
+				_, err := config.Load(path)
+
+				if !errors.Is(err, config.ErrMissingField) {
+					t.Errorf("got %v, want %v", err, config.ErrMissingField)
+				}
+			})
+		}
+	})
+
+	t.Run("a text field given another type fails", func(t *testing.T) {
+		tests := []struct {
+			name, old, new string
+		}{
+			{"number", "path: seal-gate.db", "path: 123"},
+			{"boolean", "format: json", "format: false"},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				path := writeConfig(t, defaultWith(t, tc.old, tc.new))
+
+				_, err := config.Load(path)
+
+				if !errors.Is(err, config.ErrInvalidFile) {
+					t.Errorf("got %v, want %v", err, config.ErrInvalidFile)
+				}
+			})
+		}
+	})
+
+	t.Run("a file that reuses a value fails", func(t *testing.T) {
+		tests := []struct {
+			name, file string
+		}{
+			{"alias", strings.Replace(defaultWith(t, "path: seal-gate.db", "path: &db seal-gate.db"), "path: seal-gate-audit.log", "path: *db", 1)},
+			{"merge key", defaultWith(t, "aead_algorithm: aes-256-gcm", "<<: {aead_algorithm: aes-256-gcm}")},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				path := writeConfig(t, tc.file)
+
+				_, err := config.Load(path)
+
+				if !errors.Is(err, config.ErrInvalidFile) {
+					t.Errorf("got %v, want %v", err, config.ErrInvalidFile)
+				}
+			})
+		}
+	})
+
 	t.Run("an empty file fails", func(t *testing.T) {
 		path := writeConfig(t, "")
 

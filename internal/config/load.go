@@ -51,6 +51,9 @@ func decode(data []byte) (*Config, error) {
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidFile, err)
 	}
+	if err := refuseReuse(&document); err != nil {
+		return nil, err
+	}
 	var root *yaml.Node
 	if len(document.Content) > 0 {
 		root = document.Content[0]
@@ -69,10 +72,16 @@ func requireFields(node *yaml.Node, t reflect.Type, prefix string) error {
 			continue
 		}
 		value := mappingValue(node, key)
-		if value == nil {
+		// The decoder leaves a null at the zero value, which would make a blank required: false.
+		if value == nil || value.ShortTag() == "!!null" {
 			return fmt.Errorf("%w: %s%s", ErrMissingField, prefix, key)
 		}
 		switch field.Type.Kind() {
+		case reflect.String:
+			// The decoder takes any scalar's text into a string, so path: 123 would pass as a path.
+			if value.ShortTag() != "!!str" {
+				return fmt.Errorf("%w: %s%s is not text", ErrInvalidFile, prefix, key)
+			}
 		case reflect.Struct:
 			if err := requireFields(value, field.Type, prefix+key+"."); err != nil {
 				return err
@@ -86,6 +95,19 @@ func requireFields(node *yaml.Node, t reflect.Type, prefix string) error {
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// refuseReuse rejects aliases and merge keys, so the file reads literally and requireFields sees every field where it is written.
+func refuseReuse(node *yaml.Node) error {
+	if node.Kind == yaml.AliasNode || node.ShortTag() == "!!merge" {
+		return fmt.Errorf("%w: line %d: aliases and merge keys are not supported", ErrInvalidFile, node.Line)
+	}
+	for _, child := range node.Content {
+		if err := refuseReuse(child); err != nil {
+			return err
 		}
 	}
 	return nil

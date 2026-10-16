@@ -106,10 +106,10 @@ cp internal/config/default.yaml seal-gate.yaml   # then edit
 seal-gate -config seal-gate.yaml
 ```
 
-The file is the whole configuration, so it is strict: a missing field, an
-unknown field, a value of the wrong type, a duration written as a bare number
-instead of text (`5s`, `1m`, `24h`), more than one document, or a missing file
-stops the server at startup. Logs go to stdout.
+The file is the whole configuration, so it is strict: a missing or empty
+field, an unknown field, a value of the wrong type, a duration written as a
+bare number instead of text (`5s`, `1m`, `24h`), a YAML alias or merge key,
+more than one document, or a missing file stops the server at startup. Logs go to stdout.
 
 One setting comes from the environment instead: `SEAL_GATE_STORAGE_URL`, the
 Postgres connection URL, used only when `storage.type` is `postgres`. It may
