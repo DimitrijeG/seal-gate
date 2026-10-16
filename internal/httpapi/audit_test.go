@@ -199,9 +199,12 @@ func TestAudit(t *testing.T) {
 			{"POST /v1/sys/unseal", "/v1/sys/unseal"},
 			{"GET /v1/sys/status", "/v1/sys/status"},
 			{"GET /v1/sys/health", "/v1/sys/health"},
+			{"POST /v1/auth/login", "/v1/auth/login"},
 			{"POST /v1/sys/seal", "/v1/sys/seal"},
 			{"POST /v1/auth/token/revoke", "/v1/auth/token/revoke"},
 			{"POST /v1/auth/token/rotate", "/v1/auth/token/rotate"},
+			{"PUT /v1/auth/users/{name}", "/v1/auth/users/alice"},
+			{"DELETE /v1/auth/users/{name}", "/v1/auth/users/alice"},
 			{"GET /v1/secrets", "/v1/secrets"},
 			{"PUT /v1/secrets/{path...}", "/v1/secrets/db/password"},
 			{"GET /v1/secrets/{path...}", "/v1/secrets/db/password"},
@@ -234,6 +237,7 @@ func TestAudit(t *testing.T) {
 					Entity:        &fakeEntity{},
 					Token:         &fakeToken{},
 					Group:         &fakeGroup{},
+					User:          &fakeUser{},
 				}
 				method, _, _ := strings.Cut(tt.route, " ")
 

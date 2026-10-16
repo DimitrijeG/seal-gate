@@ -137,10 +137,13 @@ var domainErrors = []struct {
 	{identity.ErrEntityNotFound, http.StatusNotFound, "entity not found"},
 	{identity.ErrGroupNotFound, http.StatusNotFound, "group not found"},
 	{identity.ErrInvalidTTL, http.StatusBadRequest, "invalid TTL"},
+	{identity.ErrInvalidUsername, http.StatusBadRequest, "invalid username"},
+	{identity.ErrInvalidPassword, http.StatusBadRequest, "invalid password"},
 	{identity.ErrRootToken, http.StatusBadRequest, "the root token cannot be revoked or rotated"},
 	{identity.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 	// Shares errUnauthenticated's message, so a client cannot tell a known token from a malformed one.
 	{identity.ErrInvalidToken, http.StatusUnauthorized, "missing or invalid token"},
+	{identity.ErrInvalidCredentials, http.StatusUnauthorized, "invalid username or password"},
 }
 
 // writeJSON forbids caching on every body, since a body may carry a secret or a share.

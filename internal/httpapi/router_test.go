@@ -21,6 +21,8 @@ func TestRouter(t *testing.T) {
 			{"update entity", http.MethodPut, "/v1/entities/" + entityID},
 			{"create group", http.MethodPost, "/v1/groups"},
 			{"update group", http.MethodPut, "/v1/groups/" + groupID},
+			{"put user", http.MethodPut, "/v1/auth/users/alice"},
+			{"login", http.MethodPost, "/v1/auth/login"},
 		}
 		// Bodies fit no endpoint in particular, so each case applies to every route.
 		tests := []struct {
@@ -47,6 +49,7 @@ func TestRouter(t *testing.T) {
 						Secret:        &fakeSecret{},
 						Policy:        &fakePolicy{},
 						Entity:        &fakeEntity{},
+						User:          &fakeUser{},
 					})
 
 					router.ServeHTTP(rec, req)
@@ -70,6 +73,8 @@ func TestRouter(t *testing.T) {
 			{"update entity", http.MethodPut, "/v1/entities/" + entityID, 65536},
 			{"create group", http.MethodPost, "/v1/groups", 65536},
 			{"update group", http.MethodPut, "/v1/groups/" + groupID, 65536},
+			{"put user", http.MethodPut, "/v1/auth/users/alice", 8192},
+			{"login", http.MethodPost, "/v1/auth/login", 8192},
 		}
 
 		for _, route := range routes {
@@ -83,6 +88,7 @@ func TestRouter(t *testing.T) {
 					Policy:        &fakePolicy{},
 					Entity:        &fakeEntity{},
 					Group:         &fakeGroup{},
+					User:          &fakeUser{},
 				})
 
 				rec := do(t, router, route.method, route.path, body)
@@ -228,6 +234,26 @@ func TestRouter(t *testing.T) {
 				rec := do(t, router, http.MethodPost, tt.target, devGroupJSON)
 
 				assertError(t, rec, http.StatusBadRequest, "invalid group ID")
+			})
+		}
+	})
+
+	t.Run("a user path that is not in its clean form is refused", func(t *testing.T) {
+		tests := []struct{ name, target string }{
+			{"parent segment", "/v1/auth/users/bob/../alice"},
+			{"current segment", "/v1/auth/users/./alice"},
+			{"empty segment", "/v1/auth/users//alice"},
+			{"empty segment before the route", "/v1//auth/users/alice"},
+			{"parent segment from another route", "/v1/secrets/../auth/users/alice"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: &fakeUser{}})
+
+				rec := do(t, router, http.MethodPut, tt.target, aliceJSON)
+
+				assertError(t, rec, http.StatusBadRequest, "invalid username")
 			})
 		}
 	})

@@ -28,6 +28,7 @@ type infrastructure struct {
 	shamir  *cryptography.Shamir
 	wrapper *cryptography.KeyWrapper
 	random  cryptography.CryptoRandom
+	hasher  *cryptography.Argon2id
 }
 
 type repositories struct {
@@ -42,6 +43,7 @@ type services struct {
 	entity        *identity.EntityService
 	token         *identity.TokenService
 	group         *identity.GroupService
+	user          *identity.UserService
 	worker        *lifecycle.Worker
 }
 
@@ -73,6 +75,7 @@ func buildInfrastructure(cfg *config.Config) (*infrastructure, error) {
 		shamir:  shamir,
 		wrapper: cryptography.NewKeyWrapper(cipher),
 		random:  random,
+		hasher:  cryptography.NewArgon2id(random),
 	}, nil
 }
 
@@ -106,6 +109,10 @@ func buildServices(infra *infrastructure, repositories *repositories, auditor li
 	}
 	sys = system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)
+	user, err := identity.NewUserService(repositories.set.User, infra.hasher, entity, token, policy)
+	if err != nil {
+		return nil, fmt.Errorf("app: %w", err)
+	}
 
 	return &services{
 		authenticator: identity.NewAuthenticator(sys, token, group),
@@ -115,6 +122,7 @@ func buildServices(infra *infrastructure, repositories *repositories, auditor li
 		entity:        entity,
 		token:         token,
 		group:         group,
+		user:          user,
 		worker:        worker,
 	}, nil
 }
@@ -130,6 +138,7 @@ func buildRouter(services *services, infra *infrastructure, auditor httpapi.Audi
 		Entity:        services.entity,
 		Token:         services.token,
 		Group:         services.group,
+		User:          services.user,
 		Logger:        infra.logger,
 	})
 }

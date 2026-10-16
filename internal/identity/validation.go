@@ -9,6 +9,10 @@ import (
 const (
 	idBytes    = 16
 	tokenBytes = 32
+
+	maxUsernameLength = 128
+	// Long enough for any passphrase; bounds what a request may make the server hold and hash.
+	maxPasswordLength = 1024
 )
 
 // validateLists leaves out the ID: create checks the entity before it has one.
@@ -34,6 +38,29 @@ func validateGroup(group Group) error {
 		}
 	}
 	return nil
+}
+
+// validUsername allows lowercase only, so two users cannot differ by case alone.
+func validUsername(name string) bool {
+	if name == "" || len(name) > maxUsernameLength || name == "." || name == ".." {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if !validUsernameByte(name[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func validPassword(password []byte) bool {
+	return len(password) > 0 && len(password) <= maxPasswordLength
+}
+
+func validUsernameByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= '0' && b <= '9') ||
+		b == '.' || b == '_' || b == '-'
 }
 
 func validID(id string) bool {

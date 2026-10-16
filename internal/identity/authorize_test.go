@@ -308,6 +308,82 @@ func TestAuthorization(t *testing.T) {
 		}
 	})
 
+	t.Run("each user operation asks its capability on its resource", func(t *testing.T) {
+		tests := []struct {
+			name           string
+			call           func(ctx context.Context, s *identity.UserService) error
+			wantCapability authorization.Capability
+		}{
+			{"set", func(ctx context.Context, s *identity.UserService) error {
+				return s.SetUser(ctx, principal, "alice", hexID, password)
+			}, authorization.CapabilityUpdate},
+			{"delete", func(ctx context.Context, s *identity.UserService) error {
+				return s.DeleteUser(ctx, principal, "alice")
+			}, authorization.CapabilityDelete},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, _, _, authorizer := newAuthorizedUserService(t)
+
+				_ = tt.call(t.Context(), s)
+
+				if want := "system/users/alice"; authorizer.resource != want {
+					t.Errorf("resource: got %q, want %q", authorizer.resource, want)
+				}
+				if authorizer.capability != tt.wantCapability {
+					t.Errorf("capability: got %q, want %q", authorizer.capability, tt.wantCapability)
+				}
+			})
+		}
+	})
+
+	t.Run("a denied user operation calls nothing else", func(t *testing.T) {
+		for _, op := range userOperations {
+			t.Run(op.name, func(t *testing.T) {
+				s, users, entities, hasher, authorizer := newAuthorizedUserService(t)
+				authorizer.err = authorization.ErrDenied
+
+				err := op.call(t.Context(), s)
+
+				if !errors.Is(err, authorization.ErrDenied) {
+					t.Errorf("err: got %v, want %v", err, authorization.ErrDenied)
+				}
+				if calls := users.calls + entities.calls + hasher.calls; calls != 0 {
+					t.Errorf("calls: got %d, want 0", calls)
+				}
+			})
+		}
+	})
+
+	t.Run("the principal reaches the user authorizer", func(t *testing.T) {
+		for _, op := range userOperations {
+			t.Run(op.name, func(t *testing.T) {
+				s, _, _, _, authorizer := newAuthorizedUserService(t)
+
+				_ = op.call(t.Context(), s)
+
+				if !reflect.DeepEqual(authorizer.principal, principal) {
+					t.Errorf("got %+v, want %+v", authorizer.principal, principal)
+				}
+			})
+		}
+	})
+
+	t.Run("an invalid entity ID for a user is refused before authorizing", func(t *testing.T) {
+		s, _, _, hasher, authorizer := newAuthorizedUserService(t)
+		authorizer.err = authorization.ErrDenied
+
+		err := s.SetUser(t.Context(), principal, "alice", "../dev", password)
+
+		if !errors.Is(err, identity.ErrInvalidEntityID) {
+			t.Errorf("err: got %v, want %v", err, identity.ErrInvalidEntityID)
+		}
+		if hasher.calls != 0 {
+			t.Errorf("calls: got %d, want 0", hasher.calls)
+		}
+	})
+
 	t.Run("an invalid ID is refused before authorizing", func(t *testing.T) {
 		tests := []struct {
 			name string

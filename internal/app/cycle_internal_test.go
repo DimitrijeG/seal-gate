@@ -414,6 +414,25 @@ func entityTokenWith(t testing.TB, h http.Handler, rules, body string) string {
 	return decode[tokenBody](t, rec).Token
 }
 
+// setUser has root write policy dev with rules, an entity holding it, and user name with password for that entity.
+func setUser(t testing.TB, h http.Handler, name, password, rules string) {
+	t.Helper()
+	if rec := send(t, h, http.MethodPut, "/v1/policies/dev", `{"rules":`+rules+`}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("put policy: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+	}
+
+	rec := send(t, h, http.MethodPost, "/v1/entities", `{"policies":["dev"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create entity: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+	}
+	entityID := decode[createEntityBody](t, rec).ID
+
+	rec = send(t, h, http.MethodPut, "/v1/auth/users/"+name, `{"entity_id":"`+entityID+`","password":"`+password+`"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("set user: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+	}
+}
+
 // rotateToken rotates the token h sends and returns the new one.
 func rotateToken(t *testing.T, h http.Handler) string {
 	t.Helper()
@@ -620,6 +639,34 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a user logs in and its token reads a secret its policy grants", func(t *testing.T) {
+		router := unsealed(t)
+		want := "c2VjcmV0" // "secret"
+		putSecret(t, router, "dev/a", want)
+		setUser(t, router, "alice", "correct horse", `[{"path":"secrets/dev/*","capabilities":["read"]}]`)
+
+		rec := send(t, router, http.MethodPost, "/v1/auth/login", `{"username":"alice","password":"correct horse"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("login: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		token := decode[tokenBody](t, rec).Token
+
+		if got := getSecret(t, withToken(router, token), "dev/a"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a login with a wrong password is unauthorized", func(t *testing.T) {
+		router := unsealed(t)
+		setUser(t, router, "alice", "correct horse", `[]`)
+
+		rec := send(t, router, http.MethodPost, "/v1/auth/login", `{"username":"alice","password":"wrong horse"}`)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("got %d, want %d: %s", rec.Code, http.StatusUnauthorized, rec.Body)
 		}
 	})
 
@@ -1369,5 +1416,35 @@ func BenchmarkUnseal(b *testing.B) {
 		if got.Sealed {
 			b.Fatalf("got %+v, want unsealed", got)
 		}
+	}
+}
+
+// BenchmarkLogin times a login through the real router; an unknown user verifies against the dummy hash, so it should
+// cost what a wrong password does.
+func BenchmarkLogin(b *testing.B) {
+	i := newInstance(b, memory.New(), newFakeClock(), time.Hour)
+	body := initialize(b, i.router)
+	unsealAll(b, i.router, body.Shares)
+	setUser(b, withToken(i.router, body.RootToken), "alice", "correct horse", `[]`)
+	logins := []struct {
+		name   string
+		body   string
+		status int
+	}{
+		{"known user", `{"username":"alice","password":"correct horse"}`, http.StatusCreated},
+		{"unknown user", `{"username":"bob","password":"correct horse"}`, http.StatusUnauthorized},
+		{"wrong password", `{"username":"alice","password":"wrong horse"}`, http.StatusUnauthorized},
+	}
+
+	for _, login := range logins {
+		b.Run(login.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				if rec := send(b, i.router, http.MethodPost, "/v1/auth/login", login.body); rec.Code != login.status {
+					b.Fatalf("got %d, want %d: %s", rec.Code, login.status, rec.Body)
+				}
+			}
+		})
 	}
 }
