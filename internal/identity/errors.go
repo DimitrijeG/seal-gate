@@ -23,6 +23,13 @@ var (
 	ErrUnreadableGroup = errors.New("identity: unreadable group")
 	// ErrRootToken reports a revoke or rotate of the root token, which is never stored and so can be neither.
 	ErrRootToken = errors.New("identity: root token cannot be revoked or rotated")
+	// ErrInvalidUsername reports a username that is not 1 to 128 bytes of lowercase letters, digits, '.', '_' or '-', or is "." or "..".
+	ErrInvalidUsername = errors.New("identity: invalid username")
+	// ErrInvalidPassword reports a password that is empty or longer than 1024 bytes.
+	ErrInvalidPassword = errors.New("identity: invalid password")
+	ErrUserNotFound    = errors.New("identity: user not found")
+	// ErrUnreadableUser reports a stored user record that does not decode or has an unknown version.
+	ErrUnreadableUser = errors.New("identity: unreadable user")
 )
 
 // ours reports the sentinels a repository may return, which pass up unwrapped so their prefix is not doubled.
