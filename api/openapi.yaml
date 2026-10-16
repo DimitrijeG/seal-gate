@@ -664,6 +664,7 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 1024 bytes.
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "401":
@@ -729,6 +730,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 1024 bytes.
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "503":
@@ -1142,7 +1144,7 @@ components:
             maxLength: 128
         groups:
           type: array
-          description: Group IDs. Absent holds none.
+          description: Group IDs. Absent holds none. An ID need not exist; one that does not grants nothing.
           items:
             $ref: "#/components/schemas/ID"
       additionalProperties: false
