@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,22 @@ func TestUser(t *testing.T) {
 		}
 	})
 
+	t.Run("a stored user is returned as its entity ID", func(t *testing.T) {
+		fake := &fakeUser{getUser: identity.UserSummary{Name: "alice", EntityID: entityID}}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: fake})
+		want := `{"entity_id":"` + entityID + `"}`
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/users/alice", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
 	t.Run("a delete answers no content", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: &fakeUser{}})
 
@@ -51,14 +68,26 @@ func TestUser(t *testing.T) {
 		}
 	})
 
-	t.Run("a delete passes the name to the service", func(t *testing.T) {
-		fake := &fakeUser{}
-		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: fake})
+	t.Run("each operation passes the name to the service", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			method string
+		}{
+			{"get", http.MethodGet},
+			{"delete", http.MethodDelete},
+		}
 
-		do(t, router, http.MethodDelete, "/v1/auth/users/alice", "")
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeUser{}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: fake})
 
-		if fake.name != "alice" {
-			t.Errorf("got %q, want %q", fake.name, "alice")
+				do(t, router, tt.method, "/v1/auth/users/alice", "")
+
+				if fake.name != "alice" {
+					t.Errorf("got %q, want %q", fake.name, "alice")
+				}
+			})
 		}
 	})
 
@@ -69,6 +98,7 @@ func TestUser(t *testing.T) {
 			body   string
 		}{
 			{"set", http.MethodPut, aliceJSON},
+			{"get", http.MethodGet, ""},
 			{"delete", http.MethodDelete, ""},
 		}
 
@@ -94,6 +124,7 @@ func TestUser(t *testing.T) {
 			body   string
 		}{
 			{"set", http.MethodPut, aliceJSON},
+			{"get", http.MethodGet, ""},
 			{"delete", http.MethodDelete, ""},
 		}
 
@@ -117,6 +148,7 @@ func TestUser(t *testing.T) {
 		}{
 			{"invalid username", identity.ErrInvalidUsername, http.StatusBadRequest, "invalid username"},
 			{"invalid password", identity.ErrInvalidPassword, http.StatusBadRequest, "invalid password"},
+			{"user not found", identity.ErrUserNotFound, http.StatusNotFound, "user not found"},
 			// A corrupt record is the server's fault, not the client's.
 			{"unreadable user", identity.ErrUnreadableUser, http.StatusInternalServerError, "internal error"},
 		}

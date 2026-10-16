@@ -868,6 +868,27 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a user set after unseal reads back with its entity", func(t *testing.T) {
+		router := unsealed(t)
+		entityID := createEntity(t, router)
+		rec := send(t, router, http.MethodPut, "/v1/auth/users/alice", `{"entity_id":"`+entityID+`","password":"correct horse"}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("set user: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		rec = send(t, router, http.MethodGet, "/v1/auth/users/alice", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[struct {
+			EntityID string `json:"entity_id"`
+		}](t, rec).EntityID
+
+		if got != entityID {
+			t.Errorf("got %q, want %q", got, entityID)
+		}
+	})
+
 	t.Run("a token is forbidden a listing granted only beneath the collection", func(t *testing.T) {
 		router := unsealed(t)
 		token := entityToken(t, router, `[{"path":"system/policies/*","capabilities":["list"]}]`)

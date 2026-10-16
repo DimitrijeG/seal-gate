@@ -925,6 +925,34 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Read the entity a user logs in as.
+      description: >
+        Returns the entity ID only, never the password hash. Needs `read` on
+        `system/users/<name>`.
+      responses:
+        "200":
+          description: The user's entity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+          description: No user has the given name.
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
     delete:
       operationId: deleteUser
       tags: [users]
@@ -1381,6 +1409,14 @@ components:
       properties:
         name:
           type: string
+        entity_id:
+          $ref: "#/components/schemas/ID"
+      additionalProperties: false
+
+    UserResponse:
+      type: object
+      required: [entity_id]
+      properties:
         entity_id:
           $ref: "#/components/schemas/ID"
       additionalProperties: false

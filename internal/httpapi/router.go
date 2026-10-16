@@ -71,6 +71,7 @@ type GroupService interface {
 // UserService is user storage and password login as the handlers use it.
 type UserService interface {
 	SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error
+	GetUser(ctx context.Context, principal authorization.Principal, name string) (identity.UserSummary, error)
 	DeleteUser(ctx context.Context, principal authorization.Principal, name string) error
 	ListUsers(ctx context.Context, principal authorization.Principal) ([]identity.UserSummary, error)
 	Login(ctx context.Context, name string, password []byte) ([]byte, time.Time, error)
@@ -122,6 +123,7 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.Handle("POST /v1/auth/token/rotate", h.authenticated(h.handleRotateToken))
 	mux.Handle("GET /v1/auth/users", h.authenticated(h.handleListUsers))
 	mux.Handle("PUT /v1/auth/users/{name}", h.authenticated(h.handleSetUser))
+	mux.Handle("GET /v1/auth/users/{name}", h.authenticated(h.handleGetUser))
 	mux.Handle("DELETE /v1/auth/users/{name}", h.authenticated(h.handleDeleteUser))
 
 	mux.Handle("GET /v1/secrets", h.authenticated(h.handleListSecrets))
