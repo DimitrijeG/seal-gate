@@ -147,3 +147,38 @@ func TestArgon2id(t *testing.T) {
 		}
 	})
 }
+
+// BenchmarkArgon2id times one call at the default parameters; each allocates their 19 MiB.
+func BenchmarkArgon2id(b *testing.B) {
+	password := []byte("correct horse battery staple")
+
+	b.Run("Hash", func(b *testing.B) {
+		h := cryptography.NewArgon2id(cryptography.CryptoRandom{})
+		b.ReportAllocs()
+
+		for b.Loop() {
+			if _, err := h.Hash(password); err != nil {
+				b.Fatalf("Hash: %v", err)
+			}
+		}
+	})
+
+	b.Run("Verify", func(b *testing.B) {
+		h := cryptography.NewArgon2id(cryptography.CryptoRandom{})
+		encoded, err := h.Hash(password)
+		if err != nil {
+			b.Fatalf("Hash: %v", err)
+		}
+		b.ReportAllocs()
+
+		for b.Loop() {
+			ok, err := h.Verify(password, encoded)
+			if err != nil {
+				b.Fatalf("Verify: %v", err)
+			}
+			if !ok {
+				b.Fatalf("got false, want true")
+			}
+		}
+	})
+}
