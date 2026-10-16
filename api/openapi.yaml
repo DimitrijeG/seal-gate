@@ -800,6 +800,29 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /auth/token/self:
+    get:
+      operationId: lookupSelf
+      tags: [auth]
+      summary: Report whom the presented token authenticates as.
+      description: >
+        Needs no capability: holding the token is the proof. The root token is
+        reported as `{"root": true}` alone; any other token as its entity, the
+        entity's alias if it has one, and the token's expiry.
+      responses:
+        "200":
+          description: The presented token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenSelfResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /auth/login:
     post:
       operationId: login
@@ -1549,6 +1572,32 @@ components:
           format: date-time
           description: In UTC. The token is refused from this instant on.
       additionalProperties: false
+
+    TokenSelfResponse:
+      type: object
+      description: Either `root` alone, or the entity and expiry.
+      properties:
+        root:
+          type: boolean
+        entity_id:
+          $ref: "#/components/schemas/ID"
+        alias:
+          type: string
+          description: Absent when the entity has none.
+        expires_at:
+          type: string
+          format: date-time
+          description: In UTC. The token is refused from this instant on.
+      additionalProperties: false
+      oneOf:
+        - required: [root]
+          properties:
+            root:
+              const: true
+          maxProperties: 1
+        - required: [entity_id, expires_at]
+          not:
+            required: [root]
 
     GroupRequest:
       type: object

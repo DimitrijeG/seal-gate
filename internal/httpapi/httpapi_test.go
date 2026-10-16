@@ -282,7 +282,14 @@ type fakeToken struct {
 	expiresAt time.Time
 	revoked   []byte // a copy of the token RevokeToken got
 	rotated   []byte // a copy of the token RotateToken got
+	lookedUp  []byte // a copy of the token Lookup got
+	lookup    identity.TokenInfo
 	err       error
+}
+
+func (f *fakeToken) Lookup(ctx context.Context, token []byte) (identity.TokenInfo, error) {
+	f.lookedUp = bytes.Clone(token)
+	return f.lookup, f.err
 }
 
 func (f *fakeToken) RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error) {
@@ -305,6 +312,11 @@ func (f *fakeToken) RevokeToken(ctx context.Context, token []byte) error {
 
 type tokenBody struct {
 	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type tokenSelfBody struct {
+	Alias     string `json:"alias"`
 	ExpiresAt string `json:"expires_at"`
 }
 

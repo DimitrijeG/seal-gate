@@ -86,7 +86,14 @@ type userSummaryBody struct {
 }
 
 type tokenBody struct {
-	Token string `json:"token"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type tokenSelfBody struct {
+	Root      bool   `json:"root"`
+	EntityID  string `json:"entity_id"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type groupBody struct {
@@ -886,6 +893,40 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got != entityID {
 			t.Errorf("got %q, want %q", got, entityID)
+		}
+	})
+
+	t.Run("an issued token looks itself up as its entity and expiry", func(t *testing.T) {
+		router := unsealed(t)
+		entityID := createEntity(t, router)
+		rec := send(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("issue token: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		issued := decode[tokenBody](t, rec)
+		want := tokenSelfBody{EntityID: entityID, ExpiresAt: issued.ExpiresAt}
+
+		rec = send(t, withToken(router, issued.Token), http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[tokenSelfBody](t, rec); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("the root token looks itself up as root", func(t *testing.T) {
+		router := unsealed(t)
+		want := tokenSelfBody{Root: true}
+
+		rec := send(t, router, http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[tokenSelfBody](t, rec); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
 

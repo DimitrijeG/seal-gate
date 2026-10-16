@@ -52,11 +52,12 @@ type EntityService interface {
 	ListEntities(ctx context.Context, principal authorization.Principal) ([]identity.EntitySummary, error)
 }
 
-// TokenService is token issuing, revoking and rotating as the handlers use it.
+// TokenService is issuing, revoking, rotating and looking up tokens as the handlers use it.
 type TokenService interface {
 	CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error)
 	RevokeToken(ctx context.Context, token []byte) error
 	RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error)
+	Lookup(ctx context.Context, token []byte) (identity.TokenInfo, error)
 }
 
 // GroupService is group storage as the handlers use it.
@@ -121,6 +122,7 @@ func NewRouter(h *Handlers) http.Handler {
 
 	mux.Handle("POST /v1/auth/token/revoke", h.authenticated(h.handleRevokeToken))
 	mux.Handle("POST /v1/auth/token/rotate", h.authenticated(h.handleRotateToken))
+	mux.Handle("GET /v1/auth/token/self", h.authenticated(h.handleLookupToken))
 	mux.Handle("GET /v1/auth/users", h.authenticated(h.handleListUsers))
 	mux.Handle("PUT /v1/auth/users/{name}", h.authenticated(h.handleSetUser))
 	mux.Handle("GET /v1/auth/users/{name}", h.authenticated(h.handleGetUser))

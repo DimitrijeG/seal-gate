@@ -619,6 +619,89 @@ func TestEntity(t *testing.T) {
 		}
 	})
 
+	t.Run("looking up the presented token returns its entity and expiry", func(t *testing.T) {
+		fake := &fakeToken{lookup: identity.TokenInfo{EntityID: entityID, ExpiresAt: time.Date(2026, 10, 1, 13, 30, 0, 0, time.UTC)}}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		want := `{"entity_id":"` + entityID + `","expires_at":"2026-10-01T13:30:00Z"}`
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the presented token is the one looked up", func(t *testing.T) {
+		fake := &fakeToken{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: fake})
+		want := []byte{1, 2, 3}
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if !bytes.Equal(fake.lookedUp, want) {
+			t.Errorf("got %x, want %x", fake.lookedUp, want)
+		}
+	})
+
+	t.Run("a looked-up token's alias is returned", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{lookup: identity.TokenInfo{EntityID: entityID, Alias: "alice"}}})
+		want := "alice"
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[tokenSelfBody](t, rec).Alias; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("looking up the root token returns only root", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{lookup: identity.TokenInfo{Root: true}}})
+		want := `{"root":true}`
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a looked-up token's expiry is returned in UTC", func(t *testing.T) {
+		expiresAt := time.Date(2026, 10, 1, 15, 30, 0, 0, time.FixedZone("CEST", 2*60*60))
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{lookup: identity.TokenInfo{EntityID: entityID, ExpiresAt: expiresAt}}})
+		want := "2026-10-01T13:30:00Z"
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[tokenSelfBody](t, rec).ExpiresAt; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a lookup reports the service's error", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{err: identity.ErrSealed}})
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self", "")
+
+		assertError(t, rec, http.StatusServiceUnavailable, "the system is sealed")
+	})
+
 	t.Run("an issued token forbids caching", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Token: &fakeToken{token: make([]byte, 32)}})
 		want := "no-store"
