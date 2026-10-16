@@ -1,9 +1,11 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"net/http"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/httpapi"
@@ -127,6 +129,86 @@ func TestUser(t *testing.T) {
 
 				assertError(t, rec, tt.status, tt.message)
 			})
+		}
+	})
+}
+
+const aliceLoginJSON = `{"username":"alice","password":"` + alicePassword + `"}`
+
+func TestLogin(t *testing.T) {
+	t.Run("logging in returns 201 with the token and its expiry", func(t *testing.T) {
+		expiresAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		fake := &fakeUser{loginToken: []byte{0xab, 0xcd}, loginExpiresAt: expiresAt}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: fake})
+		want := tokenBody{Token: "q80=", ExpiresAt: "2026-01-02T03:04:05Z"}
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/login", aliceLoginJSON)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if got := decode[tokenBody](t, rec); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("the username and password reach the service", func(t *testing.T) {
+		fake := &fakeUser{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: fake})
+
+		do(t, router, http.MethodPost, "/v1/auth/login", aliceLoginJSON)
+
+		if fake.name != "alice" {
+			t.Errorf("username: got %q, want %q", fake.name, "alice")
+		}
+		if fake.password != alicePassword {
+			t.Errorf("password: got %q, want %q", fake.password, alicePassword)
+		}
+	})
+
+	t.Run("the service's error is reported", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: &fakeUser{err: identity.ErrSealed}})
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/login", aliceLoginJSON)
+
+		assertError(t, rec, http.StatusServiceUnavailable, "the system is sealed")
+	})
+
+	t.Run("each domain error maps to its status and message", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			err     error
+			status  int
+			message string
+		}{
+			{"invalid credentials", identity.ErrInvalidCredentials, http.StatusUnauthorized, "invalid username or password"},
+			// A corrupt record is the server's fault, not the client's.
+			{"unreadable user", identity.ErrUnreadableUser, http.StatusInternalServerError, "internal error"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: &fakeUser{err: tt.err}})
+
+				rec := do(t, router, http.MethodPost, "/v1/auth/login", aliceLoginJSON)
+
+				assertError(t, rec, tt.status, tt.message)
+			})
+		}
+	})
+
+	t.Run("the token is cleared after the response is written", func(t *testing.T) {
+		fake := &fakeUser{loginToken: bytes.Repeat([]byte{0xab}, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, User: fake})
+		want := make([]byte, 32)
+
+		rec := do(t, router, http.MethodPost, "/v1/auth/login", aliceLoginJSON)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		if !bytes.Equal(fake.loginToken, want) {
+			t.Errorf("got %x, want %x", fake.loginToken, want)
 		}
 	})
 }

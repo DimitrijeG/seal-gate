@@ -22,6 +22,7 @@ func TestRouter(t *testing.T) {
 			{"create group", http.MethodPost, "/v1/groups"},
 			{"update group", http.MethodPut, "/v1/groups/" + groupID},
 			{"put user", http.MethodPut, "/v1/auth/users/alice"},
+			{"login", http.MethodPost, "/v1/auth/login"},
 		}
 		// Bodies fit no endpoint in particular, so each case applies to every route.
 		tests := []struct {
@@ -73,6 +74,7 @@ func TestRouter(t *testing.T) {
 			{"create group", http.MethodPost, "/v1/groups", 65536},
 			{"update group", http.MethodPut, "/v1/groups/" + groupID, 65536},
 			{"put user", http.MethodPut, "/v1/auth/users/alice", 8192},
+			{"login", http.MethodPost, "/v1/auth/login", 8192},
 		}
 
 		for _, route := range routes {

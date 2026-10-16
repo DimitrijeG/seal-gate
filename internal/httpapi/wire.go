@@ -143,6 +143,7 @@ var domainErrors = []struct {
 	{identity.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
 	// Shares errUnauthenticated's message, so a client cannot tell a known token from a malformed one.
 	{identity.ErrInvalidToken, http.StatusUnauthorized, "missing or invalid token"},
+	{identity.ErrInvalidCredentials, http.StatusUnauthorized, "invalid username or password"},
 }
 
 // writeJSON forbids caching on every body, since a body may carry a secret or a share.

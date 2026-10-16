@@ -28,11 +28,12 @@ func TestAuthentication(t *testing.T) {
 			{"unseal", http.MethodPost, "/v1/sys/unseal", `{"share":"AQI="}`, http.StatusOK},
 			{"status", http.MethodGet, "/v1/sys/status", "", http.StatusOK},
 			{"health", http.MethodGet, "/v1/sys/health", "", http.StatusNoContent},
+			{"login", http.MethodPost, "/v1/auth/login", aliceLoginJSON, http.StatusCreated},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{}})
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, System: &fakeSystem{}, User: &fakeUser{}})
 
 				rec := doWithAuthorization(t, router, "", tt.method, tt.path, tt.body)
 

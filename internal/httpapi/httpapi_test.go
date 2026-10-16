@@ -349,11 +349,19 @@ func (f *fakeGroup) DeleteGroup(ctx context.Context, principal authorization.Pri
 }
 
 type fakeUser struct {
-	principal authorization.Principal // the last principal any method got
-	name      string                  // the last name any method got
-	entityID  string
-	password  string // a copy of the password SetUser got
-	err       error
+	principal      authorization.Principal // the last principal any method got
+	name           string                  // the last name any method got
+	entityID       string
+	password       string // a copy of the password SetUser or Login got
+	loginToken     []byte
+	loginExpiresAt time.Time
+	err            error
+}
+
+func (f *fakeUser) Login(ctx context.Context, name string, password []byte) ([]byte, time.Time, error) {
+	f.name = name
+	f.password = string(password)
+	return f.loginToken, f.loginExpiresAt, f.err
 }
 
 func (f *fakeUser) SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error {

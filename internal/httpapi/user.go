@@ -2,7 +2,7 @@ package httpapi
 
 import "net/http"
 
-// userBodyLimit fits the longest password identity accepts at six escaped bytes per byte, the most JSON needs, and an entity ID.
+// userBodyLimit fits the longest password identity accepts at six escaped bytes per byte, the most JSON needs, and an entity ID or a username.
 const userBodyLimit = 8 << 10
 
 type userRequest struct {
@@ -36,4 +36,27 @@ func (h *Handlers) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req loginRequest
+	if err := decodeJSON(w, r, &req, userBodyLimit); err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	token, expiresAt, err := h.User.Login(r.Context(), req.Username, []byte(req.Password))
+	// Deferred before the error check: cleared after the response is written, whatever Login returned.
+	defer clear(token)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token, ExpiresAt: expiresAt.UTC()})
 }

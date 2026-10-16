@@ -65,10 +65,11 @@ type GroupService interface {
 	DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error
 }
 
-// UserService is user storage as the handlers use it.
+// UserService is user storage and password login as the handlers use it.
 type UserService interface {
 	SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error
 	DeleteUser(ctx context.Context, principal authorization.Principal, name string) error
+	Login(ctx context.Context, name string, password []byte) ([]byte, time.Time, error)
 }
 
 // Authenticator turns a request's token into the principal it acts as; an unknown token must be identity.ErrInvalidToken, as anything else is a 500.
@@ -109,6 +110,7 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.Handle("POST /v1/sys/unseal", h.open(h.handleUnseal))
 	mux.Handle("GET /v1/sys/status", h.open(h.handleStatus))
 	mux.Handle("GET /v1/sys/health", h.open(h.handleHealth))
+	mux.Handle("POST /v1/auth/login", h.open(h.handleLogin))
 
 	mux.Handle("POST /v1/sys/seal", h.authenticated(h.handleSeal))
 

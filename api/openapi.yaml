@@ -41,7 +41,7 @@ tags:
   - name: users
     description: >
       Usernames with passwords, each logging in as an entity. Every operation
-      needs the instance unsealed.
+      needs the instance unsealed. Login is open: the password is the proof.
 
 paths:
   /sys/init:
@@ -742,6 +742,54 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /auth/login:
+    post:
+      operationId: login
+      tags: [users]
+      summary: Exchange a username and password for a token.
+      description: >
+        Open by design: no token exists before login. The token authenticates
+        as the user's entity and lives for the configured default TTL. An
+        unknown user, a wrong password and a deleted entity are refused alike.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "201":
+          description: Logged in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: >
+            The username or password is wrong, or the user's entity was
+            deleted. The message does not say which.
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+              example: Bearer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+          description: The request body exceeds 8192 bytes.
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /auth/users/{name}:
     parameters:
       - name: name
@@ -1321,6 +1369,20 @@ components:
           description: >
             As typed, not base64. 1 to 1024 bytes once UTF-8 encoded; the
             length bounds count bytes, not characters.
+      additionalProperties: false
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: alice
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: As typed, not base64.
       additionalProperties: false
 
     ErrorResponse:
