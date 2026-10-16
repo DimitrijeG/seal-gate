@@ -223,7 +223,8 @@ func (s *EntityService) checkAlias(ctx context.Context, id, alias string) error 
 	}
 
 	for _, other := range ids {
-		if other == id {
+		// A create's id is empty, and a corrupt key can list as empty too, so only a real ID is skipped.
+		if id != "" && other == id {
 			continue
 		}
 		entity, err := s.getListed(ctx, other)

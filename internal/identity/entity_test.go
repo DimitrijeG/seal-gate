@@ -642,13 +642,26 @@ func TestEntity(t *testing.T) {
 	})
 
 	t.Run("a stored key that is not an entity ID refuses an alias as unreadable", func(t *testing.T) {
-		s, entities, _ := newEntityService(t)
-		entities.entities["not-an-id"] = identity.Entity{ID: "not-an-id"}
+		tests := []struct {
+			name string
+			key  string
+		}{
+			{"not hex", "not-an-id"},
+			// A create has no ID of its own yet, so an empty key must not pass for it.
+			{"empty", ""},
+		}
 
-		_, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: "ci"})
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, entities, _ := newEntityService(t)
+				entities.entities[tt.key] = identity.Entity{ID: tt.key}
 
-		if !errors.Is(err, identity.ErrUnreadableEntity) {
-			t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
+				_, err := s.CreateEntity(t.Context(), principal, identity.Entity{Alias: "ci"})
+
+				if !errors.Is(err, identity.ErrUnreadableEntity) {
+					t.Errorf("got %v, want %v", err, identity.ErrUnreadableEntity)
+				}
+			})
 		}
 	})
 

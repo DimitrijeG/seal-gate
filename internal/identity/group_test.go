@@ -602,13 +602,26 @@ func TestGroup(t *testing.T) {
 	})
 
 	t.Run("a stored key that is not a group ID refuses an alias as unreadable", func(t *testing.T) {
-		s, groups, _ := newGroupService(t)
-		groups.groups["not-an-id"] = identity.Group{ID: "not-an-id"}
+		tests := []struct {
+			name string
+			key  string
+		}{
+			{"not hex", "not-an-id"},
+			// A create has no ID of its own yet, so an empty key must not pass for it.
+			{"empty", ""},
+		}
 
-		_, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: "ops"})
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, groups, _ := newGroupService(t)
+				groups.groups[tt.key] = identity.Group{ID: tt.key}
 
-		if !errors.Is(err, identity.ErrUnreadableGroup) {
-			t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+				_, err := s.CreateGroup(t.Context(), principal, identity.Group{Alias: "ops"})
+
+				if !errors.Is(err, identity.ErrUnreadableGroup) {
+					t.Errorf("got %v, want %v", err, identity.ErrUnreadableGroup)
+				}
+			})
 		}
 	})
 
