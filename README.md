@@ -3,12 +3,13 @@
 A secrets-management service with Shamir-based unsealing, written in Go as a
 bachelor's thesis project and loosely modelled on HashiCorp Vault.
 
-Every value is encrypted before it reaches storage, and the key that unlocks
-it is never stored. On start the service is sealed: that key is split into
-shares with Shamir's secret sharing, and a threshold of them must be handed in
-to unseal it. Once unsealed, it stores and generates secrets, controls access
-to them with path-based policies over entities, groups and tokens, expires and
-rotates them on a schedule, and writes an audit record of every request.
+Every value is encrypted before it reaches storage, under a key that is itself
+stored only encrypted, by a root key that is never stored. At initialization
+the root key is split into shares with Shamir's secret sharing. Every start
+leaves the service sealed until a threshold of those same shares is handed in.
+Once unsealed, it stores and generates secrets, controls access to them with
+path-based policies over entities, groups and tokens, expires and rotates them
+on a schedule, and writes an audit record of every request to an API route.
 
 ## Quick start
 
@@ -108,8 +109,8 @@ default, fixed in `internal/config/load.go`:
 | encryption | AES-256-GCM |
 | audit | one file, `seal-gate-audit.log`; a request fails if its record cannot be written within 1 s |
 | lifecycle worker | sweeps for expired and due secrets and tokens every minute |
-| tokens | live 1 hour by default, 24 hours at most |
-| logs | JSON on stderr, at `info` |
+| tokens | issued tokens live 1 hour by default, 24 hours at most; the root token does not expire |
+| logs | JSON on stdout, at `info` |
 
 `memory` keeps nothing across a restart, so it suits tests and trying the API
 out. To store in Postgres, set both variables, so the password in the URL
