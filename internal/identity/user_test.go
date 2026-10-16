@@ -224,6 +224,31 @@ func TestUser(t *testing.T) {
 		}
 	})
 
+	t.Run("a user is read as the entity it logs in as", func(t *testing.T) {
+		s, users, _, _ := newUserService(t)
+		users.users["alice"] = alice
+		want := identity.UserSummary{Name: "alice", EntityID: hexID}
+
+		got, err := s.GetUser(t.Context(), principal, "alice")
+		if err != nil {
+			t.Fatalf("GetUser: %v", err)
+		}
+
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a missing user is not found on get", func(t *testing.T) {
+		s, _, _, _ := newUserService(t)
+
+		_, err := s.GetUser(t.Context(), principal, "alice")
+
+		if !errors.Is(err, identity.ErrUserNotFound) {
+			t.Errorf("got %v, want %v", err, identity.ErrUserNotFound)
+		}
+	})
+
 	t.Run("a set user is stored as its entity ID and the password's hash", func(t *testing.T) {
 		s, users, _, _ := newUserService(t)
 		want := identity.StoredUser{EntityID: hexID, PasswordHash: fakeHash(password)}
@@ -379,6 +404,43 @@ func TestUser(t *testing.T) {
 		}
 	})
 
+	t.Run("get refuses an invalid username before anything is called", func(t *testing.T) {
+		s, users, _, _, authorizer := newAuthorizedUserService(t)
+
+		_, err := s.GetUser(t.Context(), principal, "../alice")
+
+		if !errors.Is(err, identity.ErrInvalidUsername) {
+			t.Errorf("err: got %v, want %v", err, identity.ErrInvalidUsername)
+		}
+		if calls := users.calls + authorizer.calls; calls != 0 {
+			t.Errorf("calls: got %d, want 0", calls)
+		}
+	})
+
+	t.Run("a corrupt stored user is unreadable on get", func(t *testing.T) {
+		tests := []struct {
+			name string
+			user identity.StoredUser
+		}{
+			{"invalid entity ID", identity.StoredUser{EntityID: "../dev", PasswordHash: fakeHash(password)}},
+			{"empty hash", identity.StoredUser{EntityID: hexID}},
+			{"malformed hash", identity.StoredUser{EntityID: hexID, PasswordHash: "not-a-hash"}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, users, _, _ := newUserService(t)
+				users.users["alice"] = tt.user
+
+				_, err := s.GetUser(t.Context(), principal, "alice")
+
+				if !errors.Is(err, identity.ErrUnreadableUser) {
+					t.Errorf("got %v, want %v", err, identity.ErrUnreadableUser)
+				}
+			})
+		}
+	})
+
 	t.Run("every user operation reports sealed", func(t *testing.T) {
 		for _, op := range userOperations {
 			t.Run(op.name, func(t *testing.T) {
@@ -425,6 +487,10 @@ var userOperations = []struct {
 	}},
 	{"list", func(ctx context.Context, s *identity.UserService) error {
 		_, err := s.ListUsers(ctx, principal)
+		return err
+	}},
+	{"get", func(ctx context.Context, s *identity.UserService) error {
+		_, err := s.GetUser(ctx, principal, "alice")
 		return err
 	}},
 }
