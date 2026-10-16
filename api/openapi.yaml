@@ -369,13 +369,15 @@ paths:
       description: >
         Needs `read` on `secrets/<path>`. A secret written by `PUT` is not
         found once its TTL has passed, whether or not it has been deleted.
+        Besides the value, says whether the secret was generated (and so
+        rotates) and the TTL it was written with.
       responses:
         "200":
-          description: The secret's value.
+          description: The secret's value and kind.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SecretResponse"
+                $ref: "#/components/schemas/SecretReadResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -800,6 +802,29 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /auth/token/self:
+    get:
+      operationId: lookupSelf
+      tags: [auth]
+      summary: Report whom the presented token authenticates as.
+      description: >
+        Needs no capability: holding the token is the proof. The root token is
+        reported as `{"root": true}` alone; any other token as its entity, the
+        entity's alias if it has one, and the token's expiry.
+      responses:
+        "200":
+          description: The presented token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenSelfResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /auth/login:
     post:
       operationId: login
@@ -920,6 +945,34 @@ paths:
           description: The request body exceeds 8192 bytes.
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Read the entity a user logs in as.
+      description: >
+        Returns the entity ID only, never the password hash. Needs `read` on
+        `system/users/<name>`.
+      responses:
+        "200":
+          description: The user's entity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+          description: No user has the given name.
         "503":
           $ref: "#/components/responses/Sealed"
         "500":
@@ -1299,14 +1352,36 @@ components:
         value:
           type: string
           contentEncoding: base64
+      additionalProperties: false
+
+    SecretReadResponse:
+      type: object
+      required: [value, generated]
+      properties:
+        value:
+          type: string
+          contentEncoding: base64
           description: Empty for an empty secret, never null.
+        generated:
+          type: boolean
+          description: >
+            True for a secret made by `generate`, which rotates; false for one
+            written by `PUT`.
+        ttl:
+          type: integer
+          minimum: 1
+          maximum: 9223372036
+          description: >
+            Seconds the secret was written with: between rotations for a
+            generated one, its lifetime for a stored one. Absent when it has
+            none.
         expires_at:
           type: string
           format: date-time
           description: >
             In UTC. For a secret written by `PUT`, when it stops reading; for a
             generated one, when it is next due for rotation. Absent when it has
-            no TTL. Only `GET` returns it.
+            no TTL.
       additionalProperties: false
 
     ListResponse:
@@ -1381,6 +1456,14 @@ components:
       properties:
         name:
           type: string
+        entity_id:
+          $ref: "#/components/schemas/ID"
+      additionalProperties: false
+
+    UserResponse:
+      type: object
+      required: [entity_id]
+      properties:
         entity_id:
           $ref: "#/components/schemas/ID"
       additionalProperties: false
@@ -1513,6 +1596,32 @@ components:
           format: date-time
           description: In UTC. The token is refused from this instant on.
       additionalProperties: false
+
+    TokenSelfResponse:
+      type: object
+      description: Either `root` alone, or the entity and expiry.
+      properties:
+        root:
+          type: boolean
+        entity_id:
+          $ref: "#/components/schemas/ID"
+        alias:
+          type: string
+          description: Absent when the entity has none.
+        expires_at:
+          type: string
+          format: date-time
+          description: In UTC. The token is refused from this instant on.
+      additionalProperties: false
+      oneOf:
+        - required: [root]
+          properties:
+            root:
+              const: true
+          maxProperties: 1
+        - required: [entity_id, expires_at]
+          not:
+            required: [root]
 
     GroupRequest:
       type: object

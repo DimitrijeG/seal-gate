@@ -45,6 +45,8 @@ type initBody struct {
 
 type secretBody struct {
 	Value     string `json:"value"`
+	Generated bool   `json:"generated"`
+	TTL       int64  `json:"ttl"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -86,7 +88,14 @@ type userSummaryBody struct {
 }
 
 type tokenBody struct {
-	Token string `json:"token"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type tokenSelfBody struct {
+	Root      bool   `json:"root"`
+	EntityID  string `json:"entity_id"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 type groupBody struct {
@@ -868,6 +877,61 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a user set after unseal reads back with its entity", func(t *testing.T) {
+		router := unsealed(t)
+		entityID := createEntity(t, router)
+		rec := send(t, router, http.MethodPut, "/v1/auth/users/alice", `{"entity_id":"`+entityID+`","password":"correct horse"}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("set user: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		rec = send(t, router, http.MethodGet, "/v1/auth/users/alice", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[struct {
+			EntityID string `json:"entity_id"`
+		}](t, rec).EntityID
+
+		if got != entityID {
+			t.Errorf("got %q, want %q", got, entityID)
+		}
+	})
+
+	t.Run("an issued token looks itself up as its entity and expiry", func(t *testing.T) {
+		router := unsealed(t)
+		entityID := createEntity(t, router)
+		rec := send(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("issue token: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		issued := decode[tokenBody](t, rec)
+		want := tokenSelfBody{EntityID: entityID, ExpiresAt: issued.ExpiresAt}
+
+		rec = send(t, withToken(router, issued.Token), http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[tokenSelfBody](t, rec); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("the root token looks itself up as root", func(t *testing.T) {
+		router := unsealed(t)
+		want := tokenSelfBody{Root: true}
+
+		rec := send(t, router, http.MethodGet, "/v1/auth/token/self", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[tokenSelfBody](t, rec); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("a token is forbidden a listing granted only beneath the collection", func(t *testing.T) {
 		router := unsealed(t)
 		token := entityToken(t, router, `[{"path":"system/policies/*","capabilities":["list"]}]`)
@@ -1105,6 +1169,37 @@ func TestSealLifecycle(t *testing.T) {
 
 		if got := getSecret(t, router, "db/password"); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a generated secret reads back as generated", func(t *testing.T) {
+		router := unsealed(t)
+		generateSecret(t, router, "db/password", 32)
+
+		rec := send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[secretBody](t, rec).Generated; !got {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+
+	t.Run("a secret's TTL reads back in seconds", func(t *testing.T) {
+		router := unsealed(t)
+		rec := send(t, router, http.MethodPost, "/v1/secrets/generate/db/password", `{"length":32,"ttl":3600}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("generate: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+
+		rec = send(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[secretBody](t, rec).TTL; got != 3600 {
+			t.Errorf("got %d, want 3600", got)
 		}
 	})
 

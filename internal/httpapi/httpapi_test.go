@@ -131,6 +131,8 @@ func (f *fakeSystem) Seal(ctx context.Context, principal authorization.Principal
 
 type secretBody struct {
 	Value     string `json:"value"`
+	Generated bool   `json:"generated"`
+	TTL       int64  `json:"ttl"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -145,6 +147,8 @@ type fakeSecret struct {
 	putTTL       time.Duration
 	getValue     []byte
 	getExpiresAt time.Time
+	getGenerated bool
+	getTTL       time.Duration
 	listPrefix   string
 	listPaths    []string
 	genLength    int
@@ -179,7 +183,7 @@ func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal,
 func (f *fakeSecret) Get(ctx context.Context, principal authorization.Principal, path string) (secret.Entry, error) {
 	f.principal = principal
 	f.path = path
-	return secret.Entry{Value: f.getValue, ExpiresAt: f.getExpiresAt}, f.err
+	return secret.Entry{Value: f.getValue, ExpiresAt: f.getExpiresAt, Generated: f.getGenerated, TTL: f.getTTL}, f.err
 }
 
 func (f *fakeSecret) Delete(ctx context.Context, principal authorization.Principal, path string) error {
@@ -282,7 +286,14 @@ type fakeToken struct {
 	expiresAt time.Time
 	revoked   []byte // a copy of the token RevokeToken got
 	rotated   []byte // a copy of the token RotateToken got
+	lookedUp  []byte // a copy of the token Lookup got
+	lookup    identity.TokenInfo
 	err       error
+}
+
+func (f *fakeToken) Lookup(ctx context.Context, token []byte) (identity.TokenInfo, error) {
+	f.lookedUp = bytes.Clone(token)
+	return f.lookup, f.err
 }
 
 func (f *fakeToken) RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error) {
@@ -305,6 +316,11 @@ func (f *fakeToken) RevokeToken(ctx context.Context, token []byte) error {
 
 type tokenBody struct {
 	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type tokenSelfBody struct {
+	Alias     string `json:"alias"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -353,6 +369,7 @@ func (f *fakeGroup) DeleteGroup(ctx context.Context, principal authorization.Pri
 
 type fakeUser struct {
 	list           []identity.UserSummary
+	getUser        identity.UserSummary
 	principal      authorization.Principal // the last principal any method got
 	name           string                  // the last name any method got
 	entityID       string
@@ -374,6 +391,12 @@ func (f *fakeUser) SetUser(ctx context.Context, principal authorization.Principa
 	f.entityID = entityID
 	f.password = string(password)
 	return f.err
+}
+
+func (f *fakeUser) GetUser(ctx context.Context, principal authorization.Principal, name string) (identity.UserSummary, error) {
+	f.principal = principal
+	f.name = name
+	return f.getUser, f.err
 }
 
 func (f *fakeUser) DeleteUser(ctx context.Context, principal authorization.Principal, name string) error {

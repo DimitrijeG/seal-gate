@@ -92,6 +92,93 @@ func TestSecret(t *testing.T) {
 		}
 	})
 
+	t.Run("a read says a generated secret is generated", func(t *testing.T) {
+		fake := &fakeSecret{getValue: []byte{1, 2}, getGenerated: true}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[secretBody](t, rec)
+
+		if !got.Generated {
+			t.Errorf("got %v, want true", got.Generated)
+		}
+	})
+
+	t.Run("a read says a stored secret is not generated", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{getValue: []byte{1, 2}}})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[map[string]any](t, rec)
+
+		if got["generated"] != false {
+			t.Errorf("got %v, want false", got["generated"])
+		}
+	})
+
+	t.Run("a read returns the TTL in seconds", func(t *testing.T) {
+		fake := &fakeSecret{getValue: []byte{1, 2}, getTTL: time.Hour}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[secretBody](t, rec)
+
+		if got.TTL != 3600 {
+			t.Errorf("got %d, want 3600", got.TTL)
+		}
+	})
+
+	t.Run("a read without a TTL omits it", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{getValue: []byte{1, 2}}})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[map[string]any](t, rec)
+
+		if ttl, ok := got["ttl"]; ok {
+			t.Errorf("got %v, want no ttl", ttl)
+		}
+	})
+
+	t.Run("generating and rotating return only the value", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			target string
+			body   string
+		}{
+			{"generate", "/v1/secrets/generate/db/password", `{"length":32}`},
+			{"rotate", "/v1/secrets/rotate/db/password", ""},
+		}
+
+		want := `{"value":"AQI="}`
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				fake := &fakeSecret{genValue: []byte{1, 2}, rotValue: []byte{1, 2}}
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+
+				rec := do(t, router, http.MethodPost, tt.target, tt.body)
+				if rec.Code >= http.StatusBadRequest {
+					t.Fatalf("status: got %d, want success: %s", rec.Code, rec.Body)
+				}
+				got := strings.TrimSpace(rec.Body.String())
+
+				if got != want {
+					t.Errorf("got %q, want %q", got, want)
+				}
+			})
+		}
+	})
+
 	t.Run("a read forbids caching", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{getValue: []byte{1, 2}}})
 		want := "no-store"
@@ -487,7 +574,7 @@ func TestSecret(t *testing.T) {
 	t.Run("an empty secret reads as an empty string", func(t *testing.T) {
 		fake := &fakeSecret{getValue: nil}
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
-		want := `{"value":""}`
+		want := `{"value":"","generated":false}`
 
 		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
 		if rec.Code != http.StatusOK {

@@ -210,33 +210,60 @@ func (s *TokenService) purgeToken(ctx context.Context, hash [sha256.Size]byte, n
 	return true, nil
 }
 
+// TokenInfo is what a lookup tells about a token; the root token sets only Root.
+type TokenInfo struct {
+	Root      bool
+	EntityID  string
+	Alias     string
+	ExpiresAt time.Time
+}
+
+// Lookup reports whom token authenticates as and when it expires; the root token is reported as Root, any other fails as Resolve does.
+func (s *TokenService) Lookup(ctx context.Context, token []byte) (TokenInfo, error) {
+	// First: the root token is never stored, so resolve would find it invalid.
+	if s.root.IsRoot(token) {
+		return TokenInfo{Root: true}, nil
+	}
+	stored, entity, err := s.resolve(ctx, token)
+	if err != nil {
+		return TokenInfo{}, err
+	}
+	return TokenInfo{EntityID: entity.ID, Alias: entity.Alias, ExpiresAt: stored.ExpiresAt}, nil
+}
+
 // Resolve returns the entity a token authenticates as; a missing, unknown, expired or orphaned token is ErrInvalidToken alike.
 func (s *TokenService) Resolve(ctx context.Context, token []byte) (Entity, error) {
+	_, entity, err := s.resolve(ctx, token)
+	return entity, err
+}
+
+// resolve returns a live token's stored record and its entity.
+func (s *TokenService) resolve(ctx context.Context, token []byte) (StoredToken, Entity, error) {
 	if len(token) != tokenBytes {
-		return Entity{}, ErrInvalidToken
+		return StoredToken{}, Entity{}, ErrInvalidToken
 	}
 
 	stored, err := s.tokens.Get(ctx, sha256.Sum256(token))
 	if err != nil && !ours(err) {
-		return Entity{}, fmt.Errorf("identity: %w", err)
+		return StoredToken{}, Entity{}, fmt.Errorf("identity: %w", err)
 	}
 	if err != nil {
-		return Entity{}, err
+		return StoredToken{}, Entity{}, err
 	}
 	// Checked here, not in getEntity: a bad stored ID is a corrupt record, not the caller's mistake.
 	if !validID(stored.EntityID) {
-		return Entity{}, ErrUnreadableToken
+		return StoredToken{}, Entity{}, ErrUnreadableToken
 	}
 	if stored.expired(s.clock.Now()) {
-		return Entity{}, ErrInvalidToken
+		return StoredToken{}, Entity{}, ErrInvalidToken
 	}
 
 	entity, err := s.entities.getEntity(ctx, stored.EntityID)
 	if errors.Is(err, ErrEntityNotFound) {
-		return Entity{}, ErrInvalidToken
+		return StoredToken{}, Entity{}, ErrInvalidToken
 	}
 	if err != nil {
-		return Entity{}, err
+		return StoredToken{}, Entity{}, err
 	}
-	return entity, nil
+	return stored, entity, nil
 }

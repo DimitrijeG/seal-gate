@@ -52,11 +52,12 @@ type EntityService interface {
 	ListEntities(ctx context.Context, principal authorization.Principal) ([]identity.EntitySummary, error)
 }
 
-// TokenService is token issuing, revoking and rotating as the handlers use it.
+// TokenService is issuing, revoking, rotating and looking up tokens as the handlers use it.
 type TokenService interface {
 	CreateToken(ctx context.Context, principal authorization.Principal, entityID string, ttl time.Duration) ([]byte, time.Time, error)
 	RevokeToken(ctx context.Context, token []byte) error
 	RotateToken(ctx context.Context, token []byte, ttl time.Duration) ([]byte, time.Time, error)
+	Lookup(ctx context.Context, token []byte) (identity.TokenInfo, error)
 }
 
 // GroupService is group storage as the handlers use it.
@@ -71,6 +72,7 @@ type GroupService interface {
 // UserService is user storage and password login as the handlers use it.
 type UserService interface {
 	SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error
+	GetUser(ctx context.Context, principal authorization.Principal, name string) (identity.UserSummary, error)
 	DeleteUser(ctx context.Context, principal authorization.Principal, name string) error
 	ListUsers(ctx context.Context, principal authorization.Principal) ([]identity.UserSummary, error)
 	Login(ctx context.Context, name string, password []byte) ([]byte, time.Time, error)
@@ -120,8 +122,10 @@ func NewRouter(h *Handlers) http.Handler {
 
 	mux.Handle("POST /v1/auth/token/revoke", h.authenticated(h.handleRevokeToken))
 	mux.Handle("POST /v1/auth/token/rotate", h.authenticated(h.handleRotateToken))
+	mux.Handle("GET /v1/auth/token/self", h.authenticated(h.handleLookupToken))
 	mux.Handle("GET /v1/auth/users", h.authenticated(h.handleListUsers))
 	mux.Handle("PUT /v1/auth/users/{name}", h.authenticated(h.handleSetUser))
+	mux.Handle("GET /v1/auth/users/{name}", h.authenticated(h.handleGetUser))
 	mux.Handle("DELETE /v1/auth/users/{name}", h.authenticated(h.handleDeleteUser))
 
 	mux.Handle("GET /v1/secrets", h.authenticated(h.handleListSecrets))
