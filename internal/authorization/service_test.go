@@ -3,7 +3,9 @@ package authorization_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,6 +49,14 @@ func (r *fakeRepository) Delete(_ context.Context, name string) error {
 	return nil
 }
 
+func (r *fakeRepository) List(_ context.Context) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return slices.Sorted(maps.Keys(r.policies)), nil
+}
+
 // root passes every check, so tests about storing policies are not about access.
 var root = authorization.NewRootPrincipal()
 
@@ -77,6 +87,20 @@ func TestService(t *testing.T) {
 
 		if !reflect.DeepEqual(got, policy) {
 			t.Errorf("got %+v, want %+v", got, policy)
+		}
+	})
+
+	t.Run("every stored policy's name is listed", func(t *testing.T) {
+		s, _ := newAuthorizer(t, authorization.Policy{Name: "ops"}, authorization.Policy{Name: "dev"})
+		want := []string{"dev", "ops"}
+
+		got, err := s.List(t.Context(), root)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
@@ -403,6 +427,10 @@ var operations = []struct {
 	}},
 	{"delete", func(ctx context.Context, s *authorization.Service) error {
 		return s.Delete(ctx, root, "dev")
+	}},
+	{"list", func(ctx context.Context, s *authorization.Service) error {
+		_, err := s.List(ctx, root)
+		return err
 	}},
 }
 

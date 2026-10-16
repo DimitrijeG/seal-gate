@@ -100,6 +100,42 @@ func TestEnforcement(t *testing.T) {
 		}
 	})
 
+	t.Run("list is denied without list on the policy collection", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			admin authorization.Policy
+		}{
+			{"list on every policy", admin("system/policies/*", authorization.CapabilityList)},
+			{"all but list on the collection", admin("system/policies", allBut(authorization.CapabilityList)...)},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _ := newAuthorizer(t, tt.admin, ops)
+
+				_, err := s.List(t.Context(), authorization.NewEntityPrincipal(entityID, "admin"))
+
+				if !errors.Is(err, authorization.ErrDenied) {
+					t.Errorf("got %v, want %v", err, authorization.ErrDenied)
+				}
+			})
+		}
+	})
+
+	t.Run("list is allowed by list on the policy collection", func(t *testing.T) {
+		s, _ := newAuthorizer(t, admin("system/policies", authorization.CapabilityList), ops)
+		want := []string{"admin", "ops"}
+
+		got, err := s.List(t.Context(), authorization.NewEntityPrincipal(entityID, "admin"))
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("an invalid name is refused before authorizing", func(t *testing.T) {
 		tests := []struct {
 			name string

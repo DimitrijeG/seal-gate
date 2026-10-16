@@ -10,10 +10,12 @@ import (
 const groupBodyLimit = 64 << 10
 
 type groupRequest struct {
+	Alias    string   `json:"alias"`
 	Policies []string `json:"policies"`
 }
 
 type groupResponse struct {
+	Alias    string   `json:"alias,omitempty"`
 	Policies []string `json:"policies"`
 }
 
@@ -81,6 +83,7 @@ func (h *Handlers) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 func (req groupRequest) group(id string) identity.Group {
 	return identity.Group{
 		ID:       id,
+		Alias:    req.Alias,
 		Policies: req.Policies,
 	}
 }
@@ -91,5 +94,5 @@ func newGroupResponse(group identity.Group) groupResponse {
 	policies := make([]string, len(group.Policies))
 	copy(policies, group.Policies)
 
-	return groupResponse{Policies: policies}
+	return groupResponse{Alias: group.Alias, Policies: policies}
 }

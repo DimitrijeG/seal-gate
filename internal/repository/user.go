@@ -92,3 +92,14 @@ func (r *userRepository) Delete(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+func (r *userRepository) List(ctx context.Context) ([]string, error) {
+	names, err := listNames(ctx, r.encrypted, userPrefix)
+	if errors.Is(err, barrier.ErrSealed) {
+		return nil, identity.ErrSealed
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository: %w", err)
+	}
+	return names, nil
+}

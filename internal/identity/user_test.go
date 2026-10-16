@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +53,25 @@ func (r *fakeUsers) Delete(_ context.Context, name string) error {
 	return nil
 }
 
+func (r *fakeUsers) List(_ context.Context) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return slices.Sorted(maps.Keys(r.users)), nil
+}
+
+// vanishingUsers lists gone as well as what it holds, as if gone were deleted between the List and its Get.
+type vanishingUsers struct {
+	fakeUsers
+	gone string
+}
+
+func (r *vanishingUsers) List(ctx context.Context) ([]string, error) {
+	names, err := r.fakeUsers.List(ctx)
+	return append(names, r.gone), err
+}
+
 // fakeHasher hashes to fakeHash, fast where argon2id is slow by design; err, when set, fails every call, and matchAll
 // makes Verify match any hash. calls counts both methods; verifies counts Verify alone.
 type fakeHasher struct {
@@ -78,6 +99,14 @@ func (h *fakeHasher) Verify(password []byte, encoded string) (bool, error) {
 }
 
 // fakeHash is not the password, so a stored password shows as a mismatch.
+// Check refuses any hash fakeHash could not have made.
+func (h *fakeHasher) Check(encoded string) error {
+	if !strings.HasPrefix(encoded, "hash:") {
+		return errors.New("fake: malformed hash")
+	}
+	return nil
+}
+
 func fakeHash(password []byte) string {
 	return "hash:" + hex.EncodeToString(password)
 }
@@ -133,6 +162,68 @@ func newUserServiceFakes(t *testing.T) (*identity.UserService, userFakes) {
 var alice = identity.StoredUser{EntityID: hexID, PasswordHash: fakeHash(password)}
 
 func TestUser(t *testing.T) {
+	t.Run("every stored user is listed with its entity ID", func(t *testing.T) {
+		s, users, _, _ := newUserService(t)
+		other := strings.Repeat("01", 16)
+		users.users["bob"] = identity.StoredUser{EntityID: other, PasswordHash: fakeHash(password)}
+		users.users["alice"] = alice
+		want := []identity.UserSummary{{Name: "alice", EntityID: hexID}, {Name: "bob", EntityID: other}}
+
+		got, err := s.ListUsers(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a corrupt stored user fails the listing", func(t *testing.T) {
+		tests := []struct {
+			name string
+			key  string
+			user identity.StoredUser
+		}{
+			{"invalid entity ID", "alice", identity.StoredUser{EntityID: "not-an-id", PasswordHash: fakeHash(password)}},
+			{"empty hash", "alice", identity.StoredUser{EntityID: hexID}},
+			{"malformed hash", "alice", identity.StoredUser{EntityID: hexID, PasswordHash: "not-a-hash"}},
+			{"key not a username", "Alice", alice},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, users, _, _ := newUserService(t)
+				users.users[tt.key] = tt.user
+
+				_, err := s.ListUsers(t.Context(), principal)
+
+				if !errors.Is(err, identity.ErrUnreadableUser) {
+					t.Errorf("got %v, want %v", err, identity.ErrUnreadableUser)
+				}
+			})
+		}
+	})
+
+	t.Run("a user deleted while listed is left out", func(t *testing.T) {
+		users := &vanishingUsers{fakeUsers: fakeUsers{users: map[string]identity.StoredUser{"alice": alice}}, gone: "bob"}
+		// Listing reads only users, so it needs no entity or token service.
+		s, err := identity.NewUserService(users, &fakeHasher{}, nil, nil, &fakeAuthorizer{})
+		if err != nil {
+			t.Fatalf("NewUserService: %v", err)
+		}
+		want := []identity.UserSummary{{Name: "alice", EntityID: hexID}}
+
+		got, err := s.ListUsers(t.Context(), principal)
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("a set user is stored as its entity ID and the password's hash", func(t *testing.T) {
 		s, users, _, _ := newUserService(t)
 		want := identity.StoredUser{EntityID: hexID, PasswordHash: fakeHash(password)}
@@ -331,6 +422,10 @@ var userOperations = []struct {
 	}},
 	{"delete", func(ctx context.Context, s *identity.UserService) error {
 		return s.DeleteUser(ctx, principal, "alice")
+	}},
+	{"list", func(ctx context.Context, s *identity.UserService) error {
+		_, err := s.ListUsers(ctx, principal)
+		return err
 	}},
 }
 

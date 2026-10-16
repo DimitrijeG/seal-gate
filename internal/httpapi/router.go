@@ -40,6 +40,7 @@ type PolicyService interface {
 	Put(ctx context.Context, principal authorization.Principal, policy authorization.Policy) error
 	Get(ctx context.Context, principal authorization.Principal, name string) (authorization.Policy, error)
 	Delete(ctx context.Context, principal authorization.Principal, name string) error
+	List(ctx context.Context, principal authorization.Principal) ([]string, error)
 }
 
 // EntityService is entity storage as the handlers use it.
@@ -48,6 +49,7 @@ type EntityService interface {
 	GetEntity(ctx context.Context, principal authorization.Principal, id string) (identity.Entity, error)
 	UpdateEntity(ctx context.Context, principal authorization.Principal, entity identity.Entity) error
 	DeleteEntity(ctx context.Context, principal authorization.Principal, id string) error
+	ListEntities(ctx context.Context, principal authorization.Principal) ([]identity.EntitySummary, error)
 }
 
 // TokenService is token issuing, revoking and rotating as the handlers use it.
@@ -63,12 +65,14 @@ type GroupService interface {
 	GetGroup(ctx context.Context, principal authorization.Principal, id string) (identity.Group, error)
 	UpdateGroup(ctx context.Context, principal authorization.Principal, group identity.Group) error
 	DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error
+	ListGroups(ctx context.Context, principal authorization.Principal) ([]identity.GroupSummary, error)
 }
 
 // UserService is user storage and password login as the handlers use it.
 type UserService interface {
 	SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error
 	DeleteUser(ctx context.Context, principal authorization.Principal, name string) error
+	ListUsers(ctx context.Context, principal authorization.Principal) ([]identity.UserSummary, error)
 	Login(ctx context.Context, name string, password []byte) ([]byte, time.Time, error)
 }
 
@@ -116,6 +120,7 @@ func NewRouter(h *Handlers) http.Handler {
 
 	mux.Handle("POST /v1/auth/token/revoke", h.authenticated(h.handleRevokeToken))
 	mux.Handle("POST /v1/auth/token/rotate", h.authenticated(h.handleRotateToken))
+	mux.Handle("GET /v1/auth/users", h.authenticated(h.handleListUsers))
 	mux.Handle("PUT /v1/auth/users/{name}", h.authenticated(h.handleSetUser))
 	mux.Handle("DELETE /v1/auth/users/{name}", h.authenticated(h.handleDeleteUser))
 
@@ -126,16 +131,19 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.Handle("POST /v1/secrets/generate/{path...}", h.authenticated(h.handleGenerateSecret))
 	mux.Handle("POST /v1/secrets/rotate/{path...}", h.authenticated(h.handleRotateSecret))
 
+	mux.Handle("GET /v1/policies", h.authenticated(h.handleListPolicies))
 	mux.Handle("PUT /v1/policies/{name}", h.authenticated(h.handlePutPolicy))
 	mux.Handle("GET /v1/policies/{name}", h.authenticated(h.handleGetPolicy))
 	mux.Handle("DELETE /v1/policies/{name}", h.authenticated(h.handleDeletePolicy))
 
+	mux.Handle("GET /v1/entities", h.authenticated(h.handleListEntities))
 	mux.Handle("POST /v1/entities", h.authenticated(h.handleCreateEntity))
 	mux.Handle("GET /v1/entities/{id}", h.authenticated(h.handleGetEntity))
 	mux.Handle("PUT /v1/entities/{id}", h.authenticated(h.handleUpdateEntity))
 	mux.Handle("DELETE /v1/entities/{id}", h.authenticated(h.handleDeleteEntity))
 	mux.Handle("POST /v1/entities/{id}/tokens", h.authenticated(h.handleCreateToken))
 
+	mux.Handle("GET /v1/groups", h.authenticated(h.handleListGroups))
 	mux.Handle("POST /v1/groups", h.authenticated(h.handleCreateGroup))
 	mux.Handle("GET /v1/groups/{id}", h.authenticated(h.handleGetGroup))
 	mux.Handle("PUT /v1/groups/{id}", h.authenticated(h.handleUpdateGroup))

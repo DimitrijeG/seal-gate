@@ -91,6 +91,17 @@ func (r *policyRepository) Delete(ctx context.Context, name string) error {
 	return nil
 }
 
+func (r *policyRepository) List(ctx context.Context) ([]string, error) {
+	names, err := listNames(ctx, r.encrypted, policyPrefix)
+	if errors.Is(err, barrier.ErrSealed) {
+		return nil, authorization.ErrSealed
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository: %w", err)
+	}
+	return names, nil
+}
+
 func toPolicyRecord(policy authorization.Policy) policyRecord {
 	rules := make([]ruleRecord, len(policy.Rules))
 	for i, rule := range policy.Rules {
