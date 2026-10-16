@@ -25,6 +25,7 @@ const (
 	// Caps on what a stored hash may ask for, so a corrupt record cannot cost unbounded memory or time.
 	argon2MaxMemory = 256 << 10
 	argon2MaxTime   = 16
+	argon2MaxLen    = 64
 )
 
 // Argon2id hashes passwords with argon2id, encoded as PHC strings that carry their own parameters.
@@ -78,6 +79,11 @@ func parseArgon2id(encoded string) (argon2idHash, error) {
 		return argon2idHash{}, ErrInvalidPasswordHash
 	}
 
+	// Checked encoded, so an oversized field is refused before it is decoded.
+	maxEncoded := base64.RawStdEncoding.EncodedLen(argon2MaxLen)
+	if len(fields[4]) > maxEncoded || len(fields[5]) > maxEncoded {
+		return argon2idHash{}, ErrInvalidPasswordHash
+	}
 	if h.salt, err = base64.RawStdEncoding.DecodeString(fields[4]); err != nil {
 		return argon2idHash{}, ErrInvalidPasswordHash
 	}

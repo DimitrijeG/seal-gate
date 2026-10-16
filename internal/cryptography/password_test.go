@@ -2,6 +2,7 @@ package cryptography_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -14,6 +15,11 @@ const (
 	defaultsAnswer = "$argon2id$v=19$m=19456,t=2,p=1$AQEBAQEBAQEBAQEBAQEBAQ$FGlXh8itGiEPkJl4VLoHXFF7l5JO1RPiRKoFjEigPqM"
 	smallAnswer    = "$argon2id$v=19$m=64,t=1,p=1$AQEBAQEBAQEBAQEBAQEBAQ$9jDiIO+Ksrxrw5/x3GoDmEe2iEnKPJY3GTfvU9uZ21U"
 )
+
+// rawBase64 encodes n bytes of 0x01 as a PHC salt or key field.
+func rawBase64(n int) string {
+	return base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{0x01}, n))
+}
 
 func TestArgon2id(t *testing.T) {
 	t.Run("a password verifies against its own hash", func(t *testing.T) {
@@ -79,6 +85,8 @@ func TestArgon2id(t *testing.T) {
 		}{
 			{"smaller memory and time", smallAnswer},
 			{"time at the cap", "$argon2id$v=19$m=64,t=16,p=1$AQEBAQEBAQEBAQEBAQEBAQ$gpIOwab6QFt0u+1/VioJ9B+mBDa73HhESZNA7hh2DtI"},
+			{"salt at the cap", "$argon2id$v=19$m=64,t=1,p=1$" + rawBase64(64) + "$xnDL7M9bfF7fpHRJBTP3ZRtV5KdevE1D+FfcZGIufDo"},
+			{"key at the cap", "$argon2id$v=19$m=64,t=1,p=1$AQEBAQEBAQEBAQEBAQEBAQ$M4+skInrHY1TkNjxCZjz3ZivrgJVuynNtZe0qQpmk3WgmHXnigRll6ZJ/xKBl3tMsm/wLpUFZa4BaApymJL9ZA"},
 		}
 
 		h := cryptography.NewArgon2id(cryptography.CryptoRandom{})
@@ -134,6 +142,8 @@ func TestArgon2id(t *testing.T) {
 			{"time above the cap", strings.Replace(smallAnswer, "t=1", "t=17", 1)},
 			// Would allocate 4 TiB if it reached argon2.
 			{"memory above the cap", strings.Replace(smallAnswer, "m=64", "m=4294967295", 1)},
+			{"salt above the cap", strings.Replace(smallAnswer, "$AQEBAQEBAQEBAQEBAQEBAQ$", "$"+rawBase64(65)+"$", 1)},
+			{"key above the cap", smallAnswer[:strings.LastIndex(smallAnswer, "$")+1] + rawBase64(65)},
 		}
 
 		h := cryptography.NewArgon2id(cryptography.CryptoRandom{})
