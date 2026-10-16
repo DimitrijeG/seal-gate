@@ -172,13 +172,40 @@ func (s *UserService) ListUsers(ctx context.Context, principal authorization.Pri
 		if err != nil {
 			return nil, err
 		}
-		// Check, not Verify: a parse is enough to find a hash Login would refuse, without a derivation per user.
-		if !user.readable() || s.hasher.Check(user.PasswordHash) != nil {
+		if !s.intact(user) {
 			return nil, ErrUnreadableUser
 		}
 		summaries = append(summaries, UserSummary{Name: name, EntityID: user.EntityID})
 	}
 	return summaries, nil
+}
+
+// intact reports whether user is a record Login could use: a valid entity ID and a hash the hasher parses.
+// Check, not Verify: a parse finds a hash Login would refuse without a derivation per user.
+func (s *UserService) intact(user StoredUser) bool {
+	return user.readable() && s.hasher.Check(user.PasswordHash) == nil
+}
+
+// GetUser returns the entity the user name logs in as if principal may read that user, never its hash; a missing user is ErrUserNotFound.
+func (s *UserService) GetUser(ctx context.Context, principal authorization.Principal, name string) (UserSummary, error) {
+	if !validUsername(name) {
+		return UserSummary{}, ErrInvalidUsername
+	}
+	if err := s.authorizer.Authorize(ctx, principal, usersResource+"/"+name, authorization.CapabilityRead); err != nil {
+		return UserSummary{}, fmt.Errorf("identity: %w", err)
+	}
+
+	user, err := s.users.Get(ctx, name)
+	if err != nil && !ours(err) {
+		return UserSummary{}, fmt.Errorf("identity: %w", err)
+	}
+	if err != nil {
+		return UserSummary{}, err
+	}
+	if !s.intact(user) {
+		return UserSummary{}, ErrUnreadableUser
+	}
+	return UserSummary{Name: name, EntityID: user.EntityID}, nil
 }
 
 // DeleteUser removes the user name if principal may delete it; a missing user is not an error.

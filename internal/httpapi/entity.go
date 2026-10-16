@@ -173,6 +173,29 @@ func (h *Handlers) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, createTokenResponse{Token: token, ExpiresAt: expiresAt.UTC()})
 }
 
+// tokenSelfResponse is root alone or the entity and expiry; whatever is unset is left out.
+type tokenSelfResponse struct {
+	Root      bool      `json:"root,omitempty"`
+	EntityID  string    `json:"entity_id,omitempty"`
+	Alias     string    `json:"alias,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
+}
+
+func (h *Handlers) handleLookupToken(w http.ResponseWriter, r *http.Request) {
+	info, err := h.Token.Lookup(r.Context(), tokenFrom(r))
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, tokenSelfResponse{
+		Root:      info.Root,
+		EntityID:  info.EntityID,
+		Alias:     info.Alias,
+		ExpiresAt: info.ExpiresAt.UTC(),
+	})
+}
+
 // entity takes id from the URL, or none on create, never from the body: IDs are generated, not chosen.
 func (req entityRequest) entity(id string) identity.Entity {
 	return identity.Entity{

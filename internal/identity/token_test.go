@@ -808,6 +808,97 @@ func TestToken(t *testing.T) {
 		}
 	})
 
+	t.Run("a looked-up token returns its entity and expiry", func(t *testing.T) {
+		s, entities, _, clock := newClockedTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID}
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		want := identity.TokenInfo{EntityID: hexID, ExpiresAt: clock.now.Add(tokenTTL)}
+
+		got, err := s.Lookup(t.Context(), token)
+		if err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+
+		if got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a looked-up token returns its entity's alias", func(t *testing.T) {
+		s, entities, _, _ := newTokenService(t)
+		entities.entities[hexID] = identity.Entity{ID: hexID, Alias: "alice"}
+		token, _, err := s.CreateToken(t.Context(), principal, hexID, 0)
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+
+		got, err := s.Lookup(t.Context(), token)
+		if err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+
+		if got.Alias != "alice" {
+			t.Errorf("got %q, want %q", got.Alias, "alice")
+		}
+	})
+
+	t.Run("looking up the root token reports root", func(t *testing.T) {
+		s, _, _, _ := newTokenService(t)
+
+		got, err := s.Lookup(t.Context(), rootToken)
+		if err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+
+		if want := (identity.TokenInfo{Root: true}); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("looking up an unknown, expired or orphaned token is invalid", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			setup func(entities *fakeEntities, clock *fakeClock)
+			token []byte
+		}{
+			{"unknown", func(*fakeEntities, *fakeClock) {}, bytes.Repeat([]byte{9}, 32)},
+			{"nil", func(*fakeEntities, *fakeClock) {}, nil},
+			{"empty", func(*fakeEntities, *fakeClock) {}, []byte{}},
+			{"expired", func(_ *fakeEntities, clock *fakeClock) { clock.advance(tokenTTL) }, bytes.Repeat([]byte{1}, 32)},
+			{"entity deleted", func(entities *fakeEntities, _ *fakeClock) { delete(entities.entities, hexID) }, bytes.Repeat([]byte{1}, 32)},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, entities, tokens, clock := newClockedTokenService(t)
+				entities.entities[hexID] = identity.Entity{ID: hexID}
+				tokens.tokens[sha256.Sum256(bytes.Repeat([]byte{1}, 32))] = liveToken(hexID)
+				tt.setup(entities, clock)
+
+				_, err := s.Lookup(t.Context(), tt.token)
+
+				if !errors.Is(err, identity.ErrInvalidToken) {
+					t.Errorf("got %v, want %v", err, identity.ErrInvalidToken)
+				}
+			})
+		}
+	})
+
+	t.Run("a looked-up token naming an invalid entity ID is unreadable", func(t *testing.T) {
+		s, _, tokens, _ := newTokenService(t)
+		token := bytes.Repeat([]byte{1}, 32)
+		tokens.tokens[sha256.Sum256(token)] = liveToken("../dev")
+
+		_, err := s.Lookup(t.Context(), token)
+
+		if !errors.Is(err, identity.ErrUnreadableToken) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableToken)
+		}
+	})
+
 	t.Run("every token operation reports sealed", func(t *testing.T) {
 		for _, op := range tokenOperations {
 			t.Run(op.name, func(t *testing.T) {
@@ -1089,6 +1180,10 @@ var tokenOperations = []struct {
 	}},
 	{"resolve", func(ctx context.Context, s *identity.TokenService) error {
 		_, err := s.Resolve(ctx, bytes.Repeat([]byte{1}, 32))
+		return err
+	}},
+	{"lookup", func(ctx context.Context, s *identity.TokenService) error {
+		_, err := s.Lookup(ctx, bytes.Repeat([]byte{1}, 32))
 		return err
 	}},
 	{"revoke", func(ctx context.Context, s *identity.TokenService) error {

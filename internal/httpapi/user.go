@@ -27,6 +27,22 @@ func (h *Handlers) handleSetUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type userResponse struct {
+	EntityID string `json:"entity_id"`
+}
+
+func (h *Handlers) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	user, err := h.User.GetUser(r.Context(), principalFrom(r), name)
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, userResponse{EntityID: user.EntityID})
+}
+
 func (h *Handlers) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 

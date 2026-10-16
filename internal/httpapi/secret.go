@@ -52,8 +52,10 @@ func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type secretResponse struct {
+type secretReadResponse struct {
 	Value     []byte    `json:"value"`
+	Generated bool      `json:"generated"`
+	TTL       int64     `json:"ttl,omitempty"`
 	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
@@ -72,8 +74,10 @@ func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 		value = []byte{}
 	}
 
-	writeJSON(w, http.StatusOK, secretResponse{
-		Value: value,
+	writeJSON(w, http.StatusOK, secretReadResponse{
+		Value:     value,
+		Generated: entry.Generated,
+		TTL:       int64(entry.TTL / time.Second),
 		// The real clock reads local time; the spec promises UTC.
 		ExpiresAt: entry.ExpiresAt.UTC(),
 	})
@@ -88,6 +92,11 @@ func (h *Handlers) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// secretResponse is generate's and rotate's body; GET's always carries generated, so it has its own type.
+type secretResponse struct {
+	Value []byte `json:"value"`
 }
 
 // generateBodyLimit fits {"length": n} with room to spare; the body never carries a value.

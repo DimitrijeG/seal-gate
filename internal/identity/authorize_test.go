@@ -333,6 +333,10 @@ func TestAuthorization(t *testing.T) {
 				_, err := s.ListUsers(ctx, principal)
 				return err
 			}, "system/users", authorization.CapabilityList},
+			{"get", func(ctx context.Context, s *identity.UserService) error {
+				_, err := s.GetUser(ctx, principal, "alice")
+				return err
+			}, "system/users/alice", authorization.CapabilityRead},
 		}
 
 		for _, tt := range tests {
