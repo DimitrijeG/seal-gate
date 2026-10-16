@@ -94,6 +94,17 @@ rows need `SEAL_GATE_POSTGRES_URL`, as its tests do, and skip without it:
 go test -run '^$' -bench . ./...
 ```
 
+### Coverage
+
+A number to read, not a gate. Each package counts only its own tests, so one
+without any reads 0%. CI writes the same numbers as a table to the job summary:
+
+```sh
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out | tail -1     # total
+go tool cover -html=coverage.out               # per line, in the browser
+```
+
 ### Before opening a PR
 
 ```sh
