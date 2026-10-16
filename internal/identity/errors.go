@@ -28,8 +28,12 @@ var (
 	// ErrInvalidPassword reports a password that is empty or longer than 1024 bytes.
 	ErrInvalidPassword = errors.New("identity: invalid password")
 	ErrUserNotFound    = errors.New("identity: user not found")
-	// ErrUnreadableUser reports a stored user record that does not decode or has an unknown version.
+	// ErrUnreadableUser reports a stored user record that does not decode, has an unknown version, names an invalid entity ID,
+	// or holds a hash that is empty or will not verify.
 	ErrUnreadableUser = errors.New("identity: unreadable user")
+	// ErrInvalidCredentials reports a login refused for any reason a caller could cause: a malformed or unknown username, a wrong
+	// or malformed password, or a deleted entity; callers cannot tell which.
+	ErrInvalidCredentials = errors.New("identity: invalid credentials")
 )
 
 // ours reports the sentinels a repository may return, which pass up unwrapped so their prefix is not doubled.
@@ -40,5 +44,7 @@ func ours(err error) bool {
 		errors.Is(err, ErrInvalidToken) ||
 		errors.Is(err, ErrUnreadableToken) ||
 		errors.Is(err, ErrGroupNotFound) ||
-		errors.Is(err, ErrUnreadableGroup)
+		errors.Is(err, ErrUnreadableGroup) ||
+		errors.Is(err, ErrUserNotFound) ||
+		errors.Is(err, ErrUnreadableUser)
 }

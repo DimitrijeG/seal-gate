@@ -53,6 +53,10 @@ func validUsername(name string) bool {
 	return true
 }
 
+func validPassword(password []byte) bool {
+	return len(password) > 0 && len(password) <= maxPasswordLength
+}
+
 func validUsernameByte(b byte) bool {
 	return (b >= 'a' && b <= 'z') ||
 		(b >= '0' && b <= '9') ||
