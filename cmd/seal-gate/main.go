@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -21,7 +22,10 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
+	configPath := flag.String("config", "", "path to a YAML configuration file")
+	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
 	}

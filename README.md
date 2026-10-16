@@ -96,28 +96,29 @@ generated secrets and rotation) is described in
 
 ## Configuration
 
-Two settings come from the environment. Everything else is a built-in
-default, fixed in `internal/config/load.go`:
-
-| Setting | Value |
-|---|---|
-| `SEAL_GATE_STORAGE_TYPE` | `bolt` (default), `postgres` or `memory` |
-| `SEAL_GATE_STORAGE_URL` | the Postgres connection URL; used only by `postgres` |
-| bolt file | `seal-gate.db`, in the working directory |
-| listen address | `127.0.0.1:8080` |
-| HTTP timeouts | 2 s to read headers, 5 s to read, 5 s to write, 5 s to shut down |
-| encryption | AES-256-GCM |
-| audit | one file, `seal-gate-audit.log`; a request fails if its record cannot be written within 1 s |
-| lifecycle worker | sweeps for expired and due secrets and tokens every minute |
-| tokens | issued tokens live 1 hour by default, 24 hours at most; the root token does not expire |
-| logs | JSON on stdout, at `info` |
-
-`memory` keeps nothing across a restart, so it suits tests and trying the API
-out. To store in Postgres, set both variables, so the password in the URL
-never sits in a file:
+All settings live in one YAML file. Without `-config`, the server runs with
+[internal/config/default.yaml](internal/config/default.yaml), built into the
+binary; it lists every field, with a comment where the value needs one. A
+file passed with `-config` replaces it whole:
 
 ```sh
-SEAL_GATE_STORAGE_TYPE=postgres
+cp internal/config/default.yaml seal-gate.yaml   # then edit
+seal-gate -config seal-gate.yaml
+```
+
+The file is the whole configuration, so it is strict: a missing field, an
+unknown field, a value of the wrong type, a duration written as a bare number
+instead of text (`5s`, `1m`, `24h`), more than one document, or a missing file
+stops the server at startup. Logs go to stdout.
+
+One setting comes from the environment instead: `SEAL_GATE_STORAGE_URL`, the
+Postgres connection URL, used only when `storage.type` is `postgres`. It may
+carry the database password, so the file refuses a `url` field and the
+password never sits in a file. `memory` keeps nothing across a restart, so it
+suits tests and trying the API out. To store in Postgres, set `storage.type:
+postgres` in the file and the URL in the environment:
+
+```sh
 SEAL_GATE_STORAGE_URL='postgres://seal:<password>@db.example:5432/seal'
 ```
 
@@ -130,7 +131,7 @@ per database: Postgres, unlike bolt's file lock, does not stop a second one.
 cmd/seal-gate/          the binary; main() stays small
 internal/
 ├── app/                composition root — builds the graph, holds no rules
-├── config/             typed configuration, loaded but never applied here
+├── config/             typed configuration and the built-in default.yaml
 ├── system/             seal/unseal/init state machine, active-key lifetime
 ├── identity/           entities, groups, credentials, tokens — who is calling
 ├── authorization/      path-based ACL policies — what they may do
