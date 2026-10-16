@@ -1,4 +1,4 @@
-// Package identity owns who is asking: entities, the policies and groups they hold, and the tokens that authenticate as them.
+// Package identity owns who is asking: entities, the policies and groups they hold, the tokens that authenticate as them, and the users who log in as them.
 package identity
 
 import "time"

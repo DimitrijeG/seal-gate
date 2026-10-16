@@ -15,6 +15,7 @@ type Set struct {
 	Entity *entityRepository
 	Token  *tokenRepository
 	Group  *groupRepository
+	User   *userRepository
 }
 
 // NewSet builds every repository over backend, the encrypted ones through encrypted.
@@ -26,5 +27,6 @@ func NewSet(backend storage.Backend, encrypted *barrier.AEADBarrier) *Set {
 		Entity: &entityRepository{encrypted: encrypted},
 		Token:  &tokenRepository{encrypted: encrypted},
 		Group:  &groupRepository{encrypted: encrypted},
+		User:   &userRepository{encrypted: encrypted},
 	}
 }

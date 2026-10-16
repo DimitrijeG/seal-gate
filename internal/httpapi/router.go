@@ -65,6 +65,13 @@ type GroupService interface {
 	DeleteGroup(ctx context.Context, principal authorization.Principal, id string) error
 }
 
+// UserService is user storage and password login as the handlers use it.
+type UserService interface {
+	SetUser(ctx context.Context, principal authorization.Principal, name, entityID string, password []byte) error
+	DeleteUser(ctx context.Context, principal authorization.Principal, name string) error
+	Login(ctx context.Context, name string, password []byte) ([]byte, time.Time, error)
+}
+
 // Authenticator turns a request's token into the principal it acts as; an unknown token must be identity.ErrInvalidToken, as anything else is a 500.
 type Authenticator interface {
 	Authenticate(ctx context.Context, token []byte) (authorization.Principal, error)
@@ -91,6 +98,7 @@ type Handlers struct {
 	Entity        EntityService
 	Token         TokenService
 	Group         GroupService
+	User          UserService
 	Logger        *slog.Logger
 }
 
@@ -102,11 +110,14 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.Handle("POST /v1/sys/unseal", h.open(h.handleUnseal))
 	mux.Handle("GET /v1/sys/status", h.open(h.handleStatus))
 	mux.Handle("GET /v1/sys/health", h.open(h.handleHealth))
+	mux.Handle("POST /v1/auth/login", h.open(h.handleLogin))
 
 	mux.Handle("POST /v1/sys/seal", h.authenticated(h.handleSeal))
 
 	mux.Handle("POST /v1/auth/token/revoke", h.authenticated(h.handleRevokeToken))
 	mux.Handle("POST /v1/auth/token/rotate", h.authenticated(h.handleRotateToken))
+	mux.Handle("PUT /v1/auth/users/{name}", h.authenticated(h.handleSetUser))
+	mux.Handle("DELETE /v1/auth/users/{name}", h.authenticated(h.handleDeleteUser))
 
 	mux.Handle("GET /v1/secrets", h.authenticated(h.handleListSecrets))
 	mux.Handle("PUT /v1/secrets/{path...}", h.authenticated(h.handlePutSecret))
@@ -236,4 +247,5 @@ var uncleanPathErrors = []struct {
 	{"/v1/policies/", authorization.ErrInvalidName},
 	{"/v1/entities/", identity.ErrInvalidEntityID},
 	{"/v1/groups/", identity.ErrInvalidGroupID},
+	{"/v1/auth/users/", identity.ErrInvalidUsername},
 }
