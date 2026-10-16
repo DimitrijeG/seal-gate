@@ -1,0 +1,27 @@
+# The configuration seal-gate runs with when no -config file is given.
+# A file passed with -config replaces this one whole, so it sets every field.
+logger:
+  level: info              # as Go's slog parses it: debug, info, warn, error
+  format: json             # json, or text
+storage:
+  type: bolt               # bolt, postgres or memory; postgres reads SEAL_GATE_STORAGE_URL
+  path: seal-gate.db       # bolt's file, relative to the working directory
+crypto:
+  aead_algorithm: aes-256-gcm
+http:
+  address: 127.0.0.1:8080
+  read_header_timeout: 2s
+  read_timeout: 5s
+  write_timeout: 5s
+  graceful_shutdown: 5s
+audit:
+  sinks:
+    - type: file
+      path: seal-gate-audit.log
+      required: true       # a request fails when its record cannot be written within the timeout
+      timeout: 1s
+lifecycle:
+  interval: 1m             # how often expired and due secrets and tokens are swept
+token:
+  default_ttl: 1h          # the root token does not expire
+  max_ttl: 24h
