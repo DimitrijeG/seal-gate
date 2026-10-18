@@ -250,7 +250,8 @@ func (s *Service) Delete(ctx context.Context, principal authorization.Principal,
 	return err
 }
 
-// List returns the full paths under prefix that have not expired, sorted; prefix is "" or a valid path ending in '/'.
+// List returns the full paths under prefix that have not expired and that principal may list, sorted; prefix is "" or
+// a valid path ending in '/'.
 func (s *Service) List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error) {
 	if !validPrefix(prefix) {
 		return nil, ErrInvalidPath
@@ -269,6 +270,15 @@ func (s *Service) List(ctx context.Context, principal authorization.Principal, p
 
 	live := make([]string, 0, len(paths))
 	for _, path := range paths {
+		// Before the read, so a path hidden from principal is never decrypted.
+		err := s.authorizer.Authorize(ctx, principal, resourcePrefix+path, authorization.CapabilityList)
+		switch {
+		case errors.Is(err, authorization.ErrDenied):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("secret: %w", err)
+		}
+
 		entry, err := s.current(ctx, path)
 		clear(entry.Value)
 		switch {

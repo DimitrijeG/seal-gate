@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -74,11 +75,15 @@ func TestAuthorization(t *testing.T) {
 
 				_ = tt.call(t.Context(), s)
 
-				if authorizer.resource != tt.wantResource {
-					t.Errorf("resource: got %q, want %q", authorizer.resource, tt.wantResource)
+				// The first ask is the operation's; a listing asks again for each path.
+				if len(authorizer.asks) == 0 {
+					t.Fatalf("got no asks, want one")
 				}
-				if authorizer.capability != tt.wantCapability {
-					t.Errorf("capability: got %q, want %q", authorizer.capability, tt.wantCapability)
+				if got := authorizer.asks[0].resource; got != tt.wantResource {
+					t.Errorf("resource: got %q, want %q", got, tt.wantResource)
+				}
+				if got := authorizer.asks[0].capability; got != tt.wantCapability {
+					t.Errorf("capability: got %q, want %q", got, tt.wantCapability)
 				}
 			})
 		}
@@ -163,6 +168,64 @@ func TestAuthorization(t *testing.T) {
 		}
 		if authorizer.calls != 0 {
 			t.Errorf("calls: got %d, want 0", authorizer.calls)
+		}
+	})
+
+	t.Run("a path the principal is denied is left out of a listing", func(t *testing.T) {
+		s, repo, authorizer := newAuthorizedService(t)
+		repo.secrets["db/password"] = secret.Entry{Value: []byte("secret")}
+		repo.secrets["db/user"] = secret.Entry{Value: []byte("secret")}
+		authorizer.errs = map[string]error{"secrets/db/password": authorization.ErrDenied}
+
+		got, err := s.List(t.Context(), principal, "db/")
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		if want := []string{"db/user"}; !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("each listed path is asked list on its own resource", func(t *testing.T) {
+		s, repo, authorizer := newAuthorizedService(t)
+		repo.secrets["db/password"] = secret.Entry{Value: []byte("secret")}
+
+		if _, err := s.List(t.Context(), principal, "db/"); err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		want := ask{"secrets/db/password", authorization.CapabilityList}
+		if !slices.Contains(authorizer.asks, want) {
+			t.Errorf("got %+v, want it to hold %+v", authorizer.asks, want)
+		}
+	})
+
+	t.Run("an authorization failure other than denied fails the listing", func(t *testing.T) {
+		s, repo, authorizer := newAuthorizedService(t)
+		repo.secrets["db/password"] = secret.Entry{Value: []byte("secret")}
+		authErr := errors.New("policy unreadable")
+		authorizer.errs = map[string]error{"secrets/db/password": authErr}
+
+		_, err := s.List(t.Context(), principal, "db/")
+
+		if !errors.Is(err, authErr) {
+			t.Errorf("got %v, want %v", err, authErr)
+		}
+	})
+
+	t.Run("a denied path is never read", func(t *testing.T) {
+		s, repo, authorizer := newAuthorizedService(t)
+		repo.secrets["db/password"] = secret.Entry{Value: []byte("secret")}
+		authorizer.errs = map[string]error{"secrets/db/password": authorization.ErrDenied}
+
+		if _, err := s.List(t.Context(), principal, "db/"); err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		// One call: the List itself, no Get for the denied path.
+		if repo.calls != 1 {
+			t.Errorf("calls: got %d, want 1", repo.calls)
 		}
 	})
 
