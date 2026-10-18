@@ -216,3 +216,97 @@ func TestPolicy(t *testing.T) {
 		}
 	})
 }
+
+func TestSelfRules(t *testing.T) {
+	t.Run("an entity's token gets its rules", func(t *testing.T) {
+		fake := &fakePolicy{grants: authorization.Grants{Rules: devPolicy().Rules}}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: fake})
+		want := devPolicyJSON
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self/rules", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the authenticated principal is the one whose rules are read", func(t *testing.T) {
+		fake := &fakePolicy{}
+		want := authorization.NewEntityPrincipal(entityID, "dev")
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{principal: want}, Policy: fake})
+
+		do(t, router, http.MethodGet, "/v1/auth/token/self/rules", "")
+
+		if !reflect.DeepEqual(fake.principal, want) {
+			t.Errorf("got %+v, want %+v", fake.principal, want)
+		}
+	})
+
+	t.Run("the root token is reported as root", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{grants: authorization.Grants{Root: true}}})
+		want := `{"root":true}`
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self/rules", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no rules is an empty list", func(t *testing.T) {
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{}})
+		want := `{"rules":[]}`
+
+		rec := do(t, router, http.MethodGet, "/v1/auth/token/self/rules", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := strings.TrimSpace(rec.Body.String())
+
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the service's error maps to its status", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			err     error
+			status  int
+			message string
+		}{
+			{"sealed", authorization.ErrSealed, http.StatusServiceUnavailable, "the system is sealed"},
+			{"unreadable policy", authorization.ErrUnreadablePolicy, http.StatusInternalServerError, "internal error"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: &fakePolicy{err: tt.err}})
+
+				rec := do(t, router, http.MethodGet, "/v1/auth/token/self/rules", "")
+
+				assertError(t, rec, tt.status, tt.message)
+			})
+		}
+	})
+
+	t.Run("an unauthenticated request is refused", func(t *testing.T) {
+		fake := &fakePolicy{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Policy: fake})
+
+		rec := doWithAuthorization(t, router, "", http.MethodGet, "/v1/auth/token/self/rules", "")
+
+		assertError(t, rec, http.StatusUnauthorized, "missing or invalid token")
+		if fake.rulesRead {
+			t.Errorf("rules read: got true, want false")
+		}
+	})
+}
