@@ -27,7 +27,7 @@ func (s *Service) Sweep(ctx context.Context, report func(Action)) error {
 	now := s.clock.Now()
 	paths, err := s.repo.List(ctx, "")
 	switch {
-	case errors.Is(err, ErrSealed):
+	case ours(err):
 		return err
 	case err != nil:
 		return fmt.Errorf("secret: %w", err)
@@ -66,6 +66,8 @@ func (s *Service) sweepPath(ctx context.Context, path string, now time.Time) (Ac
 		return Action{}, false, nil
 	case errors.Is(err, ErrSealed):
 		return Action{}, false, err
+	case ours(err):
+		return Action{}, false, fmt.Errorf("%s: %w", path, err)
 	case err != nil:
 		return Action{}, false, fmt.Errorf("secret: %s: %w", path, err)
 	}

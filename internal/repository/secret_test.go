@@ -375,6 +375,59 @@ func TestSecretRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("a stored record that does not decode is unreadable", func(t *testing.T) {
+		tests := []struct {
+			name string
+			raw  string
+		}{
+			{"not JSON", "not json"},
+			{"empty value", ""},
+			{"a field of the wrong type", `{"version":1,"value":1}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				f := newBarrierFixture(t)
+				repo := f.set.Secret
+
+				if err := f.encrypted.Put(t.Context(), "secrets/db/password", []byte(tt.raw)); err != nil {
+					t.Fatalf("barrier Put: %v", err)
+				}
+				_, err := repo.Get(t.Context(), "db/password")
+
+				if !errors.Is(err, secret.ErrUnreadable) {
+					t.Errorf("got %v, want %v", err, secret.ErrUnreadable)
+				}
+			})
+		}
+	})
+
+	t.Run("a stored record with an unknown version is unreadable", func(t *testing.T) {
+		tests := []struct {
+			name string
+			raw  string
+		}{
+			{"version 2", `{"version":2,"value":"c2VjcmV0"}`},
+			{"no version field", `{"value":"c2VjcmV0"}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				f := newBarrierFixture(t)
+				repo := f.set.Secret
+
+				if err := f.encrypted.Put(t.Context(), "secrets/db/password", []byte(tt.raw)); err != nil {
+					t.Fatalf("barrier Put: %v", err)
+				}
+				_, err := repo.Get(t.Context(), "db/password")
+
+				if !errors.Is(err, secret.ErrUnreadable) {
+					t.Errorf("got %v, want %v", err, secret.ErrUnreadable)
+				}
+			})
+		}
+	})
+
 	t.Run("listing returns the paths under a prefix, without the storage prefix", func(t *testing.T) {
 		tests := []struct {
 			name, prefix string

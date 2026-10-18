@@ -445,6 +445,16 @@ func TestSecret(t *testing.T) {
 		}
 	})
 
+	// A corrupt record is the server's fault, not the client's.
+	t.Run("an unreadable secret is an internal error", func(t *testing.T) {
+		unreadable := fmt.Errorf("secret: %w", secret.ErrUnreadable)
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: unreadable}})
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+
+		assertError(t, rec, http.StatusInternalServerError, "internal error")
+	})
+
 	t.Run("an invalid TTL from the service is a bad request", func(t *testing.T) {
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: &fakeSecret{err: secret.ErrInvalidTTL}})
 

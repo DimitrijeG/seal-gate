@@ -76,8 +76,13 @@ func (r *secretRepository) Get(ctx context.Context, path string) (secret.Entry, 
 	}
 
 	var record secretRecord
+	// The decode error is replaced, not wrapped: as a *json.SyntaxError it would
+	// reach the client as a 400 about its own request body.
 	if err := json.Unmarshal(encoded, &record); err != nil {
-		return secret.Entry{}, fmt.Errorf("repository: %w", err)
+		return secret.Entry{}, secret.ErrUnreadable
+	}
+	if record.Version != secretRecordVersion {
+		return secret.Entry{}, secret.ErrUnreadable
 	}
 	return secret.Entry{
 		Value:     record.Value,
