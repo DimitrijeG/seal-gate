@@ -185,8 +185,9 @@ paths:
       summary: List the paths of stored secrets, optionally under a prefix.
       description: >
         Returns every path under the prefix, at any depth, never the values.
-        A secret written by `PUT` whose TTL has passed is left out.
-        Needs `list` on `secrets/<prefix>`.
+        A secret written by `PUT` whose TTL has passed is left out, as is a
+        path the caller is not granted `list` on, such as one a `deny` rule
+        matches. Needs `list` on `secrets/<prefix>`.
       parameters:
         - name: prefix
           in: query
@@ -1533,7 +1534,7 @@ components:
           minItems: 1
           items:
             type: string
-            enum: [create, read, update, delete, list, rotate, manage, deny]
+            enum: [create, read, update, delete, list, rotate, deny]
       additionalProperties: false
 
     ID:

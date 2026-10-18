@@ -92,13 +92,21 @@ func newService(t *testing.T) (*secret.Service, *fakeRepository) {
 	return s, repo
 }
 
-// fakeAuthorizer records the last decision asked for; it allows unless err is set.
+// fakeAuthorizer records each decision asked for in asks, and the last in its own fields; it allows unless errs holds
+// the resource or err is set.
 type fakeAuthorizer struct {
 	principal  authorization.Principal
 	resource   string
 	capability authorization.Capability
+	asks       []ask
 	calls      int
+	errs       map[string]error
 	err        error
+}
+
+type ask struct {
+	resource   string
+	capability authorization.Capability
 }
 
 func (a *fakeAuthorizer) Authorize(_ context.Context, principal authorization.Principal, resource string, capability authorization.Capability) error {
@@ -106,6 +114,10 @@ func (a *fakeAuthorizer) Authorize(_ context.Context, principal authorization.Pr
 	a.principal = principal
 	a.resource = resource
 	a.capability = capability
+	a.asks = append(a.asks, ask{resource, capability})
+	if err, ok := a.errs[resource]; ok {
+		return err
+	}
 	return a.err
 }
 

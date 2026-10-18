@@ -33,6 +33,8 @@ func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
 	var req secretRequest
+	// A closure, so it clears the value decoding leaves behind even when decoding then fails on trailing data.
+	defer func() { clear(req.Value) }()
 	if err := decodeJSON(w, r, &req, secretBodyLimit); err != nil {
 		writeError(w, h.Logger, err)
 		return
@@ -63,6 +65,8 @@ func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
 	entry, err := h.Secret.Get(r.Context(), principalFrom(r), path)
+	// Deferred before the error check: cleared after the response is written, whatever Get returned.
+	defer clear(entry.Value)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return

@@ -274,6 +274,7 @@ func TestService(t *testing.T) {
 			{"unknown word", "write"},
 			{"empty", ""},
 			{"wrong case", "Read"},
+			{"removed manage", "manage"},
 		}
 
 		for _, tt := range tests {
@@ -316,7 +317,7 @@ func TestService(t *testing.T) {
 		policy := policyWithRule("secrets/*",
 			authorization.CapabilityCreate, authorization.CapabilityRead, authorization.CapabilityUpdate,
 			authorization.CapabilityDelete, authorization.CapabilityList, authorization.CapabilityRotate,
-			authorization.CapabilityManage, authorization.CapabilityDeny)
+			authorization.CapabilityDeny)
 
 		if err := s.Put(t.Context(), root, policy); err != nil {
 			t.Errorf("got %v, want nil", err)
