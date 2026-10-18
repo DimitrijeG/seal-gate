@@ -122,6 +122,10 @@ func (k *Keyring) submit(share []byte) {
 	k.buffer.add(share)
 }
 
+func (k *Keyring) holds(share []byte) bool {
+	return k.buffer.contains(share)
+}
+
 func (k *Keyring) discard() {
 	k.buffer.clear()
 }

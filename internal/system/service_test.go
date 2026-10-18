@@ -589,6 +589,81 @@ func TestService(t *testing.T) {
 		}
 	})
 
+	t.Run("a share already buffered is refused", func(t *testing.T) {
+		s, _, _, shares := newInitializedService(t)
+
+		unsealWith(t, s, shares[:1])
+		_, err := s.Unseal(t.Context(), shares[0])
+
+		if !errors.Is(err, system.ErrDuplicateShare) {
+			t.Errorf("got %v, want %v", err, system.ErrDuplicateShare)
+		}
+	})
+
+	t.Run("a share that differs from every buffered one is accepted", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			change func(share []byte) []byte
+		}{
+			// Same x as the buffered share: x alone does not make a duplicate.
+			{"one byte changed", func(share []byte) []byte {
+				changed := bytes.Clone(share)
+				changed[0] ^= 1
+				return changed
+			}},
+			{"a prefix of a buffered share", func(share []byte) []byte {
+				return bytes.Clone(share[:len(share)-1])
+			}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, _, _, shares := newInitializedService(t)
+
+				unsealWith(t, s, shares[:1])
+				got, err := s.Unseal(t.Context(), tt.change(shares[0]))
+				if err != nil {
+					t.Fatalf("Unseal: %v", err)
+				}
+
+				if got.Progress != 2 {
+					t.Errorf("got %d, want 2", got.Progress)
+				}
+			})
+		}
+	})
+
+	t.Run("a duplicate does not count toward progress", func(t *testing.T) {
+		s, _, _, shares := newInitializedService(t)
+
+		unsealWith(t, s, shares[:1])
+		if _, err := s.Unseal(t.Context(), shares[0]); !errors.Is(err, system.ErrDuplicateShare) {
+			t.Fatalf("Unseal: %v", err)
+		}
+		got, err := s.Status(t.Context())
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+
+		if got.Progress != 1 {
+			t.Errorf("got %d, want 1", got.Progress)
+		}
+	})
+
+	t.Run("the remaining shares still unseal after a refused duplicate", func(t *testing.T) {
+		s, _, keys, shares := newInitializedService(t)
+
+		unsealWith(t, s, shares[:1])
+		if _, err := s.Unseal(t.Context(), shares[0]); !errors.Is(err, system.ErrDuplicateShare) {
+			t.Fatalf("Unseal: %v", err)
+		}
+		unsealWith(t, s, shares[1:sealConfig.Threshold])
+
+		if !keys.IsInstalled() {
+			t.Error("got false, want true")
+		}
+	})
+
 	t.Run("a tampered initialization record does not unseal", func(t *testing.T) {
 		tests := []struct {
 			name   string

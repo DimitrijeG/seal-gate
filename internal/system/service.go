@@ -94,8 +94,9 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	return s.status(state), nil
 }
 
-// Unseal buffers one share and unseals at the threshold, then activates the resource; a bad share discards the
-// buffer and returns ErrInvalidShare, and a failed activation seals again and returns its error.
+// Unseal buffers one share and unseals at the threshold, then activates the resource; a share already buffered is
+// ErrDuplicateShare and changes nothing, a bad share discards the buffer and returns ErrInvalidShare, and a failed
+// activation seals again and returns its error.
 func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,6 +110,10 @@ func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	}
 	if len(share) == 0 {
 		return Status{}, ErrInvalidShare
+	}
+	// Before submit: a refused share never reaches the buffer, so the operators keep their progress.
+	if s.keyring.holds(share) {
+		return Status{}, ErrDuplicateShare
 	}
 
 	s.keyring.submit(share)

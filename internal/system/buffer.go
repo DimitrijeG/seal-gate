@@ -1,6 +1,9 @@
 package system
 
-import "bytes"
+import (
+	"bytes"
+	"crypto/subtle"
+)
 
 // clearShares zeroes every share;
 // clearing the outer slice alone would leave the bytes.
@@ -17,6 +20,16 @@ type shareBuffer struct {
 
 func (b *shareBuffer) add(share []byte) {
 	b.shares = append(b.shares, bytes.Clone(share))
+}
+
+// contains compares in constant time, so a caller cannot probe buffered bytes by timing.
+func (b *shareBuffer) contains(share []byte) bool {
+	for _, s := range b.shares {
+		if subtle.ConstantTimeCompare(s, share) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *shareBuffer) len() int {

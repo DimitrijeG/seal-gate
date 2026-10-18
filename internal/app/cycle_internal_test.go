@@ -607,6 +607,24 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a repeated share does not cost the operators their progress", func(t *testing.T) {
+		router := newRouter(t)
+		shares := initialize(t, router).Shares
+		unseal(t, router, shares[0])
+
+		rec := send(t, router, http.MethodPost, "/v1/sys/unseal", fmt.Sprintf(`{"share":%q}`, shares[0]))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("repeat: got %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body)
+		}
+
+		if got := unseal(t, router, shares[1]); got.Progress != 2 {
+			t.Fatalf("share 2: got progress %d, want 2", got.Progress)
+		}
+		if got := unseal(t, router, shares[2]); got.Sealed {
+			t.Errorf("share 3: got %+v, want unsealed", got)
+		}
+	})
+
 	t.Run("reset discards a partial unseal", func(t *testing.T) {
 		router := newRouter(t)
 		shares := initialize(t, router).Shares
