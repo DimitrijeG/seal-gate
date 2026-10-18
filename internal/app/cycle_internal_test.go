@@ -1407,6 +1407,26 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a listing leaves out a denied subtree", func(t *testing.T) {
+		router := unsealed(t)
+		want := []string{"dev/x"}
+
+		for _, path := range []string{"dev/x", "hr/x"} {
+			putSecret(t, router, path, "c2VjcmV0")
+		}
+		token := entityToken(t, router, `[{"path":"secrets/*","capabilities":["list"]},{"path":"secrets/hr/*","capabilities":["deny"]}]`)
+
+		rec := send(t, withToken(router, token), http.MethodGet, "/v1/secrets?prefix=", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+		got := decode[listBody](t, rec).Paths
+
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
 	t.Run("a policy written after unseal reads back", func(t *testing.T) {
 		router := unsealed(t)
 		want := policyBody{Rules: []ruleBody{{Path: "secrets/dev/*", Capabilities: []string{"read", "list"}}}}

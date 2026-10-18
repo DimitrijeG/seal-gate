@@ -144,6 +144,7 @@ type fakeSecret struct {
 	principal    authorization.Principal // the last principal any method got
 	path         string                  // the last path any method but List got
 	putValue     []byte
+	putGiven     []byte // the value as given, to check it is cleared
 	putTTL       time.Duration
 	getValue     []byte
 	getExpiresAt time.Time
@@ -176,6 +177,7 @@ func (f *fakeSecret) Put(ctx context.Context, principal authorization.Principal,
 	f.principal = principal
 	f.path = path
 	f.putValue = bytes.Clone(value)
+	f.putGiven = value
 	f.putTTL = ttl
 	return f.err
 }

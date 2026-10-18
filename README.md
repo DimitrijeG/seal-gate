@@ -141,6 +141,11 @@ one request from the HTTP layer down to storage and back.
 | Hashing passwords | argon2id, m = 19 MiB, t = 2, p = 1 | Stored as PHC strings, which carry their own parameters. An unknown user is checked against a dummy hash, so it costs the same as a wrong password. At most one hash runs per usable CPU; the rest wait. |
 | Storing tokens | SHA-256 | Tokens are 32 random bytes; only their hash is stored. |
 
+Keys, shares, tokens and secret values are cleared from memory once used.
+That is best-effort: `encoding/json` and `net/http` keep buffers of their own
+that no caller can reach, and the garbage collector may copy a slice before
+it is cleared.
+
 ## Extension points
 
 Each one is an interface with a conformance test or a registry, chosen in the

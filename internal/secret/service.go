@@ -41,8 +41,9 @@ func (e Entry) due(now time.Time) bool {
 	return e.Generated && !e.ExpiresAt.IsZero() && !now.Before(e.ExpiresAt)
 }
 
-// Repository stores secrets by path. Put keeps no reference to the value, Get returns an entry the caller owns, or
-// ErrNotFound for a missing path, and Delete does not fail on one; every method returns ErrSealed while sealed.
+// Repository stores secrets by path. Put keeps no reference to the value, Get returns an entry the caller owns,
+// ErrNotFound for a missing path or ErrUnreadable for a corrupt one, and Delete does not fail on a missing path; every
+// method returns ErrSealed while sealed.
 type Repository interface {
 	Put(ctx context.Context, path string, entry Entry) error
 	Get(ctx context.Context, path string) (Entry, error)
@@ -97,7 +98,7 @@ func (s *Service) Put(ctx context.Context, principal authorization.Principal, pa
 	switch {
 	case errors.Is(err, ErrNotFound):
 		capability = authorization.CapabilityCreate
-	case errors.Is(err, ErrSealed):
+	case ours(err):
 		return err
 	case err != nil:
 		return fmt.Errorf("secret: %w", err)
@@ -108,7 +109,7 @@ func (s *Service) Put(ctx context.Context, principal authorization.Principal, pa
 	}
 
 	err = s.repo.Put(ctx, path, Entry{Value: value, TTL: ttl, ExpiresAt: s.expiry(ttl)})
-	if err != nil && !errors.Is(err, ErrSealed) {
+	if err != nil && !ours(err) {
 		return fmt.Errorf("secret: %w", err)
 	}
 	return err
@@ -124,7 +125,7 @@ func (s *Service) Get(ctx context.Context, principal authorization.Principal, pa
 	}
 
 	entry, err := s.current(ctx, path)
-	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrSealed) {
+	if err != nil && !ours(err) {
 		return Entry{}, fmt.Errorf("secret: %w", err)
 	}
 	return entry, err
@@ -155,9 +156,11 @@ func (s *Service) Generate(ctx context.Context, principal authorization.Principa
 	switch {
 	case err == nil:
 		return nil, ErrExists
-	case errors.Is(err, ErrSealed):
+	case errors.Is(err, ErrNotFound):
+		// Missing is what Generate needs.
+	case ours(err):
 		return nil, err
-	case !errors.Is(err, ErrNotFound):
+	default:
 		return nil, fmt.Errorf("secret: %w", err)
 	}
 
@@ -173,7 +176,7 @@ func (s *Service) storeGenerated(ctx context.Context, path string, length int, t
 
 	err = s.repo.Put(ctx, path, Entry{Value: value, Generated: true, TTL: ttl, ExpiresAt: s.expiry(ttl)})
 	switch {
-	case errors.Is(err, ErrSealed):
+	case ours(err):
 		clear(value)
 		return nil, err
 	case err != nil:
@@ -199,7 +202,7 @@ func (s *Service) Rotate(ctx context.Context, principal authorization.Principal,
 
 	old, err := s.current(ctx, path)
 	switch {
-	case errors.Is(err, ErrNotFound), errors.Is(err, ErrSealed):
+	case ours(err):
 		return nil, err
 	case err != nil:
 		return nil, fmt.Errorf("secret: %w", err)
@@ -244,13 +247,14 @@ func (s *Service) Delete(ctx context.Context, principal authorization.Principal,
 	}
 
 	err := s.repo.Delete(ctx, path)
-	if err != nil && !errors.Is(err, ErrSealed) {
+	if err != nil && !ours(err) {
 		return fmt.Errorf("secret: %w", err)
 	}
 	return err
 }
 
-// List returns the full paths under prefix that have not expired, sorted; prefix is "" or a valid path ending in '/'.
+// List returns the full paths under prefix that have not expired and that principal may list, sorted; prefix is "" or
+// a valid path ending in '/'.
 func (s *Service) List(ctx context.Context, principal authorization.Principal, prefix string) ([]string, error) {
 	if !validPrefix(prefix) {
 		return nil, ErrInvalidPath
@@ -261,7 +265,7 @@ func (s *Service) List(ctx context.Context, principal authorization.Principal, p
 
 	paths, err := s.repo.List(ctx, prefix)
 	switch {
-	case errors.Is(err, ErrSealed):
+	case ours(err):
 		return nil, err
 	case err != nil:
 		return nil, fmt.Errorf("secret: %w", err)
@@ -269,12 +273,21 @@ func (s *Service) List(ctx context.Context, principal authorization.Principal, p
 
 	live := make([]string, 0, len(paths))
 	for _, path := range paths {
+		// Before the read, so a path hidden from principal is never decrypted.
+		err := s.authorizer.Authorize(ctx, principal, resourcePrefix+path, authorization.CapabilityList)
+		switch {
+		case errors.Is(err, authorization.ErrDenied):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("secret: %w", err)
+		}
+
 		entry, err := s.current(ctx, path)
 		clear(entry.Value)
 		switch {
 		case errors.Is(err, ErrNotFound):
 			continue
-		case errors.Is(err, ErrSealed):
+		case ours(err):
 			return nil, err
 		case err != nil:
 			return nil, fmt.Errorf("secret: %w", err)
