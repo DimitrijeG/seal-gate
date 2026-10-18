@@ -86,9 +86,9 @@ func (r *secretRepository) Get(ctx context.Context, path string) (secret.Entry, 
 		return secret.Entry{}, secret.ErrUnreadable
 	}
 	if record.Version != secretRecordVersion {
+		clear(record.Value)
 		return secret.Entry{}, secret.ErrUnreadable
 	}
-	clear(record.Value)
 	return secret.Entry{
 		Value:     record.Value,
 		Generated: record.Generated,
