@@ -838,6 +838,33 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /auth/token/self/rules:
+    get:
+      operationId: lookupSelfRules
+      tags: [auth]
+      summary: Report the rules the presented token is checked against.
+      description: >
+        Needs no capability: a token's own grants are its holder's to see. The
+        root token is reported as `{"root": true}` alone, since it passes every
+        check without rules. Any other token gets the rules of every policy it
+        holds, directly or through a group, as stored: in policy order, not
+        merged, so a `deny` beside a grant on the same path is kept. A policy
+        that no longer exists contributes no rules; one that cannot be read
+        fails the request rather than answer with fewer rules.
+      responses:
+        "200":
+          description: The presented token's rules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenRulesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Sealed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /auth/login:
     post:
       operationId: login
@@ -1644,6 +1671,28 @@ components:
               const: true
           maxProperties: 1
         - required: [entity_id, expires_at]
+          not:
+            required: [root]
+
+    TokenRulesResponse:
+      type: object
+      description: Either `root` alone, or the rules.
+      properties:
+        root:
+          type: boolean
+        rules:
+          type: array
+          description: Empty for a token holding no rules, never null.
+          items:
+            $ref: "#/components/schemas/Rule"
+      additionalProperties: false
+      oneOf:
+        - required: [root]
+          properties:
+            root:
+              const: true
+          maxProperties: 1
+        - required: [rules]
           not:
             required: [root]
 

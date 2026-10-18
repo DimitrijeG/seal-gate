@@ -215,7 +215,15 @@ type fakePolicy struct {
 	name      string                  // the last name Get or Delete got
 	putPolicy authorization.Policy
 	getPolicy authorization.Policy
+	grants    authorization.Grants
+	rulesRead bool
 	err       error
+}
+
+func (f *fakePolicy) Rules(ctx context.Context, principal authorization.Principal) (authorization.Grants, error) {
+	f.principal = principal
+	f.rulesRead = true
+	return f.grants, f.err
 }
 
 func (f *fakePolicy) Put(ctx context.Context, principal authorization.Principal, policy authorization.Policy) error {

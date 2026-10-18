@@ -204,6 +204,7 @@ func TestAudit(t *testing.T) {
 			{"POST /v1/auth/token/revoke", "/v1/auth/token/revoke"},
 			{"POST /v1/auth/token/rotate", "/v1/auth/token/rotate"},
 			{"GET /v1/auth/token/self", "/v1/auth/token/self"},
+			{"GET /v1/auth/token/self/rules", "/v1/auth/token/self/rules"},
 			{"GET /v1/auth/users", "/v1/auth/users"},
 			{"PUT /v1/auth/users/{name}", "/v1/auth/users/alice"},
 			{"GET /v1/auth/users/{name}", "/v1/auth/users/alice"},
