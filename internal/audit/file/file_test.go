@@ -192,7 +192,7 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("a path in a missing directory is refused", func(t *testing.T) {
-		_, err := file.New(filepath.Join(t.TempDir(), "missing", "audit.log"))
+		_, err := file.New(filepath.Join(t.TempDir(), "missing", "audit.log"), true)
 		if !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("got %v, want %v", err, fs.ErrNotExist)
 		}
@@ -215,7 +215,7 @@ func TestClose(t *testing.T) {
 // newSink closes the sink on cleanup; closing it earlier is harmless.
 func newSink(t *testing.T, path string) *file.Sink {
 	t.Helper()
-	s, err := file.New(path)
+	s, err := file.New(path, true)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

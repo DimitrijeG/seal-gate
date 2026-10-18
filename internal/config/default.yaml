@@ -20,6 +20,7 @@ audit:
       path: seal-gate-audit.log
       required: true       # a request fails when its record cannot be written within the timeout
       timeout: 1s
+      sync: true           # fsync each record, so an OS crash cannot lose it; two fsyncs per request
 lifecycle:
   interval: 1m             # how often expired and due secrets and tokens are swept
 token:

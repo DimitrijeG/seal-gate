@@ -3,9 +3,12 @@ package system
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
@@ -23,6 +26,8 @@ type Service struct {
 	resource   UnsealedResource
 	generation uint64 // of the last timer armed; an older one's callback clears nothing
 	stopExpiry func() bool
+	// Outside mu, so authenticating never waits on an unseal or seal; nil from a seal's start until an activation ends.
+	rootTokenHash atomic.Pointer[[sha256.Size]byte]
 }
 
 // NewService returns a Service that activates resource after each unseal and deactivates it before each seal.
@@ -140,6 +145,8 @@ func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 		s.keyring.lock()
 		return Status{}, fmt.Errorf("system: %w", err)
 	}
+	// After Activate: no root request is admitted while it runs, or on one that fails. Unwrap has verified this hash.
+	s.rootTokenHash.Store(&state.RootTokenHash)
 	return s.status(state), nil
 }
 
@@ -189,10 +196,10 @@ func (s *Service) ResetUnseal(ctx context.Context) (Status, error) {
 
 const sealResource = "system/seal"
 
-// Seal deactivates the resource, then discards buffered shares and clears the key and the root token hash, once
+// Seal clears the root token hash, deactivates the resource, then discards buffered shares and clears the key, once
 // principal may update system/seal; sealing a sealed instance changes nothing.
 func (s *Service) Seal(ctx context.Context, principal authorization.Principal) error {
-	// Before the lock: IsRoot takes it on every request, and this may read policies.
+	// Before the lock: this may read policies, which need not hold up an unseal or reset.
 	if err := s.authorizer.Authorize(ctx, principal, sealResource, authorization.CapabilityUpdate); err != nil {
 		return fmt.Errorf("system: %w", err)
 	}
@@ -200,6 +207,8 @@ func (s *Service) Seal(ctx context.Context, principal authorization.Principal) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// First: no request is root while the seal runs, as when IsRoot waited for it.
+	s.rootTokenHash.Store(nil)
 	// Before lock: the key is cleared last, so nothing still running can believe it reads storage.
 	if s.keyring.unlocked() {
 		s.resource.Deactivate()
@@ -209,11 +218,13 @@ func (s *Service) Seal(ctx context.Context, principal authorization.Principal) e
 	return nil
 }
 
-// IsRoot reports whether token is the root token verified at the last unseal;
-// it is false for every token while sealed.
+// IsRoot reports whether token is the root token verified at the last unseal, without waiting on one in progress;
+// it is false for every token from the start of a seal until an unseal has activated the resource.
 func (s *Service) IsRoot(token []byte) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.keyring.isRoot(token)
+	want := s.rootTokenHash.Load()
+	if want == nil {
+		return false
+	}
+	hash := sha256.Sum256(token)
+	return subtle.ConstantTimeCompare(hash[:], want[:]) == 1
 }

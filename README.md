@@ -158,7 +158,8 @@ composition root or the configuration file:
   `crypto.aead_algorithm`. Stored values carry a format version byte.
 - **Audit sinks** implement `audit.Sink`. Each is listed in `audit.sinks`,
   either required (a failed write refuses the request) or best effort, with
-  its own timeout.
+  its own timeout. A file sink with `sync: true` flushes each record to disk
+  before the request goes on, at one `fsync` per record, two per request.
 - **Password hash parameters** can change without invalidating stored hashes,
   since each hash records the parameters it was made with.
 - **Login methods** issue tokens through the same token service as password

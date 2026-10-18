@@ -3,7 +3,6 @@ package system
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"time"
@@ -12,13 +11,12 @@ import (
 // Keyring owns key material for Service. Unsynchronized: Service holds its lock
 // across every call into it.
 type Keyring struct {
-	repo          Repository
-	sharing       SecretSharing
-	wrapper       KeyWrapper
-	random        RandomGenerator
-	active        ActiveKeyController
-	buffer        shareBuffer
-	rootTokenHash []byte // nil while sealed
+	repo    Repository
+	sharing SecretSharing
+	wrapper KeyWrapper
+	random  RandomGenerator
+	active  ActiveKeyController
+	buffer  shareBuffer
 }
 
 func NewKeyring(
@@ -157,19 +155,10 @@ func (k *Keyring) unlock(state InitializationState) error {
 	if err := k.active.Install(barrierKey); err != nil {
 		return fmt.Errorf("system: %w", err)
 	}
-
-	// Set only now: Unwrap has verified this hash, and the key it guards is in place.
-	k.rootTokenHash = state.RootTokenHash[:]
 	return nil
-}
-
-func (k *Keyring) isRoot(token []byte) bool {
-	hash := sha256.Sum256(token)
-	return subtle.ConstantTimeCompare(hash[:], k.rootTokenHash) == 1
 }
 
 func (k *Keyring) lock() {
 	k.buffer.clear()
 	k.active.Clear()
-	k.rootTokenHash = nil
 }
