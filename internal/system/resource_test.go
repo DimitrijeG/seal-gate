@@ -3,7 +3,9 @@ package system_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 	"github.com/dimitrijegasic/seal-gate/internal/system"
@@ -30,6 +32,78 @@ func (r *fakeResource) Activate(context.Context) error {
 func (r *fakeResource) Deactivate() {
 	r.deactivations++
 	r.installedAtDeactivate = r.active.IsInstalled()
+}
+
+// blockingResource holds each Activate and Deactivate once its channels are set: it reports on entered and waits for
+// release. Nil channels pass straight through, so a test can unseal before it starts holding.
+type blockingResource struct {
+	entered chan struct{}
+	release chan struct{}
+	freed   sync.Once
+}
+
+func (r *blockingResource) Activate(context.Context) error {
+	r.hold()
+	return nil
+}
+
+func (r *blockingResource) Deactivate() { r.hold() }
+
+func (r *blockingResource) hold() {
+	if r.entered == nil {
+		return
+	}
+	r.entered <- struct{}{}
+	<-r.release
+}
+
+// block makes every later call hold, until the test ends.
+func (r *blockingResource) block(t *testing.T) {
+	t.Helper()
+	r.entered = make(chan struct{}, 1)
+	r.release = make(chan struct{})
+	t.Cleanup(func() { r.freed.Do(func() { close(r.release) }) })
+}
+
+// newBlockingService returns an initialized, sealed service over a blockingResource not yet holding, and its result.
+func newBlockingService(t *testing.T) (*system.Service, *blockingResource, system.InitResult) {
+	t.Helper()
+	resource := &blockingResource{}
+	s, _ := newServiceOver(t, &fakeRepository{}, &fakeAuthorizer{}, resource, &fakeTimer{})
+	return s, resource, initialize(t, s)
+}
+
+// isRootWithin fails rather than hangs when IsRoot waits on a lifecycle change.
+func isRootWithin(t *testing.T, s *system.Service, token []byte) bool {
+	t.Helper()
+	answer := make(chan bool, 1)
+	go func() { answer <- s.IsRoot(token) }()
+	select {
+	case root := <-answer:
+		return root
+	case <-time.After(time.Second):
+		t.Fatalf("IsRoot: got no answer within a second")
+	}
+	return false
+}
+
+// unsealHeld submits the threshold share in the background and returns once activation holds.
+func unsealHeld(t *testing.T, s *system.Service, resource *blockingResource, shares [][]byte) {
+	t.Helper()
+	last := sealConfig.Threshold - 1
+	unsealWith(t, s, shares[:last])
+	resource.block(t)
+	go func() { _, _ = s.Unseal(context.Background(), shares[last]) }()
+	<-resource.entered
+}
+
+// sealHeld unseals, then seals in the background and returns once deactivation holds.
+func sealHeld(t *testing.T, s *system.Service, resource *blockingResource, shares [][]byte) {
+	t.Helper()
+	unsealWith(t, s, shares[:sealConfig.Threshold])
+	resource.block(t)
+	go func() { _ = s.Seal(context.Background(), principal) }()
+	<-resource.entered
 }
 
 // newResourceService returns an initialized, sealed service over resource, and the shares to unseal it.
@@ -100,6 +174,38 @@ func TestUnsealedResource(t *testing.T) {
 		_ = unsealReturning(t, s, result.Shares[:sealConfig.Threshold])
 
 		if s.IsRoot(result.RootToken) {
+			t.Error("root token is root")
+		}
+	})
+
+	t.Run("the root check answers while an unseal is activating", func(t *testing.T) {
+		s, resource, result := newBlockingService(t)
+		unsealHeld(t, s, resource, result.Shares)
+
+		isRootWithin(t, s, result.RootToken)
+	})
+
+	t.Run("no token is root while an unseal is activating", func(t *testing.T) {
+		s, resource, result := newBlockingService(t)
+		unsealHeld(t, s, resource, result.Shares)
+
+		if isRootWithin(t, s, result.RootToken) {
+			t.Error("root token is root")
+		}
+	})
+
+	t.Run("the root check answers while a seal is deactivating", func(t *testing.T) {
+		s, resource, result := newBlockingService(t)
+		sealHeld(t, s, resource, result.Shares)
+
+		isRootWithin(t, s, result.RootToken)
+	})
+
+	t.Run("no token is root while a seal is deactivating", func(t *testing.T) {
+		s, resource, result := newBlockingService(t)
+		sealHeld(t, s, resource, result.Shares)
+
+		if isRootWithin(t, s, result.RootToken) {
 			t.Error("root token is root")
 		}
 	})
