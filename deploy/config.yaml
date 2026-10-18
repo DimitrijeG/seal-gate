@@ -1,0 +1,28 @@
+# The container's configuration: bolt on the /data volume. Replace it by mounting
+# another file and passing -config, as for any run.
+logger:
+  level: info
+  format: json
+storage:
+  type: bolt
+  path: /data/seal-gate.db
+crypto:
+  aead_algorithm: aes-256-gcm
+http:
+  # Every interface inside the container; what reaches it is decided by the ports it publishes.
+  address: 0.0.0.0:8080
+  read_header_timeout: 2s
+  read_timeout: 5s
+  write_timeout: 5s
+  graceful_shutdown: 5s
+audit:
+  sinks:
+    - type: file
+      path: /data/seal-gate-audit.log
+      required: true
+      timeout: 1s
+lifecycle:
+  interval: 1m
+token:
+  default_ttl: 1h
+  max_ttl: 24h
