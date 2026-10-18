@@ -1,0 +1,6 @@
+# Dot-directories, local databases and logs, and the separate graphd module never go into the image.
+.*
+*.db
+*.db.*
+*.log
+tools/
