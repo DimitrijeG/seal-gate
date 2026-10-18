@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
@@ -109,7 +110,8 @@ func buildServices(infra *infrastructure, repositories *repositories, auditor li
 	}
 	sys = system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)
-	user, err := identity.NewUserService(repositories.set.User, infra.hasher, entity, token, policy)
+	// One hash per usable CPU: hashing is CPU-bound, so more slots would add memory, not throughput.
+	user, err := identity.NewUserService(repositories.set.User, infra.hasher, entity, token, policy, runtime.GOMAXPROCS(0))
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}

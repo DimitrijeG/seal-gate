@@ -138,7 +138,7 @@ one request from the HTTP layer down to storage and back.
 | Splitting the root key | Shamir's secret sharing over GF(2⁸) | Written by hand. One polynomial per byte; field multiplication is branch-free and table-free, so its timing does not depend on the key. |
 | Encrypting stored values | AES-256-GCM | Each ciphertext is bound to its storage key and format version as additional data, so it cannot be moved or relabelled. |
 | Wrapping the barrier key | AES-256-GCM under the root key | The seal configuration and root token hash are bound as additional data. |
-| Hashing passwords | argon2id, m = 19 MiB, t = 2, p = 1 | Stored as PHC strings, which carry their own parameters. An unknown user is checked against a dummy hash, so it costs the same as a wrong password. |
+| Hashing passwords | argon2id, m = 19 MiB, t = 2, p = 1 | Stored as PHC strings, which carry their own parameters. An unknown user is checked against a dummy hash, so it costs the same as a wrong password. At most one hash runs per usable CPU; the rest wait. |
 | Storing tokens | SHA-256 | Tokens are 32 random bytes; only their hash is stored. |
 
 ## Extension points
@@ -190,8 +190,10 @@ What they point to:
 - **Login is deliberately expensive.** Almost all of its 13 ms and 19 MB is
   argon2id, and an unknown user costs the same as a known one, so timing does
   not reveal which usernames exist. The memory is the risk: concurrent logins
-  multiply it. Rate limiting or a cap on concurrent hashes would be the
-  extension here.
+  multiply it, so at most one hash runs per usable CPU and further logins wait
+  for a slot, or until their request ends. Peak memory then follows the CPU
+  count, not the traffic; in a container, Go reads the CPU count from its
+  limit. Limiting attempts per client address is left to a reverse proxy.
 - **Shamir costs nothing at realistic sizes.** Unseal is far from any limit
   even at the maximum of 255 shares; the byte-wise, constant-time field
   arithmetic could be replaced by lookup tables for speed, at the price of

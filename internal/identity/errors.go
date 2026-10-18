@@ -41,6 +41,8 @@ var (
 	// ErrInvalidCredentials reports a login refused for any reason a caller could cause: a malformed or unknown username, a wrong
 	// or malformed password, or a deleted entity; callers cannot tell which.
 	ErrInvalidCredentials = errors.New("identity: invalid credentials")
+	// ErrInvalidHashLimit reports a limit on concurrent password hashes below one.
+	ErrInvalidHashLimit = errors.New("identity: invalid hash limit")
 )
 
 // ours reports the sentinels a repository may return, which pass up unwrapped so their prefix is not doubled.

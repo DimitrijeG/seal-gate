@@ -53,18 +53,27 @@ type UserService struct {
 	authorizer authorization.Authorizer
 	// An unknown user's login verifies against this, so it costs what a known user's does.
 	dummyHash string
+	// One per hash in progress: each holds megabytes, so concurrent logins must not multiply it without bound.
+	hashSlots chan struct{}
 }
 
 var dummyPassword = []byte("seal-gate dummy password")
 
-// NewUserService returns a UserService over users, hashing with hasher, checking entities through entities, issuing login
-// tokens through tokens and asking authorizer first. It hashes a dummy password for logins of unknown users, so a failed hash fails it.
-func NewUserService(users UserRepository, hasher PasswordHasher, entities *EntityService, tokens *TokenService, authorizer authorization.Authorizer) (*UserService, error) {
+// NewUserService returns a UserService over users, hashing with hasher at most hashLimit at a time, checking entities through
+// entities, issuing login tokens through tokens and asking authorizer first. A Login or SetUser past the limit waits, failing
+// with its context's error if that ends first. The dummy hash for unknown users is made here, so a failed hash fails it, and a
+// hashLimit below one is ErrInvalidHashLimit.
+func NewUserService(users UserRepository, hasher PasswordHasher, entities *EntityService, tokens *TokenService, authorizer authorization.Authorizer, hashLimit int) (*UserService, error) {
+	// No slots would block every login forever, with no error to say why.
+	if hashLimit < 1 {
+		return nil, ErrInvalidHashLimit
+	}
 	dummyHash, err := hasher.Hash(dummyPassword)
 	if err != nil {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
-	return &UserService{users: users, hasher: hasher, entities: entities, tokens: tokens, authorizer: authorizer, dummyHash: dummyHash}, nil
+	return &UserService{users: users, hasher: hasher, entities: entities, tokens: tokens, authorizer: authorizer, dummyHash: dummyHash,
+		hashSlots: make(chan struct{}, hashLimit)}, nil
 }
 
 // Login issues a token for name's entity if password matches, returning it and its expiry; every refusal is
@@ -89,7 +98,13 @@ func (s *UserService) Login(ctx context.Context, name string, password []byte) (
 		return nil, time.Time{}, ErrUnreadableUser
 	}
 
+	select {
+	case s.hashSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, time.Time{}, fmt.Errorf("identity: %w", ctx.Err())
+	}
 	ok, err := s.hasher.Verify(password, user.PasswordHash)
+	<-s.hashSlots
 	if err != nil {
 		// Replaced, not wrapped: a hash that will not parse is a corrupt record, whatever the hasher calls it.
 		return nil, time.Time{}, ErrUnreadableUser
@@ -128,7 +143,13 @@ func (s *UserService) SetUser(ctx context.Context, principal authorization.Princ
 		return err
 	}
 
+	select {
+	case s.hashSlots <- struct{}{}:
+	case <-ctx.Done():
+		return fmt.Errorf("identity: %w", ctx.Err())
+	}
 	hash, err := s.hasher.Hash(password)
+	<-s.hashSlots
 	if err != nil {
 		return fmt.Errorf("identity: %w", err)
 	}

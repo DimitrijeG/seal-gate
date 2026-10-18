@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -135,10 +137,17 @@ type userFakes struct {
 	clock      *fakeClock
 }
 
-// newUserServiceFakes stores an entity under hexID, so a set for it reaches the hasher.
+// newUserServiceFakes builds a UserService over newUserFakes with one hash slot.
 func newUserServiceFakes(t *testing.T) (*identity.UserService, userFakes) {
 	t.Helper()
-	f := userFakes{
+	f := newUserFakes()
+	s := newUserServiceOver(t, f, f.hasher, 1)
+	return s, f
+}
+
+// newUserFakes stores an entity under hexID, so a set for it reaches the hasher.
+func newUserFakes() userFakes {
+	return userFakes{
 		users:      &fakeUsers{users: make(map[string]identity.StoredUser)},
 		entities:   &fakeEntities{entities: map[string]identity.Entity{hexID: {ID: hexID}}},
 		hasher:     &fakeHasher{},
@@ -146,16 +155,80 @@ func newUserServiceFakes(t *testing.T) (*identity.UserService, userFakes) {
 		tokens:     newFakeTokens(),
 		clock:      newFakeClock(),
 	}
+}
+
+// newUserServiceOver builds a UserService over f's fakes that hashes with hasher, at most limit at once.
+func newUserServiceOver(t *testing.T, f userFakes, hasher identity.PasswordHasher, limit int) *identity.UserService {
+	t.Helper()
 	random := &fakeRandom{}
 	entities := identity.NewEntityService(f.entities, random, f.authorizer)
 	tokens := identity.NewTokenService(f.tokens, entities, fakeRoot{}, random, f.authorizer, f.clock, tokenLimits)
-	s, err := identity.NewUserService(f.users, f.hasher, entities, tokens, f.authorizer)
+	s, err := identity.NewUserService(f.users, hasher, entities, tokens, f.authorizer, limit)
 	if err != nil {
 		t.Fatalf("NewUserService: %v", err)
 	}
 	// The dummy hash at construction is not a call of the operation under test.
 	f.hasher.calls = 0
-	return s, f
+	return s
+}
+
+// blockingHasher hashes as fakeHasher does, but once its channels are set each Hash and Verify reports itself on entered
+// and waits for release; closing release frees every hash. Nil channels pass straight through, for the dummy hash.
+type blockingHasher struct {
+	*fakeHasher
+	entered chan struct{}
+	release chan struct{}
+	freed   sync.Once
+}
+
+// free lets every held and later hash through; safe to call more than once.
+func (h *blockingHasher) free() {
+	h.freed.Do(func() { close(h.release) })
+}
+
+func (h *blockingHasher) Hash(password []byte) (string, error) {
+	h.hold()
+	return h.fakeHasher.Hash(password)
+}
+
+func (h *blockingHasher) Verify(password []byte, encoded string) (bool, error) {
+	h.hold()
+	return h.fakeHasher.Verify(password, encoded)
+}
+
+func (h *blockingHasher) hold() {
+	if h.entered == nil {
+		return
+	}
+	h.entered <- struct{}{}
+	<-h.release
+}
+
+// newLimitedUserService builds a UserService with one hash slot over a blockingHasher, already blocking.
+func newLimitedUserService(t *testing.T) (*identity.UserService, userFakes, *blockingHasher) {
+	t.Helper()
+	f := newUserFakes()
+	hasher := &blockingHasher{fakeHasher: f.hasher}
+	s := newUserServiceOver(t, f, hasher, 1)
+	// Buffered, so a hash the service should not have made shows up here instead of hanging it.
+	hasher.entered = make(chan struct{}, 4)
+	hasher.release = make(chan struct{})
+	t.Cleanup(hasher.free)
+	return s, f, hasher
+}
+
+// awaitResult waits for an operation's result, failing if another hash starts first or nothing comes within a second.
+func awaitResult(t *testing.T, result <-chan error, hasher *blockingHasher) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-hasher.entered:
+		t.Fatalf("got a second hash, want it to wait for the slot")
+	case <-time.After(time.Second):
+		t.Fatalf("got no result within a second")
+	}
+	return nil
 }
 
 // alice is a stored user of the entity under hexID whose password is password.
@@ -208,7 +281,7 @@ func TestUser(t *testing.T) {
 	t.Run("a user deleted while listed is left out", func(t *testing.T) {
 		users := &vanishingUsers{fakeUsers: fakeUsers{users: map[string]identity.StoredUser{"alice": alice}}, gone: "bob"}
 		// Listing reads only users, so it needs no entity or token service.
-		s, err := identity.NewUserService(users, &fakeHasher{}, nil, nil, &fakeAuthorizer{})
+		s, err := identity.NewUserService(users, &fakeHasher{}, nil, nil, &fakeAuthorizer{}, 1)
 		if err != nil {
 			t.Fatalf("NewUserService: %v", err)
 		}
@@ -579,7 +652,7 @@ func TestLogin(t *testing.T) {
 		hashErr := errors.New("out of memory")
 		hasher := &fakeHasher{err: hashErr}
 
-		_, err := identity.NewUserService(&fakeUsers{}, hasher, nil, nil, &fakeAuthorizer{})
+		_, err := identity.NewUserService(&fakeUsers{}, hasher, nil, nil, &fakeAuthorizer{}, 1)
 
 		if !errors.Is(err, hashErr) {
 			t.Errorf("got %v, want %v", err, hashErr)
@@ -733,6 +806,160 @@ func TestLogin(t *testing.T) {
 
 		if _, _, err := s.Login(t.Context(), "alice", password); err != nil {
 			t.Errorf("got %v, want nil", err)
+		}
+	})
+}
+
+func TestHashLimit(t *testing.T) {
+	t.Run("a login waiting for a hash slot fails when its context ends", func(t *testing.T) {
+		s, f, hasher := newLimitedUserService(t)
+		f.users.users["alice"] = alice
+		go func() { _, _, _ = s.Login(t.Context(), "alice", password) }()
+		// The first login now holds the only slot, inside Verify.
+		<-hasher.entered
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		result := make(chan error, 1)
+
+		go func() {
+			_, _, err := s.Login(ctx, "alice", password)
+			result <- err
+		}()
+		err := awaitResult(t, result, hasher)
+
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, want %v", err, context.Canceled)
+		}
+	})
+
+	t.Run("a login takes the slot a finished login frees", func(t *testing.T) {
+		s, f, hasher := newLimitedUserService(t)
+		f.users.users["alice"] = alice
+		first := make(chan error, 1)
+		go func() {
+			_, _, err := s.Login(t.Context(), "alice", password)
+			first <- err
+		}()
+		<-hasher.entered
+		hasher.free()
+		if err := <-first; err != nil {
+			t.Fatalf("first Login: %v", err)
+		}
+		// Bounded, so a slot never freed fails the test rather than hanging it.
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+
+		_, _, err := s.Login(ctx, "alice", password)
+
+		if err != nil {
+			t.Errorf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("a failed hash frees its slot", func(t *testing.T) {
+		s, f, hasher := newLimitedUserService(t)
+		f.users.users["alice"] = alice
+		f.hasher.err = errors.New("malformed hash")
+		first := make(chan error, 1)
+		go func() {
+			_, _, err := s.Login(t.Context(), "alice", password)
+			first <- err
+		}()
+		<-hasher.entered
+		hasher.free()
+		if err := <-first; !errors.Is(err, identity.ErrUnreadableUser) {
+			t.Fatalf("first Login: got %v, want %v", err, identity.ErrUnreadableUser)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+
+		_, _, err := s.Login(ctx, "alice", password)
+
+		if !errors.Is(err, identity.ErrUnreadableUser) {
+			t.Errorf("got %v, want %v", err, identity.ErrUnreadableUser)
+		}
+	})
+
+	t.Run("an unknown user's login waits for a slot too", func(t *testing.T) {
+		s, f, hasher := newLimitedUserService(t)
+		f.users.users["alice"] = alice
+		go func() { _, _, _ = s.Login(t.Context(), "alice", password) }()
+		<-hasher.entered
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		result := make(chan error, 1)
+
+		go func() {
+			_, _, err := s.Login(ctx, "bob", password)
+			result <- err
+		}()
+		err := awaitResult(t, result, hasher)
+
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, want %v", err, context.Canceled)
+		}
+	})
+
+	t.Run("setting a user waits for a hash slot", func(t *testing.T) {
+		s, f, hasher := newLimitedUserService(t)
+		f.users.users["alice"] = alice
+		go func() { _, _, _ = s.Login(t.Context(), "alice", password) }()
+		<-hasher.entered
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		result := make(chan error, 1)
+
+		go func() { result <- s.SetUser(ctx, principal, "bob", hexID, password) }()
+		err := awaitResult(t, result, hasher)
+
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, want %v", err, context.Canceled)
+		}
+	})
+
+	t.Run("a set user frees its slot", func(t *testing.T) {
+		s, f, hasher := newLimitedUserService(t)
+		f.users.users["alice"] = alice
+		hasher.free()
+		result := make(chan error, 1)
+
+		// In a goroutine: a release that blocks ignores any context, so only the deadline below can end it.
+		go func() {
+			if err := s.SetUser(t.Context(), principal, "bob", hexID, password); err != nil {
+				result <- fmt.Errorf("SetUser: %w", err)
+				return
+			}
+			_, _, err := s.Login(t.Context(), "alice", password)
+			result <- err
+		}()
+
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Errorf("got %v, want nil", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("got no result within a second")
+		}
+	})
+
+	t.Run("a hash limit below one is refused", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			limit int
+		}{
+			{"zero", 0},
+			{"negative", -1},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_, err := identity.NewUserService(&fakeUsers{}, &fakeHasher{}, nil, nil, &fakeAuthorizer{}, tt.limit)
+
+				if !errors.Is(err, identity.ErrInvalidHashLimit) {
+					t.Errorf("got %v, want %v", err, identity.ErrInvalidHashLimit)
+				}
+			})
 		}
 	})
 }
