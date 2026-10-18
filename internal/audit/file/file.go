@@ -25,18 +25,29 @@ type line struct {
 
 // Sink appends each event to one file as a JSON line; it is safe for concurrent use.
 type Sink struct {
-	file *os.File
+	file writeSyncCloser
+	sync bool
+}
+
+type writeSyncCloser interface {
+	Write(p []byte) (int, error)
+	Sync() error
+	Close() error
 }
 
 var _ audit.Sink = (*Sink)(nil)
 
-// New opens path for appending, creating it readable and writable by its owner only.
-func New(path string) (*Sink, error) {
+// New opens path for appending, creating it readable and writable by its owner only; with sync, Write returns once the record is on disk.
+func New(path string, sync bool) (*Sink, error) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("file: %w", err)
 	}
-	return &Sink{file: f}, nil
+	return newSink(f, sync), nil
+}
+
+func newSink(f writeSyncCloser, sync bool) *Sink {
+	return &Sink{file: f, sync: sync}
 }
 
 // Write ignores ctx, as a file write cannot be cancelled; the recorder's timeout bounds it.
@@ -56,6 +67,12 @@ func (s *Sink) Write(ctx context.Context, event audit.Event) error {
 	}
 	// One Write per line, so concurrent events never interleave within a line.
 	if _, err := s.file.Write(append(encoded, '\n')); err != nil {
+		return fmt.Errorf("file: %w", err)
+	}
+	if !s.sync {
+		return nil
+	}
+	if err := s.file.Sync(); err != nil {
 		return fmt.Errorf("file: %w", err)
 	}
 	return nil

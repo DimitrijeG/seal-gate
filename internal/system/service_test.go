@@ -118,6 +118,13 @@ func newServiceWith(t *testing.T, repo system.Repository, authorizer authorizati
 
 func newServiceWithTimer(t *testing.T, repo system.Repository, authorizer authorization.Authorizer, resource *fakeResource, timer system.Timer) (*system.Service, *cryptography.KeyHolder) {
 	t.Helper()
+	s, keys := newServiceOver(t, repo, authorizer, resource, timer)
+	resource.active = keys
+	return s, keys
+}
+
+func newServiceOver(t *testing.T, repo system.Repository, authorizer authorization.Authorizer, resource system.UnsealedResource, timer system.Timer) (*system.Service, *cryptography.KeyHolder) {
+	t.Helper()
 	keys := cryptography.NewKeyHolder()
 	random := cryptography.CryptoRandom{}
 	sharing := cryptography.NewShamir(random)
@@ -128,7 +135,6 @@ func newServiceWithTimer(t *testing.T, repo system.Repository, authorizer author
 	wrapper := cryptography.NewKeyWrapper(cipher)
 
 	keyring := system.NewKeyring(repo, sharing, wrapper, random, keys)
-	resource.active = keys
 	clock := fakeClock{now: initTime}
 	return system.NewService(keyring, clock, timer, authorizer, resource), keys
 }

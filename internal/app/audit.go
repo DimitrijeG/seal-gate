@@ -18,7 +18,7 @@ func (a *Application) auditDestinations(cfg *config.Config) ([]audit.Destination
 		if sink.Type != "file" {
 			return nil, fmt.Errorf("%w %q", errUnsupportedSink, sink.Type)
 		}
-		s, err := file.New(sink.Path)
+		s, err := file.New(sink.Path, sink.Sync)
 		if err != nil {
 			return nil, fmt.Errorf("app: audit: %w", err)
 		}

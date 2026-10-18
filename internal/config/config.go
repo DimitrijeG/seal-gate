@@ -47,12 +47,13 @@ type AuditConfig struct {
 	Sinks []AuditSinkConfig `yaml:"sinks"`
 }
 
-// AuditSinkConfig is one audit sink: its type ("file"), where it writes, whether its failure fails the request, and how long a write may take.
+// AuditSinkConfig is one audit sink: its type ("file"), where it writes, whether its failure fails the request, how long a write may take, and whether each record is synced to disk.
 type AuditSinkConfig struct {
 	Type     string        `yaml:"type"`
 	Path     string        `yaml:"path"`
 	Required bool          `yaml:"required"`
 	Timeout  time.Duration `yaml:"timeout"`
+	Sync     bool          `yaml:"sync"`
 }
 
 // LifecycleConfig is how often the lifecycle worker sweeps for secrets to rotate or expire.
