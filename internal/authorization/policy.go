@@ -10,14 +10,13 @@ const (
 	CapabilityDelete Capability = "delete"
 	CapabilityList   Capability = "list"
 	CapabilityRotate Capability = "rotate"
-	CapabilityManage Capability = "manage"
 	CapabilityDeny   Capability = "deny"
 )
 
 func (c Capability) valid() bool {
 	switch c {
 	case CapabilityCreate, CapabilityRead, CapabilityUpdate, CapabilityDelete,
-		CapabilityList, CapabilityRotate, CapabilityManage, CapabilityDeny:
+		CapabilityList, CapabilityRotate, CapabilityDeny:
 		return true
 	}
 	return false

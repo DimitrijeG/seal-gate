@@ -1534,7 +1534,7 @@ components:
           minItems: 1
           items:
             type: string
-            enum: [create, read, update, delete, list, rotate, manage, deny]
+            enum: [create, read, update, delete, list, rotate, deny]
       additionalProperties: false
 
     ID:

@@ -172,7 +172,6 @@ func allBut(except authorization.Capability) []authorization.Capability {
 	all := []authorization.Capability{
 		authorization.CapabilityCreate, authorization.CapabilityRead, authorization.CapabilityUpdate,
 		authorization.CapabilityDelete, authorization.CapabilityList, authorization.CapabilityRotate,
-		authorization.CapabilityManage,
 	}
 	return slices.DeleteFunc(all, func(c authorization.Capability) bool { return c == except })
 }
