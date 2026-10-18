@@ -10,3 +10,9 @@ type systemClock struct{}
 func (systemClock) Now() time.Time {
 	return time.Now().UTC()
 }
+
+type systemTimer struct{}
+
+func (systemTimer) AfterFunc(d time.Duration, f func()) func() bool {
+	return time.AfterFunc(d, f).Stop
+}

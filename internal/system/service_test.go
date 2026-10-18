@@ -70,6 +70,34 @@ type fakeClock struct{ now time.Time }
 
 func (c fakeClock) Now() time.Time { return c.now }
 
+type armedTimer struct {
+	d       time.Duration
+	f       func()
+	stopped bool
+}
+
+type fakeTimer struct {
+	armed []*armedTimer
+}
+
+func (tm *fakeTimer) AfterFunc(d time.Duration, f func()) func() bool {
+	armed := &armedTimer{d: d, f: f}
+	tm.armed = append(tm.armed, armed)
+	return func() bool {
+		armed.stopped = true
+		return true
+	}
+}
+
+// fire runs the i-th callback even when stopped: a real timer can fire after Stop loses the race.
+func (tm *fakeTimer) fire(t *testing.T, i int) {
+	t.Helper()
+	if i >= len(tm.armed) {
+		t.Fatalf("got %d timers armed, want at least %d", len(tm.armed), i+1)
+	}
+	tm.armed[i].f()
+}
+
 var (
 	sealConfig = system.SealConfiguration{Shares: 5, Threshold: 3}
 	initTime   = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
@@ -85,6 +113,11 @@ func newService(t *testing.T) (*system.Service, *fakeRepository, *cryptography.K
 
 func newServiceWith(t *testing.T, repo system.Repository, authorizer authorization.Authorizer, resource *fakeResource) (*system.Service, *cryptography.KeyHolder) {
 	t.Helper()
+	return newServiceWithTimer(t, repo, authorizer, resource, &fakeTimer{})
+}
+
+func newServiceWithTimer(t *testing.T, repo system.Repository, authorizer authorization.Authorizer, resource *fakeResource, timer system.Timer) (*system.Service, *cryptography.KeyHolder) {
+	t.Helper()
 	keys := cryptography.NewKeyHolder()
 	random := cryptography.CryptoRandom{}
 	sharing := cryptography.NewShamir(random)
@@ -97,7 +130,24 @@ func newServiceWith(t *testing.T, repo system.Repository, authorizer authorizati
 	keyring := system.NewKeyring(repo, sharing, wrapper, random, keys)
 	resource.active = keys
 	clock := fakeClock{now: initTime}
-	return system.NewService(keyring, clock, authorizer, resource), keys
+	return system.NewService(keyring, clock, timer, authorizer, resource), keys
+}
+
+// newTimedService returns an initialized service with the timer it arms, so a test can fire it.
+func newTimedService(t *testing.T) (*system.Service, *fakeTimer, [][]byte) {
+	t.Helper()
+	timer := &fakeTimer{}
+	s, _ := newServiceWithTimer(t, &fakeRepository{}, &fakeAuthorizer{}, &fakeResource{}, timer)
+	return s, timer, initialize(t, s).Shares
+}
+
+func progress(t *testing.T, s *system.Service) int {
+	t.Helper()
+	status, err := s.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	return status.Progress
 }
 
 func initialize(t *testing.T, s *system.Service) system.InitResult {
@@ -661,6 +711,176 @@ func TestService(t *testing.T) {
 
 		if !keys.IsInstalled() {
 			t.Error("got false, want true")
+		}
+	})
+
+	t.Run("buffered shares are cleared when the timer fires", func(t *testing.T) {
+		s, timer, shares := newTimedService(t)
+
+		unsealWith(t, s, shares[:1])
+		timer.fire(t, 0)
+
+		if got := progress(t, s); got != 0 {
+			t.Errorf("got %d, want 0", got)
+		}
+	})
+
+	t.Run("the timer is armed for ten minutes", func(t *testing.T) {
+		s, timer, shares := newTimedService(t)
+
+		unsealWith(t, s, shares[:1])
+		if len(timer.armed) != 1 {
+			t.Fatalf("got %d timers armed, want 1", len(timer.armed))
+		}
+
+		if got := timer.armed[0].d; got != 10*time.Minute {
+			t.Errorf("got %v, want %v", got, 10*time.Minute)
+		}
+	})
+
+	t.Run("each accepted share restarts the timer", func(t *testing.T) {
+		s, timer, shares := newTimedService(t)
+
+		unsealWith(t, s, shares[:2])
+		timer.fire(t, 0)
+
+		if got := progress(t, s); got != 2 {
+			t.Errorf("got %d, want 2", got)
+		}
+	})
+
+	t.Run("a refused share does not restart the timer", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			refused func(shares [][]byte) []byte
+			wantErr error
+		}{
+			{"empty share", func([][]byte) []byte { return nil }, system.ErrInvalidShare},
+			{"duplicate share", func(shares [][]byte) []byte { return shares[0] }, system.ErrDuplicateShare},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, timer, shares := newTimedService(t)
+
+				unsealWith(t, s, shares[:1])
+				if _, err := s.Unseal(t.Context(), tt.refused(shares)); !errors.Is(err, tt.wantErr) {
+					t.Fatalf("Unseal: got %v, want %v", err, tt.wantErr)
+				}
+
+				if len(timer.armed) != 1 {
+					t.Errorf("got %d timers armed, want 1", len(timer.armed))
+				}
+			})
+		}
+	})
+
+	t.Run("a timer armed before the buffer was cleared does not clear later shares", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			clear func(t *testing.T, s *system.Service, shares [][]byte)
+		}{
+			{"reset", func(t *testing.T, s *system.Service, _ [][]byte) {
+				if _, err := s.ResetUnseal(t.Context()); err != nil {
+					t.Fatalf("ResetUnseal: %v", err)
+				}
+			}},
+			{"seal", func(t *testing.T, s *system.Service, _ [][]byte) {
+				if err := s.Seal(t.Context(), principal); err != nil {
+					t.Fatalf("Seal: %v", err)
+				}
+			}},
+			{"failed reconstruction", func(t *testing.T, s *system.Service, shares [][]byte) {
+				bad := bytes.Clone(shares[1])
+				bad[0] ^= 1
+				unsealWith(t, s, shares[2:sealConfig.Threshold])
+				if _, err := s.Unseal(t.Context(), bad); !errors.Is(err, system.ErrInvalidShare) {
+					t.Fatalf("Unseal: %v", err)
+				}
+			}},
+			{"threshold reached, then seal", func(t *testing.T, s *system.Service, shares [][]byte) {
+				unsealWith(t, s, shares[1:sealConfig.Threshold])
+				if err := s.Seal(t.Context(), principal); err != nil {
+					t.Fatalf("Seal: %v", err)
+				}
+			}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, timer, shares := newTimedService(t)
+
+				unsealWith(t, s, shares[:1])
+				tt.clear(t, s, shares)
+				unsealWith(t, s, shares[:1])
+				timer.fire(t, 0)
+
+				if got := progress(t, s); got != 1 {
+					t.Errorf("got %d, want 1", got)
+				}
+			})
+		}
+	})
+
+	t.Run("clearing the buffer stops its timer", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			clear func(t *testing.T, s *system.Service, shares [][]byte)
+		}{
+			{"reset", func(t *testing.T, s *system.Service, _ [][]byte) {
+				if _, err := s.ResetUnseal(t.Context()); err != nil {
+					t.Fatalf("ResetUnseal: %v", err)
+				}
+			}},
+			{"seal", func(t *testing.T, s *system.Service, _ [][]byte) {
+				if err := s.Seal(t.Context(), principal); err != nil {
+					t.Fatalf("Seal: %v", err)
+				}
+			}},
+			{"threshold reached", func(t *testing.T, s *system.Service, shares [][]byte) {
+				unsealWith(t, s, shares[1:sealConfig.Threshold])
+			}},
+			{"failed reconstruction", func(t *testing.T, s *system.Service, shares [][]byte) {
+				bad := bytes.Clone(shares[1])
+				bad[0] ^= 1
+				unsealWith(t, s, shares[2:sealConfig.Threshold])
+				if _, err := s.Unseal(t.Context(), bad); !errors.Is(err, system.ErrInvalidShare) {
+					t.Fatalf("Unseal: %v", err)
+				}
+			}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s, timer, shares := newTimedService(t)
+
+				unsealWith(t, s, shares[:1])
+				tt.clear(t, s, shares)
+
+				if last := timer.armed[len(timer.armed)-1]; !last.stopped {
+					t.Error("got running, want stopped")
+				}
+			})
+		}
+	})
+
+	t.Run("the share that reaches the threshold arms no timer", func(t *testing.T) {
+		s, timer, shares := newTimedService(t)
+
+		unsealWith(t, s, shares[:sealConfig.Threshold])
+
+		if want := sealConfig.Threshold - 1; len(timer.armed) != want {
+			t.Errorf("got %d timers armed, want %d", len(timer.armed), want)
+		}
+	})
+
+	t.Run("restarting the timer stops the one before", func(t *testing.T) {
+		s, timer, shares := newTimedService(t)
+
+		unsealWith(t, s, shares[:2])
+
+		if !timer.armed[0].stopped {
+			t.Error("got running, want stopped")
 		}
 	})
 

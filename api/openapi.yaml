@@ -92,7 +92,8 @@ paths:
         buffered until the threshold is reached, then combined; a failed
         combination discards the buffer. A share already buffered is refused
         with 409 and the buffer kept. A reset discards it on request, so a
-        partial unseal can start over.
+        partial unseal can start over; ten minutes with no accepted share
+        discard it too.
       security: []
       requestBody:
         required: true
