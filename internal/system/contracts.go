@@ -50,3 +50,8 @@ type UnsealedResource interface {
 type Clock interface {
 	Now() time.Time
 }
+
+// Timer runs f once after d unless stopped first; stop can lose the race with an f already firing.
+type Timer interface {
+	AfterFunc(d time.Duration, f func()) (stop func() bool)
+}

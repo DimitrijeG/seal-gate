@@ -165,6 +165,7 @@ func TestUnseal(t *testing.T) {
 			{"not initialized", system.ErrNotInitialized, http.StatusConflict, "not initialized"},
 			{"already unsealed", system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
 			{"invalid share", system.ErrInvalidShare, http.StatusBadRequest, "invalid unseal share"},
+			{"duplicate share", system.ErrDuplicateShare, http.StatusConflict, "share already submitted"},
 			{"unknown error", errors.New("bolt: data.db: permission denied"), http.StatusInternalServerError, "internal error"},
 		}
 

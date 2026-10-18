@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/dimitrijegasic/seal-gate/internal/authorization"
 )
@@ -17,15 +18,19 @@ type Service struct {
 	mu         sync.Mutex
 	keyring    *Keyring
 	clock      Clock
+	timer      Timer
 	authorizer authorization.Authorizer
 	resource   UnsealedResource
+	generation uint64 // of the last timer armed; an older one's callback clears nothing
+	stopExpiry func() bool
 }
 
 // NewService returns a Service that activates resource after each unseal and deactivates it before each seal.
-func NewService(keyring *Keyring, clock Clock, authorizer authorization.Authorizer, resource UnsealedResource) *Service {
+func NewService(keyring *Keyring, clock Clock, timer Timer, authorizer authorization.Authorizer, resource UnsealedResource) *Service {
 	return &Service{
 		keyring:    keyring,
 		clock:      clock,
+		timer:      timer,
 		authorizer: authorizer,
 		resource:   resource,
 	}
@@ -47,6 +52,9 @@ type Status struct {
 
 // maxShares is Split's limit, checked here so a client gets ErrInvalidSealConfig, not a 500.
 const maxShares = 255
+
+// unsealTimeout is how long buffered shares outlive the last accepted one, so none stay resident when nobody is unsealing.
+const unsealTimeout = 10 * time.Minute
 
 // Init validates cfg, records the initialization and returns the shares and root token;
 // a second call fails with ErrAlreadyInitialized.
@@ -94,7 +102,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	return s.status(state), nil
 }
 
-// Unseal buffers one share and unseals at the threshold, then activates the resource; a bad share discards the
+// Unseal buffers one share, discarded unsealTimeout after the last accepted one, and unseals at the threshold, then
+// activates the resource; a share already buffered is ErrDuplicateShare and changes nothing, a bad share discards the
 // buffer and returns ErrInvalidShare, and a failed activation seals again and returns its error.
 func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	s.mu.Lock()
@@ -110,20 +119,53 @@ func (s *Service) Unseal(ctx context.Context, share []byte) (Status, error) {
 	if len(share) == 0 {
 		return Status{}, ErrInvalidShare
 	}
+	// Before submit: a refused share never reaches the buffer, so the operators keep their progress.
+	if s.keyring.holds(share) {
+		return Status{}, ErrDuplicateShare
+	}
 
 	s.keyring.submit(share)
 
-	if s.keyring.progress() >= state.Config.Threshold {
-		if err := s.keyring.unlock(state); err != nil {
-			return Status{}, err
-		}
-		// After unlock: what activates reads through the barrier. On failure, lock, so nothing half-unsealed serves.
-		if err := s.resource.Activate(ctx); err != nil {
-			s.keyring.lock()
-			return Status{}, fmt.Errorf("system: %w", err)
-		}
+	if s.keyring.progress() < state.Config.Threshold {
+		s.arm()
+		return s.status(state), nil
+	}
+
+	s.disarm()
+	if err := s.keyring.unlock(state); err != nil {
+		return Status{}, err
+	}
+	// After unlock: what activates reads through the barrier. On failure, lock, so nothing half-unsealed serves.
+	if err := s.resource.Activate(ctx); err != nil {
+		s.keyring.lock()
+		return Status{}, fmt.Errorf("system: %w", err)
 	}
 	return s.status(state), nil
+}
+
+func (s *Service) arm() {
+	s.disarm()
+	s.generation++
+	generation := s.generation
+	s.stopExpiry = s.timer.AfterFunc(unsealTimeout, func() { s.expire(generation) })
+}
+
+func (s *Service) disarm() {
+	if s.stopExpiry != nil {
+		s.stopExpiry()
+		s.stopExpiry = nil
+	}
+}
+
+// expire checks the generation because Stop can lose the race with a callback already waiting on the lock.
+func (s *Service) expire(generation uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if generation != s.generation {
+		return
+	}
+	s.keyring.discard()
 }
 
 // ResetUnseal discards the buffered shares so an unseal can start over;
@@ -140,6 +182,7 @@ func (s *Service) ResetUnseal(ctx context.Context) (Status, error) {
 		return Status{}, ErrAlreadyUnsealed
 	}
 
+	s.disarm()
 	s.keyring.discard()
 	return s.status(state), nil
 }
@@ -161,6 +204,7 @@ func (s *Service) Seal(ctx context.Context, principal authorization.Principal) e
 	if s.keyring.unlocked() {
 		s.resource.Deactivate()
 	}
+	s.disarm()
 	s.keyring.lock()
 	return nil
 }
