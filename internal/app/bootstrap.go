@@ -108,7 +108,7 @@ func buildServices(infra *infrastructure, repositories *repositories, auditor li
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
-	sys = system.NewService(keyring, infra.clock, policy, unsealedResources{worker})
+	sys = system.NewService(keyring, infra.clock, systemTimer{}, policy, unsealedResources{worker})
 	group := identity.NewGroupService(repositories.set.Group, infra.random, policy)
 	// One hash per usable CPU: hashing is CPU-bound, so more slots would add memory, not throughput.
 	user, err := identity.NewUserService(repositories.set.User, infra.hasher, entity, token, policy, runtime.GOMAXPROCS(0))

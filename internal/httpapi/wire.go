@@ -115,6 +115,7 @@ var domainErrors = []struct {
 	{system.ErrNotInitialized, http.StatusConflict, "not initialized"},
 	{system.ErrAlreadyUnsealed, http.StatusConflict, "already unsealed"},
 	{system.ErrInvalidShare, http.StatusBadRequest, "invalid unseal share"},
+	{system.ErrDuplicateShare, http.StatusConflict, "share already submitted"},
 
 	{secret.ErrInvalidPath, http.StatusBadRequest, "invalid secret path"},
 	{secret.ErrValueTooLarge, http.StatusRequestEntityTooLarge, "secret value is too large"},
