@@ -62,6 +62,25 @@ func (h *Handlers) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// rootRulesResponse stands in for a rule list: the root passes every check without one.
+type rootRulesResponse struct {
+	Root bool `json:"root"`
+}
+
+func (h *Handlers) handleSelfRules(w http.ResponseWriter, r *http.Request) {
+	grants, err := h.Policy.Rules(r.Context(), principalFrom(r))
+	if err != nil {
+		writeError(w, h.Logger, err)
+		return
+	}
+	if grants.Root {
+		writeJSON(w, http.StatusOK, rootRulesResponse{Root: true})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, newRulesResponse(grants.Rules))
+}
+
 // policy takes name from the URL, never the body, so a body cannot rename what it writes.
 func (req policyRequest) policy(name string) authorization.Policy {
 	rules := make([]authorization.Rule, len(req.Rules))
@@ -89,13 +108,17 @@ func (p policyRule) rule() authorization.Rule {
 
 // newPolicyResponse leaves out the name: the URL already holds it.
 func newPolicyResponse(policy authorization.Policy) policyResponse {
+	return newRulesResponse(policy.Rules)
+}
+
+func newRulesResponse(rules []authorization.Rule) policyResponse {
 	// make, not a nil slice, so no rules encodes as [] rather than null.
-	rules := make([]policyRule, len(policy.Rules))
-	for i, rule := range policy.Rules {
-		rules[i] = newPolicyRule(rule)
+	wire := make([]policyRule, len(rules))
+	for i, rule := range rules {
+		wire[i] = newPolicyRule(rule)
 	}
 
-	return policyResponse{Rules: rules}
+	return policyResponse{Rules: wire}
 }
 
 func newPolicyRule(rule authorization.Rule) policyRule {

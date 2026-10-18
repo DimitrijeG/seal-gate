@@ -932,6 +932,62 @@ func TestSealLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("a token's rules include its group's policies", func(t *testing.T) {
+		router := unsealed(t)
+		policies := map[string]string{
+			"own": `{"rules":[{"path":"secrets/own/*","capabilities":["read"]}]}`,
+			"dev": `{"rules":[{"path":"secrets/dev/*","capabilities":["list"]}]}`,
+		}
+		for name, body := range policies {
+			if rec := send(t, router, http.MethodPut, "/v1/policies/"+name, body); rec.Code != http.StatusNoContent {
+				t.Fatalf("put policy: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+			}
+		}
+		rec := send(t, router, http.MethodPost, "/v1/groups", `{"policies":["dev"]}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create group: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		groupID := decode[createGroupBody](t, rec).ID
+		rec = send(t, router, http.MethodPost, "/v1/entities", `{"policies":["own"],"groups":["`+groupID+`"]}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create entity: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		entityID := decode[createEntityBody](t, rec).ID
+		rec = send(t, router, http.MethodPost, "/v1/entities/"+entityID+"/tokens", "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("issue token: got %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body)
+		}
+		token := decode[tokenBody](t, rec).Token
+		// The entity's own policies come before its groups'.
+		want := policyBody{Rules: []ruleBody{
+			{Path: "secrets/own/*", Capabilities: []string{"read"}},
+			{Path: "secrets/dev/*", Capabilities: []string{"list"}},
+		}}
+
+		rec = send(t, withToken(router, token), http.MethodGet, "/v1/auth/token/self/rules", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := decode[policyBody](t, rec); !reflect.DeepEqual(got, want) {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("the root token's rules report it as root", func(t *testing.T) {
+		router := unsealed(t)
+		want := `{"root":true}`
+
+		rec := send(t, router, http.MethodGet, "/v1/auth/token/self/rules", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if got := strings.TrimSpace(rec.Body.String()); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
 	t.Run("a token is forbidden a listing granted only beneath the collection", func(t *testing.T) {
 		router := unsealed(t)
 		token := entityToken(t, router, `[{"path":"system/policies/*","capabilities":["list"]}]`)

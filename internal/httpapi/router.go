@@ -35,12 +35,13 @@ type SecretService interface {
 	Rotate(ctx context.Context, principal authorization.Principal, path string) ([]byte, error)
 }
 
-// PolicyService is policy storage as the handlers use it.
+// PolicyService is policy storage, and the rules a principal holds through it, as the handlers use it.
 type PolicyService interface {
 	Put(ctx context.Context, principal authorization.Principal, policy authorization.Policy) error
 	Get(ctx context.Context, principal authorization.Principal, name string) (authorization.Policy, error)
 	Delete(ctx context.Context, principal authorization.Principal, name string) error
 	List(ctx context.Context, principal authorization.Principal) ([]string, error)
+	Rules(ctx context.Context, principal authorization.Principal) (authorization.Grants, error)
 }
 
 // EntityService is entity storage as the handlers use it.
@@ -123,6 +124,7 @@ func NewRouter(h *Handlers) http.Handler {
 	mux.Handle("POST /v1/auth/token/revoke", h.authenticated(h.handleRevokeToken))
 	mux.Handle("POST /v1/auth/token/rotate", h.authenticated(h.handleRotateToken))
 	mux.Handle("GET /v1/auth/token/self", h.authenticated(h.handleLookupToken))
+	mux.Handle("GET /v1/auth/token/self/rules", h.authenticated(h.handleSelfRules))
 	mux.Handle("GET /v1/auth/users", h.authenticated(h.handleListUsers))
 	mux.Handle("PUT /v1/auth/users/{name}", h.authenticated(h.handleSetUser))
 	mux.Handle("GET /v1/auth/users/{name}", h.authenticated(h.handleGetUser))
