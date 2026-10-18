@@ -57,7 +57,7 @@ func TestLoad(t *testing.T) {
 	})
 
 	t.Run("the default config audits to one required file", func(t *testing.T) {
-		want := []config.AuditSinkConfig{{Type: "file", Path: "seal-gate-audit.log", Required: true, Timeout: time.Second}}
+		want := []config.AuditSinkConfig{{Type: "file", Path: "seal-gate-audit.log", Required: true, Timeout: time.Second, Sync: true}}
 
 		cfg, err := config.Load("")
 		if err != nil {
@@ -149,7 +149,7 @@ func TestLoad(t *testing.T) {
 
 	t.Run("the file sets the audit sinks", func(t *testing.T) {
 		path := writeConfig(t, defaultWith(t, "path: seal-gate-audit.log", "path: /var/log/seal-gate.log"))
-		want := []config.AuditSinkConfig{{Type: "file", Path: "/var/log/seal-gate.log", Required: true, Timeout: time.Second}}
+		want := []config.AuditSinkConfig{{Type: "file", Path: "/var/log/seal-gate.log", Required: true, Timeout: time.Second, Sync: true}}
 
 		cfg, err := config.Load(path)
 		if err != nil {
@@ -161,6 +161,24 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	t.Run("every shipped config loads", func(t *testing.T) {
+		tests := []struct {
+			name, file string
+		}{
+			{"container", "config.yaml"},
+			{"postgres", "postgres.yaml"},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := config.Load(filepath.Join("..", "..", "deploy", tc.file))
+
+				if err != nil {
+					t.Errorf("got %v, want nil", err)
+				}
+			})
+		}
+	})
+
 	t.Run("a file that leaves out a field fails", func(t *testing.T) {
 		tests := []struct {
 			name, old string
@@ -168,6 +186,7 @@ func TestLoad(t *testing.T) {
 			{"section", "lifecycle:\n  interval: 1m"},
 			{"field", "  read_timeout: 5s\n"},
 			{"sink field", "      timeout: 1s\n"},
+			{"sync flag", "      sync: true"},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {

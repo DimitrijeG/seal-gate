@@ -19,6 +19,7 @@ audit:
       path: /data/seal-gate-audit.log
       required: true
       timeout: 1s
+      sync: true
 lifecycle:
   interval: 1m
 token:
