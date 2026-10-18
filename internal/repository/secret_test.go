@@ -125,6 +125,48 @@ func TestSecretRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("the record handed to the barrier is cleared once stored", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+
+		if err := repo.Put(t.Context(), "db/password", secret.Entry{Value: []byte("secret")}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got := f.cipher.encrypted
+		// Never handed to the cipher would pass as cleared.
+		if len(got) == 0 {
+			t.Fatal("Encrypt: got no plaintext")
+		}
+		want := make([]byte, len(got))
+
+		if !bytes.Equal(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
+	t.Run("the decrypted record is cleared once decoded", func(t *testing.T) {
+		f := newBarrierFixture(t)
+		repo := f.set.Secret
+		path := "db/password"
+
+		if err := repo.Put(t.Context(), path, secret.Entry{Value: []byte("secret")}); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if _, err := repo.Get(t.Context(), path); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		got := f.cipher.decrypted
+		// Never decrypted would pass as cleared.
+		if len(got) == 0 {
+			t.Fatal("Decrypt: got no plaintext")
+		}
+		want := make([]byte, len(got))
+
+		if !bytes.Equal(got, want) {
+			t.Errorf("got %x, want %x", got, want)
+		}
+	})
+
 	t.Run("a generated secret reads back marked generated", func(t *testing.T) {
 		f := newBarrierFixture(t)
 		repo := f.set.Secret

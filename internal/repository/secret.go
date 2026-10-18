@@ -53,6 +53,8 @@ func (r *secretRepository) Put(ctx context.Context, path string, entry secret.En
 	if err != nil {
 		return fmt.Errorf("repository: %w", err)
 	}
+	// The record holds the value in base64.
+	defer clear(encoded)
 
 	err = r.encrypted.Put(ctx, secretKey(path), encoded)
 	if errors.Is(err, barrier.ErrSealed) {
@@ -74,6 +76,8 @@ func (r *secretRepository) Get(ctx context.Context, path string) (secret.Entry, 
 	case err != nil:
 		return secret.Entry{}, fmt.Errorf("repository: %w", err)
 	}
+	// Safe for the entry returned: Unmarshal decodes the value into a slice of its own.
+	defer clear(encoded)
 
 	var record secretRecord
 	// The decode error is replaced, not wrapped: as a *json.SyntaxError it would
@@ -84,6 +88,7 @@ func (r *secretRepository) Get(ctx context.Context, path string) (secret.Entry, 
 	if record.Version != secretRecordVersion {
 		return secret.Entry{}, secret.ErrUnreadable
 	}
+	clear(record.Value)
 	return secret.Entry{
 		Value:     record.Value,
 		Generated: record.Generated,

@@ -37,6 +37,8 @@ func (h *Handlers) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, h.Logger, err)
 		return
 	}
+	// Deferred before any call: a refused value is still a secret.
+	defer clear(req.Value)
 
 	ttl, err := ttlFrom(req.TTL)
 	if err != nil {
@@ -63,6 +65,8 @@ func (h *Handlers) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
 	entry, err := h.Secret.Get(r.Context(), principalFrom(r), path)
+	// Deferred before the error check: cleared after the response is written, whatever Get returned.
+	defer clear(entry.Value)
 	if err != nil {
 		writeError(w, h.Logger, err)
 		return

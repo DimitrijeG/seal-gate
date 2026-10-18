@@ -45,6 +45,21 @@ func TestSecret(t *testing.T) {
 		}
 	})
 
+	t.Run("a written secret's value is cleared once stored", func(t *testing.T) {
+		fake := &fakeSecret{}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		want := make([]byte, 2)
+
+		rec := do(t, router, http.MethodPut, "/v1/secrets/db/password", `{"value":"AQI="}`)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body)
+		}
+
+		if !bytes.Equal(fake.putGiven, want) {
+			t.Errorf("got %x, want %x", fake.putGiven, want)
+		}
+	})
+
 	t.Run("a read returns the value as base64", func(t *testing.T) {
 		fake := &fakeSecret{getValue: []byte{1, 2}}
 		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
@@ -187,6 +202,21 @@ func TestSecret(t *testing.T) {
 
 		if got := rec.Header().Get("Cache-Control"); got != want {
 			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a read secret's value is cleared after the response is written", func(t *testing.T) {
+		fake := &fakeSecret{getValue: bytes.Repeat([]byte{0xab}, 32)}
+		router := newRouter(&httpapi.Handlers{Authenticator: &fakeAuthenticator{}, Secret: fake})
+		want := make([]byte, 32)
+
+		rec := do(t, router, http.MethodGet, "/v1/secrets/db/password", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+		}
+
+		if !bytes.Equal(fake.getValue, want) {
+			t.Errorf("got %x, want %x", fake.getValue, want)
 		}
 	})
 
