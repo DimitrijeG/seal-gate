@@ -97,39 +97,130 @@ themselves. Infrastructure may import a domain module, never the reverse.
 - `audit`: events, the fan-out recorder, and the file sink.
 - `config`, and `app`, the composition root that wires everything together.
 
-> **Diagram: modules and their dependencies.** _To be added._
+An arrow points from the importer to what it imports. A dotted line is
+`repository` implementing the interfaces a domain module declares for its
+storage; nothing in the domain imports it back. `app` imports every package
+and is left out.
 
-> **Diagram: the key hierarchy.** Shares → root key → barrier key → stored
-> values. _To be added._
+```mermaid
+flowchart TD
+    subgraph inbound [Infrastructure]
+        httpapi
+    end
 
-### Live package graph
+    subgraph domain [Domain]
+        system
+        identity
+        secret
+        lifecycle
+        authorization
+    end
 
-[tools/graphd](tools/graphd) is a small tool written alongside the service. It
-serves the module's package graph in the browser and rebuilds it as files
-change, checking the import rules on every rebuild: a domain module importing
-storage or crypto, the HTTP layer reaching past the services, a cycle. A
-violation shows on the graph as soon as the import is saved. The same rules
-run as its tests, so a break cannot be merged.
+    subgraph infrastructure [Infrastructure]
+        repository
+        barrier
+        storage["storage<br/>bolt · postgres · memory"]
+        cryptography
+        audit
+    end
 
-```sh
-cd tools/graphd && go run . -dir ../..       # http://127.0.0.1:7717
+    httpapi --> system & identity & secret & authorization
+    httpapi --> audit
+    system & identity & secret --> authorization
+    lifecycle --> audit
+
+    system & identity & secret & authorization <-.- repository
+    repository --> barrier
+    repository -- "sys/initialization,<br/>unencrypted" --> storage
+    barrier --> storage
+    barrier --> cryptography
+```
+
+### Key hierarchy
+
+The root key exists only while an unseal combines it, and the barrier key only
+while the service is unsealed. Both AES-GCM steps authenticate additional data,
+so a ciphertext cannot be moved to another storage key or relabelled with
+another version. Nothing binds it to a revision, though: an older ciphertext
+put back at the same key still decrypts, so the backend can roll a value back.
+
+```mermaid
+flowchart LR
+    shares["k of n shares<br/>held by operators"]
+    root["root key"]
+    wrapped[("sys/initialization<br/>wrapped barrier key")]
+    unwrap{{"AES-256-GCM unwrap<br/>bound to: format version,<br/>k-of-n, root token hash"}}
+    key["barrier key"]
+    aead{{"AES-256-GCM<br/>bound to: format version,<br/>storage key"}}
+    values[("secrets/ policies/ entities/<br/>groups/ users/ tokens/")]
+
+    shares -- "Shamir combine" --> root
+    root --> unwrap
+    wrapped --> unwrap
+    unwrap --> key
+    key --> aead
+    aead <--> values
+```
+
+### Seal lifecycle
+
+Shares are buffered in memory and checked only together, once the threshold is
+reached, so a bad share is found only then. A restart, like a seal, loses the
+buffer and the key.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Uninitialized
+    Uninitialized --> Sealed: init
+    Sealed --> Unsealing: share
+    Unsealing --> Unsealing: new share, below threshold
+    Unsealing --> Sealed: reset, 10 min idle,<br/>or the shares fail to unwrap
+    Unsealing --> Unsealed: threshold reached
+    Unsealed --> Sealed: seal or shutdown
+    Unsealing --> Sealed: seal
 ```
 
 ## Communication
 
-Who calls whom, and in what order, for the main flows. Each diagram follows
-one request from the HTTP layer down to storage and back.
+Reading a secret, from the HTTP layer down to storage and back. Every
+authenticated route shares the first half: identify, audit the request, then
+refuse it without a principal. The rest is the route's own; most authorize
+against their resource as the secret service does here, but the token routes
+under `/v1/auth/token` act only on the presented token. Every read below
+`repository` goes through the barrier, so while sealed it fails with 503.
 
-> **Diagram: initialization and unsealing.** _To be added._
+```mermaid
+sequenceDiagram
+    autonumber
+    actor client as Client
+    participant http as httpapi
+    participant audit
+    participant identity
+    participant secret
+    participant authz as authorization
+    participant store as repository → barrier → storage
 
-> **Diagram: writing a secret.** _To be added._
-
-> **Diagram: reading a secret.** _To be added._
-
-> **Diagram: generating and rotating a secret,** by request and by the
-> lifecycle worker. _To be added._
-
-> **Diagram: login and token issuing.** _To be added._
+    client->>http: GET /v1/secrets/{path}, bearer token
+    http->>identity: Authenticate(token)
+    Note over identity: root token? compared with the hash<br/>verified at unseal, without a lock
+    identity->>store: tokens/sha256(token), the entity, its groups
+    store-->>identity: decrypted records
+    identity-->>http: principal and its policy names
+    http->>audit: record the request
+    Note over http,audit: a failed record refuses the request
+    Note over http: no principal: 401, before the handler
+    http->>secret: Get(principal, path)
+    secret->>authz: Authorize(principal, secrets/path, read)
+    authz->>store: the principal's policies
+    Note over authz: a matching deny wins over any grant: 403
+    secret->>store: secrets/path
+    store-->>secret: decrypted, with storage key and version checked
+    secret-->>http: entry
+    http-->>client: 200 and the value
+    http->>audit: record the response status
+    Note over http,audit: the response is already sent:<br/>a failed record is only logged
+```
 
 ## Algorithms
 
@@ -204,15 +295,3 @@ What they point to:
   even at the maximum of 255 shares; the byte-wise, constant-time field
   arithmetic could be replaced by lookup tables for speed, at the price of
   key-dependent memory access.
-
-## Statistics
-
-| | |
-|---|---|
-| Go packages | 20, plus graphd as a separate module |
-| Production code | about 7,100 lines |
-| Test code | about 21,400 lines, three to one against production |
-| Tests | 73 test functions, about 2,000 subtests |
-| Statement coverage | 87.3% overall |
-| HTTP operations | 34 |
-| Direct dependencies | 4: bbolt, pgx, yaml, and argon2id from `golang.org/x/crypto` |
