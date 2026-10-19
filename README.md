@@ -140,7 +140,9 @@ flowchart TD
 
 The root key exists only while an unseal combines it, and the barrier key only
 while the service is unsealed. Both AES-GCM steps authenticate additional data,
-so a ciphertext cannot be swapped for another one or moved to a different place.
+so a ciphertext cannot be moved to another storage key or relabelled with
+another version. Nothing binds it to a revision, though: an older ciphertext
+put back at the same key still decrypts, so the backend can roll a value back.
 
 ```mermaid
 flowchart LR
@@ -181,9 +183,12 @@ stateDiagram-v2
 
 ## Communication
 
-Reading a secret, from the HTTP layer down to storage and back. Every other
-authenticated route takes the same path to its own service and prefix. Every
-read below `repository` goes through the barrier, so while sealed it fails with 503.
+Reading a secret, from the HTTP layer down to storage and back. Every
+authenticated route shares the first half: identify, audit the request, then
+refuse it without a principal. The rest is the route's own; most authorize
+against their resource as the secret service does here, but the token routes
+under `/v1/auth/token` act only on the presented token. Every read below
+`repository` goes through the barrier, so while sealed it fails with 503.
 
 ```mermaid
 sequenceDiagram
@@ -212,8 +217,9 @@ sequenceDiagram
     secret->>store: secrets/path
     store-->>secret: decrypted, with storage key and version checked
     secret-->>http: entry
-    http->>audit: record the response status
     http-->>client: 200 and the value
+    http->>audit: record the response status
+    Note over http,audit: the response is already sent:<br/>a failed record is only logged
 ```
 
 ## Algorithms
